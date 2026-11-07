@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The pot's outline, shared by the launcher icon of every theme so they differ only in colour. The body's holes are
+     a terminal prompt, ">_", drawn as the outlines of 17-unit strokes with round ends and joins. -->
+<resources>
+    <string name="pot_handle" translatable="false">M344 245H403A12 12 0 0 1 403 269H344Z</string>
+    <string name="pot_legs" translatable="false">M188 355L174 397M298 355L312 397</string>
+    <string name="pot_body" translatable="false">M127 228H359L341 331Q337 364 304 368H182Q149 364 145 332Z M206.939 286L186.468 303.546A8.5 8.5 0 0 0 197.532 316.454L225.532 292.454A8.5 8.5 0 0 0 225.532 279.546L197.532 255.546A8.5 8.5 0 0 0 186.468 268.454Z M286 319.5A8.5 8.5 0 0 0 286 302.5H250A8.5 8.5 0 0 0 250 319.5Z</string>
+    <string name="pot_lid" translatable="false">M130,203 H356 A15,15 0,0 1,371,218 V219 A15,15 0,0 1,356,234 H130 A15,15 0,0 1,115,219 V218 A15,15 0,0 1,130,203 Z</string>
+    <string name="pot_steam_left" translatable="false">M224 178Q197 151 224 123</string>
+    <string name="pot_steam_right" translatable="false">M283 178Q256 151 283 123</string>
+</resources>

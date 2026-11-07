@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_copy">Copy</string>
+    <string name="settings_section_models">Models</string>
+    <string name="settings_section_chats">Chats</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_section_extensions">Extensions</string>
+    <string name="settings_section_agent">Agent</string>
+    <string name="settings_section_configuration">Configuration</string>
+    <string name="settings_section_about">About</string>
+
+    <string name="settings_claude">Claude</string>
+    <string name="settings_claude_subtitle">Pro / Max subscription</string>
+    <string name="settings_openai">OpenAI</string>
+    <string name="settings_openai_subtitle">Codex subscription</string>
+    <string name="settings_gemini">Gemini</string>
+    <string name="settings_gemini_subtitle">Gemini API key</string>
+    <string name="settings_zai">Z.ai</string>
+    <string name="settings_zai_subtitle">GLM Coding Plan API key</string>
+    <string name="settings_kimi">Kimi</string>
+    <string name="settings_kimi_subtitle">Kimi Code API key</string>
+    <string name="settings_openrouter">OpenRouter</string>
+    <string name="settings_openrouter_subtitle">OpenRouter API key</string>
+    <string name="settings_sign_in">Sign in</string>
+    <string name="settings_signed_in">Signed in</string>
+    <string name="settings_sign_out">Sign out</string>
+    <string name="settings_add_key">Add key</string>
+    <string name="settings_key_saved">Key saved</string>
+    <string name="settings_remove_key">Remove key</string>
+    <!-- %1$s: the provider's name, such as "Claude". -->
+    <string name="settings_sign_out_title">Sign out of %1$s?</string>
+    <string name="settings_sign_out_text">Chats can\'t use its models until you sign in again.</string>
+    <!-- %1$s: the provider's name, such as "OpenRouter". -->
+    <string name="settings_remove_key_title">Remove your %1$s key?</string>
+    <string name="settings_remove_key_text">Pipkin deletes the key from this phone, and chats can\'t use its models until you add a key again. The key keeps working elsewhere until you revoke it with the provider.</string>
+
+    <string name="providers_title">Providers and models</string>
+    <string name="settings_providers_none">No providers yet</string>
+    <string name="providers_empty">No providers yet. Add one to start chatting.</string>
+    <string name="providers_add">Add a provider</string>
+    <string name="providers_compatible">OpenAI-compatible API</string>
+    <string name="providers_compatible_subtitle">Any endpoint that speaks the OpenAI API, hosted or local</string>
+    <string name="providers_added">Added</string>
+
+    <string name="settings_reload_agents">Reload idle agents</string>
+    <string name="settings_reload_agents_summary">Applies config folder changes to idle chats</string>
+    <string name="settings_reload_agents_done">Idle agents reloaded</string>
+    <string name="settings_update_extensions">Update Pi extensions</string>
+    <string name="settings_update_extensions_summary">Updates the packages installed in Pi\'s settings</string>
+    <string name="settings_update_extensions_running">Updating Pi extensions…</string>
+    <string name="settings_update_extensions_title">Update Pi extensions?</string>
+    <string name="settings_update_extensions_text">Pi updates every package installed in its settings to the latest version, except packages pinned to a version. Chats can\'t start until the update finishes. Afterwards, idle chats reload with the new versions, and working chats pick them up when they next start.</string>
+    <string name="settings_update_extensions_confirm">Update</string>
+    <string name="settings_update_extensions_done">Pi extensions updated</string>
+    <string name="settings_config_folder">Config folder</string>
+    <string name="settings_config_folder_unknown">Known once Termux connects</string>
+
+    <string name="backups_title">Backups</string>
+    <string name="backups_create">Back up now</string>
+    <string name="backups_creating">Backing up the configuration…</string>
+    <string name="backups_created">Backed up.</string>
+    <string name="backups_restoring">Restoring the backup from %1$s…</string>
+    <string name="backups_restored">Restored. Chats use the restored configuration from now on.</string>
+    <string name="backups_saved">Saved backups</string>
+    <string name="backups_loading">Loading backups…</string>
+    <string name="backups_retry">Retry</string>
+    <string name="backups_empty">No backups yet</string>
+    <string name="backups_unreadable">%1$s can\'t be restored: %2$s</string>
+    <string name="backups_restore">Restore</string>
+    <string name="backups_delete">Delete</string>
+    <string name="backups_caption">A backup holds Pi\'s configuration: settings, sign-ins, models, extensions, skills, prompts and themes. Chats aren\'t part of it, and a restore leaves them as they are. Backups are kept in Termux at %1$s, where the Files app can reach them under Termux. Uninstalling Termux or clearing its data deletes them too.</string>
+    <string name="backups_restore_title">Restore this backup?</string>
+    <string name="backups_restore_text">Pi\'s configuration will be replaced by the backup from %1$s, and anything changed since is lost. Chats stay. Running chats stop first, so a reply in progress ends. Quit any pi you started yourself in a Termux terminal before restoring.</string>
+    <string name="backups_delete_title">Delete this backup?</string>
+    <string name="backups_delete_text">The backup from %1$s will be deleted for good.</string>
+    <string name="backups_delete_file_text">%1$s will be deleted for good.</string>
+    <string name="settings_extension_todo">Pipkin todo</string>
+    <string name="settings_extension_todo_summary">A todo list the agent keeps, shown on the composer</string>
+    <string name="settings_extension_background">Pipkin background</string>
+    <string name="settings_extension_background_summary">Commands that keep running while the agent waits, such as servers and long builds</string>
+    <string name="settings_extension_web_access">Pipkin web access</string>
+    <string name="settings_extension_web_access_summary">Web search and page fetching</string>
+    <string name="settings_extension_subagents">Pipkin subagents</string>
+    <string name="settings_extension_subagents_summary">Subagents the agent hands tasks to, which you can follow, steer and stop</string>
+    <string name="settings_extensions_caption">Idle chats reload to pick up a change. A working chat picks it up the next time its agent starts.</string>
+
+    <string name="settings_running_agents">Running agents</string>
+    <string name="settings_running_agents_summary">How many run at once, and when idle ones stop</string>
+    <string name="settings_running_chats">Running chats</string>
+    <string name="settings_running_chats_fewer">Fewer running chats</string>
+    <string name="settings_running_chats_more">More running chats</string>
+    <plurals name="settings_running_chats_caption">
+        <item quantity="one">How many chats can keep their agent running at once. Each one runs a few processes in Termux, more while it works. Android stops apps\' processes once there are more than 32 in all, so with more than %1$d chat running, any of them may be stopped mid-run unless Disable child process restrictions is on in Developer options (Android 14 and later).</item>
+        <item quantity="other">How many chats can keep their agent running at once. Each one runs a few processes in Termux, more while it works. Android stops apps\' processes once there are more than 32 in all, so with more than %1$d chats running, any of them may be stopped mid-run unless Disable child process restrictions is on in Developer options (Android 14 and later).</item>
+    </plurals>
+    <string name="settings_idle_stop">Stop idle chats after</string>
+    <string name="settings_idle_stop_1_minute">1 minute</string>
+    <string name="settings_idle_stop_5_minutes">5 minutes</string>
+    <string name="settings_idle_stop_15_minutes">15 minutes</string>
+    <string name="settings_idle_stop_30_minutes">30 minutes</string>
+    <string name="settings_idle_stop_never">Never</string>
+    <string name="settings_idle_stop_caption">A chat that isn\'t working, running background tasks, or on screen stops its agent after this long to free memory. Its history stays, and the agent starts again when you open it. With Never, a chat stops only when another needs its place.</string>
+
+    <string name="settings_auto_archive">Auto-archive chats</string>
+    <string name="settings_auto_archive_days">Days without activity</string>
+    <string name="settings_auto_archive_fewer">Fewer days</string>
+    <string name="settings_auto_archive_more">More days</string>
+    <string name="settings_auto_archive_summary">Archives a chat after a set number of days without a new message or being opened</string>
+
+    <string name="settings_theme">Theme</string>
+    <!-- Theme names. System follows the phone's dark mode, using Porcelain by day and Stone by night. The others are
+         named after materials: porcelain, clay, cobalt (the blue glaze), stone and obsidian (black volcanic glass). -->
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_porcelain">Porcelain</string>
+    <string name="settings_theme_clay">Clay</string>
+    <string name="settings_theme_cobalt">Cobalt</string>
+    <string name="settings_theme_stone">Stone</string>
+    <string name="settings_theme_obsidian">Obsidian</string>
+
+    <string name="settings_in_app_notifications">In-app notifications</string>
+    <string name="settings_in_app_notifications_summary">Show a pill when another chat finishes or needs your answer</string>
+
+    <string name="settings_termux">Termux</string>
+    <string name="settings_termux_not_installed">Not installed</string>
+    <string name="settings_pi_version">Agent %1$s</string>
+    <string name="settings_pi_missing">Agent not installed</string>
+    <string name="settings_permissions">Permissions</string>
+    <string name="settings_permissions_summary">Background running, notifications and Termux</string>
+    <string name="settings_reinstall_pi">Reinstall the Pipkin agent</string>
+    <string name="settings_reinstall_running">Installing the Pipkin agent %1$s…</string>
+    <string name="settings_reinstall_done">The Pipkin agent %1$s is installed</string>
+
+    <string name="settings_version">Version</string>
+    <string name="settings_licenses">Open-source licenses</string>
+    <string name="settings_licenses_caption">Pipkin is open source under the MIT License. It\'s built with the code, fonts and icons below, each under its own license.</string>
+    <string name="settings_licenses_components">Code, fonts and icons</string>
+    <string name="settings_licenses_syntax">Syntax highlighting</string>
+    <string name="settings_privacy_policy">Privacy policy</string>
+    <string name="settings_no_browser">No app on this device can open web pages.</string>
+
+    <string name="login_title_claude">Sign in to Claude</string>
+    <string name="login_title_openai">Sign in to OpenAI</string>
+    <string name="login_title_gemini">Add a Gemini API key</string>
+    <string name="login_title_zai">Add a Z.ai Coding Plan key</string>
+    <string name="login_title_kimi">Add a Kimi Code API key</string>
+    <string name="login_title_openrouter">Add an OpenRouter API key</string>
+    <string name="login_starting">Starting sign-in…</string>
+    <string name="login_browser">Finish signing in with your browser</string>
+    <string name="login_open_again">Open again</string>
+    <string name="login_no_browser">No app on this phone can open the sign-in link.</string>
+    <string name="login_device_code">Enter this code on the sign-in page</string>
+    <string name="login_open_uri">Open %1$s</string>
+    <string name="login_copy_code">Copy code</string>
+    <string name="login_continue">Continue</string>
+    <string name="login_manual_code_helper">Paste the code or the full redirect URL if the browser didn\'t return automatically.</string>
+    <string name="login_signed_in">Signed in</string>
+    <string name="login_key_saved">Key saved</string>
+    <string name="login_failed">Sign-in failed.</string>
+    <string name="login_try_again">Try again</string>
+    <string name="claude_plugin_warning">Your Pro or Max plan won\'t cover Pipkin without a plugin. Anthropic bills third-party harnesses as extra usage, at API rates.</string>
+    <string name="claude_plugin_explanation">The pi-anthropic-auth plugin makes Pipkin\'s requests look like Claude Code\'s so that you can use your plan\'s token quotas with Pipkin. Although this practice is common in other harnesses, it does technically break Anthropic\'s terms of service. The option to one-click install this plugin is listed here as a setup convenience.</string>
+    <string name="claude_plugin_link">github.com/gotgenes/pi-anthropic-auth</string>
+    <string name="claude_plugin_skip">Skip</string>
+    <string name="claude_plugin_install">Install plugin</string>
+    <string name="claude_plugin_installing">Installing plugin…</string>
+    <string name="claude_plugin_installed">Plugin installed</string>
+    <string name="claude_plugin_failed">Couldn\'t install the plugin.</string>
+
+    <string name="provider_title_new">Add OpenAI-compatible API</string>
+    <string name="provider_id">Provider ID</string>
+    <string name="provider_id_hint">e.g. deepinfra</string>
+    <string name="provider_id_invalid">Use lowercase letters, digits and dashes (up to 40), starting with a letter or digit.</string>
+    <string name="provider_base_url">Base URL</string>
+    <string name="provider_base_url_hint">https://host/v1</string>
+    <string name="provider_api_key">API key</string>
+    <string name="provider_api_key_hint">Leave empty if the server needs none</string>
+    <string name="provider_show_key">Show</string>
+    <string name="provider_hide_key">Hide</string>
+    <string name="provider_api_type">API type</string>
+    <!-- The names of OpenAI's two APIs, kept in English like the API itself. -->
+    <string name="provider_api_completions" translatable="false">Chat Completions</string>
+    <string name="provider_api_responses" translatable="false">Responses</string>
+    <string name="provider_connection">Connection</string>
+    <string name="provider_check">Check</string>
+    <string name="provider_status_unchecked">Not checked</string>
+    <string name="provider_status_needs_url">Enter the base URL first</string>
+    <string name="provider_status_ready">Check to load this endpoint\'s models</string>
+    <string name="provider_status_outdated">Details changed since the last check</string>
+    <string name="provider_status_checking">Checking…</string>
+    <string name="provider_status_connected">Connected</string>
+    <string name="provider_status_failed">Couldn\'t connect</string>
+    <!-- Pipkin couldn't ask Pi which providers you're signed in to. -->
+    <string name="settings_auth_refresh_failed">Could not read sign-in status.</string>
+    <plurals name="provider_models_available">
+        <item quantity="one">%1$d model available</item>
+        <item quantity="other">%1$d models available</item>
+    </plurals>
+    <string name="provider_error_unauthorized">API key not accepted</string>
+    <string name="provider_error_unauthorized_hint">The server turned this key down. Check that it\'s complete and still active.</string>
+    <string name="provider_error_no_key">This server needs an API key</string>
+    <string name="provider_error_no_key_hint">It turned down the request without one. Enter the key it expects, then check again.</string>
+    <string name="provider_error_not_found">No models list at this URL</string>
+    <string name="provider_error_not_found_hint">Nothing answered at /models. OpenAI-compatible base URLs usually end in /v1.</string>
+    <string name="provider_error_rate_limited">Too many requests</string>
+    <string name="provider_error_rate_limited_hint">The server is limiting requests for this key. Wait a moment, then check again.</string>
+    <string name="provider_error_server">The server had a problem</string>
+    <string name="provider_error_server_hint">It answered with an error of its own. Try again in a moment.</string>
+    <string name="provider_error_http">The server refused the request</string>
+    <string name="provider_error_http_hint">Check the base URL and API key.</string>
+    <string name="provider_error_network">Couldn\'t reach the server</string>
+    <string name="provider_error_network_hint">Check the base URL and that your phone is online.</string>
+    <string name="provider_error_timeout">No response</string>
+    <string name="provider_error_timeout_hint">The server didn\'t answer within 15 seconds. Check the base URL, or try again if the server is slow.</string>
+    <string name="provider_error_bad_url">Not a web address</string>
+    <string name="provider_error_bad_url_hint">Enter the full base URL, starting with https://, such as https://api.example.com/v1.</string>
+    <string name="provider_error_bad_response">Not an OpenAI-compatible API</string>
+    <string name="provider_error_bad_response_hint">The server answered, but not with a list of models. Check that the base URL points at the API rather than a website.</string>
+    <string name="provider_error_unknown">Pipkin couldn\'t run the check</string>
+    <string name="provider_check_needed">Check the connection to add models.</string>
+    <string name="provider_models">Models</string>
+    <string name="provider_add_models">Add models</string>
+    <string name="provider_models_empty">No models yet.</string>
+    <string name="provider_server_no_models">The server lists no models. Download or load one on it, then check again, or add a model by its ID.</string>
+    <string name="provider_model_invalid">Fix this model\'s settings</string>
+    <string name="provider_discard_title">Discard changes?</string>
+    <string name="provider_discard_text">Your changes aren\'t saved.</string>
+    <string name="provider_discard">Discard</string>
+    <string name="provider_keep_editing">Keep editing</string>
+    <!-- The provider page's header while models are selected; %1$d: how many. -->
+    <plurals name="provider_models_selected">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <string name="provider_models_clear_selection">Clear selection</string>
+    <string name="provider_models_select_all">Select all</string>
+    <!-- What tapping a model does while models are selected; %1$s: the model's name. -->
+    <string name="provider_models_select">Select %1$s</string>
+    <!-- What tapping a selected model does; %1$s: the model's name. -->
+    <string name="provider_models_deselect">Deselect %1$s</string>
+    <string name="provider_models_remove_selected">Remove selected models</string>
+    <!-- %1$d: how many selected models are removed. -->
+    <plurals name="provider_models_remove_title">
+        <item quantity="one">Remove this model?</item>
+        <item quantity="other">Remove %1$d models?</item>
+    </plurals>
+    <plurals name="provider_models_remove_text">
+        <item quantity="one">It comes off this provider when you save. You can add it again from Add models.</item>
+        <item quantity="other">They come off this provider when you save. You can add them again from Add models.</item>
+    </plurals>
+    <string name="provider_models_remove">Remove</string>
+
+    <string name="models_search">Search or enter a model ID</string>
+    <string name="models_none">The provider lists no models. Enter a model ID above to add one.</string>
+    <!-- %1$s: why the provider's list of models couldn't be read, for example "HTTP 401: Invalid Authentication". -->
+    <string name="models_list_failed">Couldn\'t get the provider\'s list of models, so these are the ones Pi knows: %1$s</string>
+    <!-- %1$s: the model ID typed into the search, for example "openai/gpt-4". -->
+    <string name="models_add_custom">Add \"%1$s\" as a custom model</string>
+    <string name="models_done">Done</string>
+
+    <string name="model_name">Display name</string>
+    <string name="model_images">Accepts images</string>
+    <string name="model_thinking">Supports thinking</string>
+    <string name="model_levels">Thinking levels</string>
+    <string name="model_level_off">Off</string>
+    <string name="model_level_minimal">Minimal</string>
+    <string name="model_level_low">Low</string>
+    <string name="model_level_medium">Medium</string>
+    <string name="model_level_high">High</string>
+    <string name="model_level_xhigh">XHigh</string>
+    <string name="model_level_max">Max</string>
+    <string name="model_context">Context window (tokens)</string>
+    <string name="model_max_tokens">Max output tokens</string>
+    <string name="model_count_invalid">Enter a whole number above 0.</string>
+    <string name="model_cost">Cost per million tokens (USD)</string>
+    <string name="model_cost_input">Input</string>
+    <string name="model_cost_output">Output</string>
+    <string name="model_cost_cache_read">Cache read</string>
+    <string name="model_cost_cache_write">Cache write</string>
+    <string name="model_cost_hint">Optional. Cache prices default to 0.</string>
+    <string name="model_cost_invalid">Enter input and output prices, all 0 or more.</string>
+    <string name="model_remove">Remove model</string>
+    <string name="model_summary_thinking">Thinking</string>
+    <string name="model_summary_images">Images</string>
+    <string name="model_summary_context">%1$s context</string>
+    <!-- A token count shortened to thousands or millions, such as the 272K in "272K context". %1$s: the count of thousands or millions, such as 272 or 1.05. -->
+    <string name="model_tokens_thousands">%1$sK</string>
+    <string name="model_tokens_millions">%1$sM</string>
+
+    <string name="subscription_models_empty">No models selected. Add models to use this provider.</string>
+    <string name="provider_save">Save</string>
+    <string name="provider_remove">Remove provider</string>
+    <string name="provider_remove_title">Remove %1$s?</string>
+    <string name="provider_remove_text">Pipkin forgets this provider, its models and its API key.</string>
+    <string name="provider_cancel">Cancel</string>
+    <string name="provider_failed">The Termux helper failed.</string>
+</resources>

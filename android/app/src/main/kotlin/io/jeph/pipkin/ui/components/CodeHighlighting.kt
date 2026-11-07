@@ -1,0 +1,245 @@
+package io.jeph.pipkin.ui.components
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import io.jeph.pipkin.syntax.CaptureSpan
+import io.jeph.pipkin.syntax.Grammar
+import io.jeph.pipkin.syntax.LoadedGrammar
+import io.jeph.pipkin.syntax.SyntaxSession
+import io.jeph.pipkin.syntax.loadGrammar
+import io.jeph.pipkin.ui.theme.PipkinColors
+import io.jeph.pipkin.ui.theme.pipkinColors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.withContext
+
+/**
+ * [code] coloured for [language] (a fence name or file extension), or plain when no grammar knows it.
+ * Highlighting runs off the main thread, one pass at a time with the latest text, reparsing only what
+ * changed; while a streamed block grows, the colours already computed stay on its start instead of
+ * flashing back to plain.
+ */
+@Composable
+internal fun rememberHighlightedCode(code: String, language: String?): AnnotatedString {
+  val grammar = language?.let(Grammar::forName) ?: return AnnotatedString(code)
+  val themeColors = pipkinColors
+  val palette = remember(themeColors) { palette(themeColors) }
+  val assets = LocalContext.current.assets
+  val latestCode by rememberUpdatedState(code)
+  var highlighted by remember(grammar, palette) { mutableStateOf<AnnotatedString?>(null) }
+  LaunchedEffect(grammar, palette) {
+    val loaded = withContext(Dispatchers.Default) { loadGrammar(grammar, assets) }
+    val colors = captureColors(loaded, palette)
+    // Cancelling waits for a running parse to return, so the session is never closed under one.
+    SyntaxSession(loaded).use { session ->
+      snapshotFlow { latestCode }.conflate().collect { text ->
+        highlighted = withContext(Dispatchers.Default) {
+          paint(text, session.captures(text) { colors[it] != null }, colors::get)
+        }
+      }
+    }
+  }
+  return withPlainTail(highlighted, code)
+}
+
+/**
+ * [code] coloured by [grammar] for the [theme]'s palette, in one parse on the calling thread, for callers that colour
+ * many texts off the main thread themselves.
+ */
+internal fun highlightCode(code: String, grammar: LoadedGrammar, theme: PipkinColors): AnnotatedString {
+  val colors = captureColors(grammar, palette(theme))
+  return SyntaxSession(grammar).use { session ->
+    paint(code, session.captures(code) { colors[it] != null }, colors::get)
+  }
+}
+
+/** Each of [grammar]'s captures' colour in [palette], by capture index; null for one that colours nothing. */
+private fun captureColors(grammar: LoadedGrammar, palette: Map<Token, Color>): List<Color?> =
+  grammar.captureNames.map { name -> tokenFor(name)?.let(palette::getValue) }
+
+/** [highlighted] extended with the rest of [code] when [code] continues it; otherwise [code] unstyled. */
+internal fun withPlainTail(highlighted: AnnotatedString?, code: String): AnnotatedString = when {
+  highlighted == null || !code.startsWith(highlighted.text) -> AnnotatedString(code)
+  highlighted.length == code.length -> highlighted
+  else -> highlighted + AnnotatedString(code.substring(highlighted.length))
+}
+
+/**
+ * The language [path]'s file name picks, which [Grammar.forName] reads like a fence name: a file known by its whole
+ * name (`Makefile`, `.bashrc`, `Dockerfile.dev`, `.env.local`) picks its language, any other its extension. Null
+ * without either.
+ */
+internal fun fileLanguage(path: String): String? {
+  val name = path.substringAfterLast('/')
+  val lowercaseName = name.lowercase()
+  return when {
+    lowercaseName in FILE_NAME_LANGUAGES -> FILE_NAME_LANGUAGES.getValue(lowercaseName)
+    lowercaseName.startsWith("dockerfile.") -> "dockerfile"
+    lowercaseName.startsWith(".env.") -> "sh"
+    else -> name.substringAfterLast('.', "").ifEmpty { null }
+  }
+}
+
+/** Files with no extension, or a dotfile's name in its place, by lowercase name. */
+private val FILE_NAME_LANGUAGES = mapOf(
+  "containerfile" to "dockerfile",
+  "dockerfile" to "dockerfile",
+  "gnumakefile" to "make",
+  "makefile" to "make",
+  ".bash_login" to "sh",
+  ".bash_logout" to "sh",
+  ".bash_profile" to "sh",
+  ".bashrc" to "sh",
+  ".envrc" to "sh",
+  ".profile" to "sh",
+  ".zlogin" to "sh",
+  ".zlogout" to "sh",
+  ".zprofile" to "sh",
+  ".zshenv" to "sh",
+  ".zshrc" to "sh",
+  ".editorconfig" to "ini",
+  ".gitconfig" to "ini",
+  ".gitmodules" to "ini",
+)
+
+/**
+ * Each line of this text with its styles, split at `\n`, `\r\n` or `\r` like [String.lines]. One pass over the
+ * styles, so a whole file's worth of lines costs about its length rather than lines times styles.
+ */
+internal fun AnnotatedString.splitLines(): List<AnnotatedString> {
+  val styles = spanStyles.sortedBy { it.start }
+  val lines = mutableListOf<AnnotatedString>()
+  var next = 0
+  val open = mutableListOf<AnnotatedString.Range<SpanStyle>>()
+  fun addLine(start: Int, end: Int) {
+    while (next < styles.size && styles[next].start < end) open += styles[next++]
+    val lineStyles = open.mapNotNull { style ->
+      if (style.end <= start || style.start >= end) return@mapNotNull null
+      AnnotatedString.Range(style.item, maxOf(style.start, start) - start, minOf(style.end, end) - start)
+    }
+    open.removeAll { it.end <= end }
+    lines += AnnotatedString(text.substring(start, end), lineStyles)
+  }
+  // A scan rather than Regex.findAll: on Android each match makes a Matcher that copies the whole text, so a file of
+  // many lines would take its length times its line count.
+  var start = 0
+  var index = 0
+  while (index < length) {
+    val char = text[index]
+    if (char != '\n' && char != '\r') {
+      index++
+      continue
+    }
+    addLine(start, index)
+    index += if (char == '\r' && text.getOrNull(index + 1) == '\n') 2 else 1
+    start = index
+  }
+  addLine(start, length)
+  return lines
+}
+
+/** How Pipkin colours a highlight capture. [Plain] takes the text's own colour, even inside a coloured capture. */
+internal enum class Token { Plain, Keyword, String, Constant, Comment, Function, Type, Tag }
+
+/**
+ * The token a capture name colours as: its own entry, else its parent's (`function.method.builtin`, then
+ * `function.method`, then `function`). Null for captures that colour nothing, such as `@_name` helpers.
+ */
+internal fun tokenFor(capture: String): Token? {
+  var name = capture
+  while (true) {
+    TOKENS[name]?.let { return it }
+    if ('.' !in name) return null
+    name = name.substringBeforeLast('.')
+  }
+}
+
+/**
+ * [text] coloured by [spans], outermost first as [io.jeph.pipkin.syntax.captureSpans] gives them, so an
+ * inner capture repaints its part of an outer one. [colorOf] gives a capture's colour: null leaves what is
+ * under it, [Color.Unspecified] makes it plain.
+ */
+internal fun paint(text: String, spans: List<CaptureSpan>, colorOf: (capture: Int) -> Color?): AnnotatedString {
+  val colors = arrayOfNulls<Color>(text.length)
+  for (span in spans) {
+    val color = colorOf(span.capture) ?: continue
+    // Kept inside the text: a range past the end would throw and take the app down with it.
+    colors.fill(color, span.start.coerceIn(0, text.length), span.end.coerceIn(0, text.length))
+  }
+  return buildAnnotatedString {
+    append(text)
+    var start = 0
+    while (start < text.length) {
+      val color = colors[start]
+      var end = start + 1
+      while (end < text.length && colors[end] == color) end++
+      if (color != null && color != Color.Unspecified) addStyle(SpanStyle(color = color), start, end)
+      start = end
+    }
+  }
+}
+
+private val TOKENS = mapOf(
+  "comment" to Token.Comment,
+  "string" to Token.String,
+  "character" to Token.String,
+  "string.escape" to Token.Constant,
+  "string.special" to Token.Constant,
+  "character.special" to Token.Constant,
+  "escape" to Token.Constant,
+  "keyword" to Token.Keyword,
+  "conditional" to Token.Keyword,
+  "repeat" to Token.Keyword,
+  "include" to Token.Keyword,
+  "exception" to Token.Keyword,
+  "operator" to Token.Keyword,
+  "preproc" to Token.Keyword,
+  "punctuation.special" to Token.Keyword,
+  "number" to Token.Constant,
+  "identifier.constant" to Token.Constant,
+  "float" to Token.Constant,
+  "boolean" to Token.Constant,
+  "constant" to Token.Constant,
+  "attribute" to Token.Constant,
+  "tag.attribute" to Token.Constant,
+  "variable.builtin" to Token.Constant,
+  "function" to Token.Function,
+  "method" to Token.Function,
+  "constructor" to Token.Function,
+  "type" to Token.Type,
+  "module" to Token.Type,
+  "namespace" to Token.Type,
+  "tag" to Token.Tag,
+  "tag.delimiter" to Token.Plain,
+  "variable" to Token.Plain,
+  "property" to Token.Plain,
+  "field" to Token.Plain,
+  "label" to Token.Plain,
+  "punctuation" to Token.Plain,
+  "delimiter" to Token.Plain,
+  "embedded" to Token.Plain,
+  "none" to Token.Plain,
+)
+
+/** The syntax palette, by token, from the theme's own roles so code reads as part of the app. */
+private fun palette(colors: PipkinColors) = mapOf(
+  Token.Plain to Color.Unspecified,
+  Token.Keyword to colors.accent,
+  Token.String to colors.dotSuccess,
+  Token.Constant to colors.info,
+  Token.Comment to colors.codeComment,
+  Token.Function to colors.dotWarning,
+  Token.Type to colors.extension,
+  Token.Tag to colors.dotDanger,
+)

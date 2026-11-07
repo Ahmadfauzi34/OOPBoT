@@ -1,30 +1,17 @@
-//! FFI (C-ABI) untuk `liboopbot.so` (`cdylib`).
+//! FFI (C-ABI + Android JNI) untuk `liboopbot.so` (`cdylib`).
 //!
-//! Memungkinkan aplikasi Android (Kotlin/Java via JNA/JNI, C/C++, atau Python/Node)
-//! memanggil seluruh engine `OOPBoT` secara in-process lewat protokol JSON satu pintu:
-//!
-//! - `oopbot_version() -> *const c_char`
-//! - `oopbot_engine_new(api_key, default_model, auto_approve) -> *mut OopbotHandle`
-//! - `oopbot_engine_request(handle, request_json) -> *mut c_char`
-//! - `oopbot_string_free(ptr)`
-//! - `oopbot_engine_free(handle)`
-//!
-//! Operasi JSON yang didukung `oopbot_engine_request` (mirip `utility` & `rpc` di Pipkin):
-//! - `{"op": "models"}` → daftar model & model aktif
-//! - `{"op": "set_model", "model": "..."}` → ganti model tab aktif
-//! - `{"op": "tabs"}` → daftar semua tab & tab aktif
-//! - `{"op": "new_tab", "model": "..."}` → buat tab baru
-//! - `{"op": "switch_tab", "tab": "1"}` → pindah tab
-//! - `{"op": "close_tab", "tab": "2"}` → tutup tab
-//! - `{"op": "timeline"}` → ambil `TimelineEntry` terlipat (`StepsFold`) tab aktif
-//! - `{"op": "chat", "prompt": "..."}` → jalankan 1 giliran agen & kembalikan balasan + timeline
+//! Menyediakan:
+//! 1. **C-ABI (`oopbot_*`)**: untuk pemanggilan dari C/C++, JNA, Python, atau Node.
+//! 2. **Android JNI (`Java_io_jeph_pipkin_host_OopbotBridge_*`)**: untuk pemanggilan
+//!    langsung dari aplikasi Android Kotlin (`OopbotBridge.kt`) lewat `System.loadLibrary("oopbot")`
+//!    tanpa memerlukan dependensi crate tambahan.
 
 use crate::agent::{Agent, Approver, GeminiAgent};
 use crate::events::{AgentEvent, EventSink};
 use crate::gemini::GeminiClient;
 use crate::tools::ToolRegistry;
 use serde_json::{json, Value};
-use std::ffi::{CStr, CString};
+use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 
 struct AutoOrDenyApprover {
@@ -62,6 +49,43 @@ unsafe fn from_c_str(ptr: *const c_char) -> Option<String> {
     Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
 }
 
+fn create_handle(api_key: String, default_model: String, auto_approve: bool) -> *mut OopbotHandle {
+    if api_key.trim().is_empty() {
+        return std::ptr::null_mut();
+    }
+    let model = if default_model.trim().is_empty() {
+        "gemini-3.5-flash-lite".to_string()
+    } else {
+        default_model
+    };
+
+    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    else {
+        return std::ptr::null_mut();
+    };
+
+    let agent_model = model.clone();
+    let Ok(client) = GeminiClient::new(api_key, model) else {
+        return std::ptr::null_mut();
+    };
+
+    let agent = GeminiAgent::with_event_sink(
+        "OOPBoT",
+        client,
+        ToolRegistry::with_defaults(),
+        Box::new(AutoOrDenyApprover {
+            allow: auto_approve,
+        }),
+        Box::new(SilentEventSink),
+        25,
+    );
+    agent.set_active_model(&agent_model);
+
+    Box::into_raw(Box::new(OopbotHandle { runtime, agent }))
+}
+
 /// Versi statis library `liboopbot.so`.
 #[no_mangle]
 pub extern "C" fn oopbot_version() -> *const c_char {
@@ -78,36 +102,11 @@ pub unsafe extern "C" fn oopbot_engine_new(
     default_model: *const c_char,
     auto_approve: bool,
 ) -> *mut OopbotHandle {
-    let Some(key) = from_c_str(api_key).filter(|s| !s.trim().is_empty()) else {
+    let Some(key) = from_c_str(api_key) else {
         return std::ptr::null_mut();
     };
-    let model = from_c_str(default_model)
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "gemini-3.5-flash-lite".to_string());
-
-    let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-    else {
-        return std::ptr::null_mut();
-    };
-
-    let Ok(client) = GeminiClient::new(key, model) else {
-        return std::ptr::null_mut();
-    };
-
-    let agent = GeminiAgent::with_event_sink(
-        "OOPBoT",
-        client,
-        ToolRegistry::with_defaults(),
-        Box::new(AutoOrDenyApprover {
-            allow: auto_approve,
-        }),
-        Box::new(SilentEventSink),
-        25,
-    );
-
-    Box::into_raw(Box::new(OopbotHandle { runtime, agent }))
+    let model = from_c_str(default_model).unwrap_or_default();
+    create_handle(key, model, auto_approve)
 }
 
 /// Kirim perintah JSON ke engine dan terima respons JSON (`*mut c_char`).
@@ -135,7 +134,7 @@ pub unsafe extern "C" fn oopbot_engine_request(
     to_c_string(resp)
 }
 
-fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
+pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
     match req["op"].as_str().unwrap_or("") {
         "models" => json!({
             "ok": true,
@@ -217,6 +216,110 @@ pub unsafe extern "C" fn oopbot_engine_free(handle: *mut OopbotHandle) {
     if !handle.is_null() {
         let _ = Box::from_raw(handle);
     }
+}
+
+// ===========================================================================
+// Android JNI Bridge (`io.jeph.pipkin.host.OopbotBridge`)
+// ===========================================================================
+
+pub type JniEnv = *mut *const JniNativeInterface;
+pub type JObject = *mut c_void;
+pub type JString = *mut c_void;
+pub type JLong = i64;
+pub type JBoolean = u8;
+
+/// Tabel fungsi minimal `JNINativeInterface_` sesuai spesifikasi JNI C ABI:
+/// - slot 167: `NewStringUTF`
+/// - slot 169: `GetStringUTFChars`
+/// - slot 170: `ReleaseStringUTFChars`
+#[repr(C)]
+pub struct JniNativeInterface {
+    _reserved: [*const c_void; 167],
+    new_string_utf: unsafe extern "C" fn(JniEnv, *const c_char) -> JString,
+    _get_string_utf_len: *const c_void,
+    get_string_utf_chars: unsafe extern "C" fn(JniEnv, JString, *mut JBoolean) -> *const c_char,
+    release_string_utf_chars: unsafe extern "C" fn(JniEnv, JString, *const c_char),
+}
+
+unsafe fn jstring_to_rust(env: JniEnv, s: JString) -> Option<String> {
+    if env.is_null() || s.is_null() {
+        return None;
+    }
+    let funcs = &**env;
+    let chars = (funcs.get_string_utf_chars)(env, s, std::ptr::null_mut());
+    if chars.is_null() {
+        return None;
+    }
+    let owned = CStr::from_ptr(chars).to_string_lossy().into_owned();
+    (funcs.release_string_utf_chars)(env, s, chars);
+    Some(owned)
+}
+
+unsafe fn rust_to_jstring(env: JniEnv, text: &str) -> JString {
+    if env.is_null() {
+        return std::ptr::null_mut();
+    }
+    let funcs = &**env;
+    let cstr = CString::new(text)
+        .unwrap_or_else(|_| CString::new("{\"ok\":false,\"error\":\"invalid utf8\"}").unwrap());
+    (funcs.new_string_utf)(env, cstr.as_ptr())
+}
+
+/// `OopbotBridge.version(): String`
+#[no_mangle]
+pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
+    env: JniEnv,
+    _class: JObject,
+) -> JString {
+    rust_to_jstring(env, env!("CARGO_PKG_VERSION"))
+}
+
+/// `OopbotBridge.engineNew(apiKey: String, defaultModel: String, autoApprove: Boolean): Long`
+#[no_mangle]
+pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
+    env: JniEnv,
+    _class: JObject,
+    api_key: JString,
+    default_model: JString,
+    auto_approve: JBoolean,
+) -> JLong {
+    let Some(key) = jstring_to_rust(env, api_key) else {
+        return 0;
+    };
+    let model = jstring_to_rust(env, default_model).unwrap_or_default();
+    create_handle(key, model, auto_approve != 0) as JLong
+}
+
+/// `OopbotBridge.engineRequest(handle: Long, requestJson: String): String`
+#[no_mangle]
+pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
+    env: JniEnv,
+    _class: JObject,
+    handle: JLong,
+    request_json: JString,
+) -> JString {
+    let ptr = handle as *mut OopbotHandle;
+    if ptr.is_null() {
+        return rust_to_jstring(env, r#"{"ok":false,"error":"null handle"}"#);
+    }
+    let Some(raw) = jstring_to_rust(env, request_json) else {
+        return rust_to_jstring(env, r#"{"ok":false,"error":"null requestJson"}"#);
+    };
+    let Ok(req) = serde_json::from_str::<Value>(&raw) else {
+        return rust_to_jstring(env, r#"{"ok":false,"error":"invalid JSON"}"#);
+    };
+    let resp = dispatch_request(&*ptr, &req);
+    rust_to_jstring(env, &resp.to_string())
+}
+
+/// `OopbotBridge.engineFree(handle: Long)`
+#[no_mangle]
+pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineFree(
+    _env: JniEnv,
+    _class: JObject,
+    handle: JLong,
+) {
+    oopbot_engine_free(handle as *mut OopbotHandle);
 }
 
 #[cfg(test)]

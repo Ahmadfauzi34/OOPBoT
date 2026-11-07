@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Porcelain's launcher icon, which System uses too, and the monochrome layer of every theme's icon. The pot's
+     outline lives in values/launcher_icon.xml, shared with the other themes' icons. SimmeringPot draws the named
+     groups as cached paths instead of rendering the vector, so it ignores this group's transform.
+     The pot is scaled 1.3x about (256, 272), the centre of the smallest circle around it, which lands on the
+     icon's centre. Its farthest point, a leg's end, is then 210 units from the centre, inside the 66dp
+     (235-unit) circle that every launcher mask shape keeps visible. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="768" android:viewportHeight="768">
+    <group android:translateX="128" android:translateY="112" android:pivotX="256" android:pivotY="272" android:scaleX="1.3" android:scaleY="1.3">
+        <group android:name="handle">
+            <path android:pathData="@string/pot_handle" android:fillColor="#2F4BD8" />
+        </group>
+        <group android:name="legs">
+            <path android:pathData="@string/pot_legs" android:fillColor="@android:color/transparent" android:strokeColor="#2F4BD8" android:strokeWidth="24" android:strokeLineCap="round" />
+        </group>
+        <group android:name="body">
+        <path android:pathData="@string/pot_body" android:fillColor="#2F4BD8" android:fillType="evenOdd" />
+        </group>
+        <group android:name="lid">
+            <path android:pathData="@string/pot_lid" android:fillColor="#6F8DFF" />
+        </group>
+        <group android:name="steamLeft">
+            <path android:pathData="@string/pot_steam_left" android:fillColor="@android:color/transparent" android:strokeColor="#565D7A" android:strokeWidth="17" android:strokeLineCap="round" />
+        </group>
+        <group android:name="steamRight">
+            <path android:pathData="@string/pot_steam_right" android:fillColor="@android:color/transparent" android:strokeColor="#565D7A" android:strokeWidth="17" android:strokeLineCap="round" />
+        </group>
+    </group>
+</vector>

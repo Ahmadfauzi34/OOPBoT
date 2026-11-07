@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Header, and the chat's actions in the session sheet -->
+    <string name="chat_new_chat">New chat</string>
+    <string name="chat_toggle_sidebar">Workspaces</string>
+    <string name="chat_action_rename">Rename</string>
+    <string name="chat_action_reload">Reload agent</string>
+    <string name="chat_action_copy_path">Copy session path</string>
+    <string name="chat_action_archive">Archive chat</string>
+    <string name="chat_rename_title">Rename chat</string>
+    <string name="chat_rename_hint">Chat name</string>
+    <string name="chat_save">Save</string>
+    <string name="chat_cancel">Cancel</string>
+    <string name="chat_reload_confirm_title">Stop and reload?</string>
+    <string name="chat_reload_confirm_text">Pipkin is working or running background tasks. Reloading stops them.</string>
+    <string name="chat_reload_confirm">Stop and reload</string>
+
+    <!-- Stream -->
+    <string name="chat_starting">Starting…</string>
+    <string name="chat_loading">Loading…</string>
+    <string name="chat_installing">Installing the Pipkin agent…</string>
+    <string name="chat_retry">Retry</string>
+    <string name="chat_set_up_termux">Set up Termux</string>
+    <string name="chat_open_termux">Open Termux</string>
+    <string name="chat_open_termux_hint">Termux shows why Pipkin\'s helper didn\'t start. Once it\'s running, Pipkin switches back on its own. If Termux asks for the setup command, tap Set up Termux.</string>
+    <string name="chat_exit_code">Agent stopped (exit %1$d)</string>
+    <string name="chat_agent_stopped">Agent stopped</string>
+    <string name="chat_show_details">Show details</string>
+    <string name="chat_hide_details">Hide details</string>
+    <string name="chat_restart">Restart</string>
+    <string name="chat_empty">Message Pipkin to start</string>
+    <string name="chat_no_model">No model available</string>
+    <string name="chat_sign_in">Sign in</string>
+    <string name="chat_scroll_to_bottom">Scroll to bottom</string>
+    <string name="chat_image">Attached image</string>
+    <string name="chat_copy_reply">Copy reply</string>
+    <string name="chat_copy_message">Copy message</string>
+    <!-- Labels the user's own messages in the chat, before the time each was sent. Shown in capitals. -->
+    <string name="chat_you">You</string>
+    <string name="chat_copy_details">Copy</string>
+    <string name="chat_extension_message">Extension message</string>
+    <string name="chat_notice_info">Info</string>
+    <string name="chat_notice_warning">Warning</string>
+    <string name="chat_notice_error">Error</string>
+    <string name="chat_show_more">Show more</string>
+    <string name="chat_show_less">Show less</string>
+    <string name="chat_copied">Copied</string>
+    <string name="chat_duration_minutes">%1$dm %2$ds</string>
+    <string name="chat_duration_seconds">%1$ds</string>
+    <plurals name="chat_background_tasks_running">
+        <item quantity="one">%1$d background task running</item>
+        <item quantity="other">%1$d background tasks running</item>
+    </plurals>
+
+    <!-- Notes in the chat while Pi works on the conversation itself. -->
+    <string name="chat_notice_retrying">Retrying…</string>
+    <string name="chat_notice_compacting">Compacting context…</string>
+    <string name="chat_notice_compacted">Context compacted</string>
+    <!-- The connection to the Termux side dropped without word of Pi exiting; what ended it isn't known. -->
+    <string name="chat_notice_connection_lost">Lost the connection to Termux</string>
+    <!-- Error rows in the chat, shown when Pi gives no reason of its own. -->
+    <string name="chat_error_request_failed">Request failed</string>
+    <string name="chat_error_compaction_failed">Compaction failed</string>
+    <!-- %1$s is how Pi names the extension, such as command:deploy; %2$s is the extension's own error message. -->
+    <string name="chat_error_extension">Extension \"%1$s\" error: %2$s</string>
+
+    <!-- Tool calls -->
+    <string name="chat_thinking">Thinking</string>
+    <string name="chat_tool_shell">Shell</string>
+    <string name="chat_tool_read">Read</string>
+    <string name="chat_tool_write">Write</string>
+    <string name="chat_tool_edit">Edit</string>
+    <string name="chat_arguments">Arguments</string>
+    <string name="chat_output">Output</string>
+    <string name="chat_no_output">No output</string>
+    <string name="chat_running">Running…</string>
+    <!-- Notes at the end of a step's row. %1$s is a number of lines, already formatted. -->
+    <string name="chat_figure_added">+%1$s</string>
+    <string name="chat_figure_removed">−%1$s</string>
+    <!-- %1$s is a shell command's exit code, already formatted. -->
+    <string name="chat_figure_exit">exit %1$s</string>
+    <string name="chat_figure_timed_out">timed out</string>
+    <string name="chat_figure_stopped">stopped</string>
+
+    <!-- A run of the agent's steps folded into one line: its state, then counts. -->
+    <string name="chat_steps_working">Working</string>
+    <string name="chat_steps_done">Done</string>
+    <string name="chat_steps_stopped">Stopped</string>
+    <plurals name="chat_steps_count">
+        <!-- %1$s is the number of steps, already formatted. -->
+        <item quantity="one">%1$s step</item>
+        <item quantity="other">%1$s steps</item>
+    </plurals>
+    <string name="chat_steps_expand">Show steps</string>
+    <string name="chat_steps_collapse">Hide steps</string>
+
+    <!-- Composer -->
+    <string name="chat_placeholder">Message Pipkin…</string>
+    <string name="chat_attach">Attach</string>
+    <string name="chat_attach_photos">Photos</string>
+    <string name="chat_attach_files">Files</string>
+    <string name="chat_images_text_only">Text-only model</string>
+    <string name="chat_paste_images_text_only">This model reads only text, so the image wasn\'t attached</string>
+    <string name="chat_remove_attachment">Remove attachment</string>
+    <string name="chat_image_failed">Couldn\'t read that image</string>
+    <string name="chat_file_failed">Couldn\'t read that file</string>
+    <string name="chat_files_too_large">Files can add up to 10 MB per message</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_stop">Stop</string>
+    <string name="chat_steering">Steering</string>
+    <string name="chat_steering_edit">Edit</string>
+    <string name="chat_steering_send_now">Send now</string>
+    <string name="chat_steering_more">+%1$d</string>
+    <plurals name="chat_steering_attachments">
+        <item quantity="one">%1$d attachment</item>
+        <item quantity="other">%1$d attachments</item>
+    </plurals>
+    <string name="chat_model">Model</string>
+    <string name="chat_no_model_chip">No model</string>
+    <string name="chat_model_search">Search models</string>
+    <string name="chat_model_search_empty">No matching models</string>
+    <string name="chat_reasoning">Reasoning effort</string>
+
+    <!-- Slash commands; descriptions follow Pi's own where Pipkin does the same thing -->
+    <string name="chat_commands_loading">Loading commands…</string>
+    <string name="chat_commands_empty">No commands found</string>
+    <!-- Where a slash-menu command comes from, at the end of its row. Shown in capitals. -->
+    <string name="chat_command_source_builtin">Built-in</string>
+    <string name="chat_command_source_extension">Extension</string>
+    <string name="chat_command_source_prompt">Prompt</string>
+    <string name="chat_command_source_skill">Skill</string>
+    <string name="command_settings">Open settings</string>
+    <string name="command_model">Select model</string>
+    <string name="command_thinking">Set thinking level</string>
+    <string name="command_export">Export session as HTML (optionally give a path)</string>
+    <string name="command_copy">Copy last agent message to clipboard</string>
+    <string name="command_name">Set session display name</string>
+    <string name="command_session">Show session info and stats</string>
+    <string name="command_fork">Create a new fork from a previous user message</string>
+    <string name="command_clone">Duplicate the current session at the current position</string>
+    <string name="command_login">Configure provider authentication</string>
+    <string name="command_logout">Remove provider authentication</string>
+    <string name="command_new">Start a new session</string>
+    <string name="command_compact">Manually compact the session context</string>
+    <string name="command_resume">Resume a different session</string>
+    <string name="command_reload">Reload extensions, skills, prompts and context files</string>
+    <string name="chat_copy_nothing">No agent messages to copy yet</string>
+    <string name="chat_exported">Session exported to %1$s</string>
+    <string name="chat_fork_title">Fork from a message</string>
+    <string name="chat_fork_nothing">No messages to fork from</string>
+    <string name="chat_forked">Forked to new session</string>
+    <string name="chat_cloned">Cloned to new session</string>
+    <string name="chat_cancelled_by_extension">An extension cancelled this</string>
+    <string name="chat_thinking_levels">Thinking levels: %1$s</string>
+
+    <!-- Session info sheet (/session) -->
+    <string name="session_info">Session info</string>
+    <string name="session_name">Name</string>
+    <string name="session_file">File</string>
+    <string name="session_in_memory">In-memory</string>
+    <string name="session_id">ID</string>
+    <string name="session_messages">Messages</string>
+    <string name="session_total">Total</string>
+    <string name="session_user">User</string>
+    <string name="session_assistant">Assistant</string>
+    <string name="session_tool_calls">Tool calls</string>
+    <string name="session_tool_results">Tool results</string>
+    <string name="session_tokens">Tokens</string>
+    <string name="session_input">Input</string>
+    <string name="session_cached">Cached</string>
+    <string name="session_output">Output</string>
+    <string name="session_context">Context</string>
+    <string name="session_context_value">%1$s of %2$s (%3$d%%)</string>
+    <string name="session_context_unknown">%1$s window</string>
+    <string name="session_cost">Cost</string>
+
+    <!-- Extension dialogs -->
+    <string name="chat_choose">Choose an option</string>
+    <string name="chat_confirm_title">Confirm</string>
+    <string name="chat_input_title">Pipkin needs input</string>
+    <string name="chat_submit">Submit</string>
+    <string name="chat_dismiss">Dismiss</string>
+    <string name="chat_yes">Yes</string>
+    <string name="chat_no">No</string>
+    <string name="chat_dialog_counter">%1$d of %2$d</string>
+    <string name="chat_dialog_seconds_left">%1$ds</string>
+    <!-- Above a dialog's title when one of several subagents asked it and Pipkin can't tell which. -->
+    <string name="chat_dialog_from_subagents">From a subagent</string>
+    <!-- Read by screen readers for the label above a dialog's title naming the subagent that asked it; %1$s is the
+         agent's name and the few words describing its task, such as "General · fix users.ts". -->
+    <string name="chat_dialog_from_subagent">Asked by subagent %1$s</string>
+
+    <!-- Extension widgets -->
+    <string name="chat_widget_open">Open widget</string>
+    <string name="chat_widget_close">Close widget</string>
+    <string name="chat_widget_changed">%1$s, changed</string>
+    <string name="chat_widget_expand">Show the whole widget</string>
+
+    <!-- Context window meter -->
+    <string name="context_window_title">Context window</string>
+    <string name="context_window_used">%1$d%% used</string>
+    <string name="context_window_tokens">%1$s / %2$s tokens</string>
+    <string name="context_window_session_cost">Session cost %1$s</string>
+    <string name="context_window_no_data">No context data</string>
+    <string name="context_window_a11y">Context window %1$d%% used</string>
+    <string name="context_window_a11y_no_data">Context window: No context data</string>
+</resources>

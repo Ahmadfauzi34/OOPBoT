@@ -1,0 +1,34 @@
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']
+
+# ktlint owns line wrapping and whitespace. Do not add detekt's ktlint ruleset.
+style:
+  MaxLineLength:
+    active: false
+  NewLineAtEndOfFile:
+    active: false
+  # Wire limits, timeouts and exit codes read better inline next to the check they bound.
+  MagicNumber:
+    active: false
+  ThrowsCount:
+    max: 8
+  ReturnCount:
+    max: 4
+
+complexity:
+  # Protocol parsers and the connection state machine are deliberately flat and explicit.
+  CyclomaticComplexMethod:
+    allowedComplexity: 20
+  ComplexCondition:
+    allowedConditions: 9
+  LongParameterList:
+    allowedFunctionParameters: 8
+  TooManyFunctions:
+    allowedFunctionsPerClass: 25
+    allowedFunctionsPerObject: 25
+
+coroutines:
+  # Single-process app with no DI container; dispatchers are fixed by design.
+  InjectDispatcher:
+    active: false
