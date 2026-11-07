@@ -1,15 +1,20 @@
 [package]
 name = "oopbot"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Eksperimen agent harness (Gemini + tool calling) untuk Termux"
+description = "Hybrid Rust agent harness (Termux CLI binary + Android cdylib .so)"
+
+[lib]
+name = "oopbot"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "oopbot"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "time", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "time", "io-util", "net"] }
 # rustls (bukan OpenSSL) supaya cross-compile ke Android tidak butuh libssl,
 # dan webpki-roots supaya sertifikat CA dibundel di binary (Android/Termux
 # tidak punya /etc/ssl/certs standar).

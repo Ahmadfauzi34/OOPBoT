@@ -28,13 +28,13 @@ pub struct ModelTurn {
 
 pub struct GeminiClient {
     api_key: String,
-    model: String,
+    default_model: String,
     base_url: String,
     http: reqwest::Client,
 }
 
 impl GeminiClient {
-    pub fn new(api_key: String, model: String) -> Result<Self, BoxError> {
+    pub fn new(api_key: String, default_model: String) -> Result<Self, BoxError> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
             .user_agent(concat!("oopbot/", env!("CARGO_PKG_VERSION")))
@@ -43,24 +43,41 @@ impl GeminiClient {
             .unwrap_or_else(|_| "https://generativelanguage.googleapis.com/v1beta".to_string());
         Ok(Self {
             api_key,
-            model,
+            default_model,
             base_url,
             http,
         })
     }
 
     pub fn model(&self) -> &str {
-        &self.model
+        &self.default_model
     }
 
-    /// Kirim seluruh riwayat + deklarasi tool, kembalikan giliran model.
+    /// Kirim seluruh riwayat + deklarasi tool dengan model default.
     pub async fn generate(
         &self,
         system_instruction: &str,
         contents: &[Value],
         function_declarations: &[Value],
     ) -> Result<ModelTurn, BoxError> {
-        let url = format!("{}/models/{}:generateContent", self.base_url, self.model);
+        self.generate_with_model(
+            &self.default_model,
+            system_instruction,
+            contents,
+            function_declarations,
+        )
+        .await
+    }
+
+    /// Kirim seluruh riwayat + deklarasi tool untuk model tertentu (mendukung model per-tab).
+    pub async fn generate_with_model(
+        &self,
+        model: &str,
+        system_instruction: &str,
+        contents: &[Value],
+        function_declarations: &[Value],
+    ) -> Result<ModelTurn, BoxError> {
+        let url = format!("{}/models/{}:generateContent", self.base_url, model);
 
         let mut body = json!({
             "systemInstruction": { "parts": [{ "text": system_instruction }] },
@@ -188,7 +205,11 @@ mod tests {
 
     #[test]
     fn function_response_keeps_id() {
-        let call = FunctionCall { id: Some("x1".into()), name: "read_file".into(), args: json!({}) };
+        let call = FunctionCall {
+            id: Some("x1".into()),
+            name: "read_file".into(),
+            args: json!({}),
+        };
         let part = function_response_part(&call, json!({ "ok": true }));
         assert_eq!(part["functionResponse"]["id"], "x1");
         assert_eq!(part["functionResponse"]["name"], "read_file");
