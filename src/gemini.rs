@@ -1,13 +1,16 @@
-//! Klien minimal untuk Gemini API (`generateContent`) dengan dukungan function calling.
-//!
-//! Riwayat percakapan disimpan sebagai `serde_json::Value` mentah agar field
-//! seperti `thoughtSignature` (wajib dikirim balik oleh model Gemini 3 saat
-//! function calling) tidak hilang ketika kita meneruskan riwayat ke request berikutnya.
+//! Klien HTTP untuk Gemini API & OpenAI-compatible Provider dengan:
+//! - Function/Tool Calling
+//! - Pergantian token (`api_key`) & `base_url` secara dinamis tanpa restart
+//! - Auto-scan daftar model (`scan_models`) langsung dari token provider
 
+use crate::models::{parse_models_response, ModelInfo};
 use serde_json::{json, Value};
+use std::sync::RwLock;
 use std::time::Duration;
 
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+pub const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 /// Satu panggilan fungsi yang diminta model.
 #[derive(Debug, Clone)]
@@ -26,10 +29,15 @@ pub struct ModelTurn {
     pub function_calls: Vec<FunctionCall>,
 }
 
-pub struct GeminiClient {
+#[derive(Debug, Clone)]
+struct Credentials {
     api_key: String,
-    default_model: String,
     base_url: String,
+}
+
+pub struct GeminiClient {
+    creds: RwLock<Credentials>,
+    default_model: String,
     http: reqwest::Client,
 }
 
@@ -40,17 +48,71 @@ impl GeminiClient {
             .user_agent(concat!("oopbot/", env!("CARGO_PKG_VERSION")))
             .build()?;
         let base_url = std::env::var("GEMINI_BASE_URL")
-            .unwrap_or_else(|_| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            .unwrap_or_else(|_| DEFAULT_GEMINI_BASE_URL.to_string());
         Ok(Self {
-            api_key,
+            creds: RwLock::new(Credentials { api_key, base_url }),
             default_model,
-            base_url,
             http,
         })
     }
 
     pub fn model(&self) -> &str {
         &self.default_model
+    }
+
+    pub fn base_url(&self) -> String {
+        self.creds.read().unwrap().base_url.clone()
+    }
+
+    /// Ganti API key (dan opsional `base_url`) secara dinamis di memori.
+    pub fn update_credentials(&self, api_key: String, base_url: Option<String>) {
+        let mut creds = self.creds.write().unwrap();
+        creds.api_key = api_key;
+        if let Some(url) = base_url.filter(|u| !u.trim().is_empty()) {
+            creds.base_url = url.trim_end_matches('/').to_string();
+        }
+    }
+
+    /// Scan daftar model yang tersedia untuk token saat ini dari `<base_url>/models`.
+    /// Mengirimkan `x-goog-api-key` (untuk Gemini) sekaligus `Authorization: Bearer`
+    /// (untuk provider OpenAI-compatible seperti OpenRouter/Groq/DeepSeek).
+    pub async fn scan_models(&self) -> Result<Vec<ModelInfo>, BoxError> {
+        let (api_key, base_url) = {
+            let c = self.creds.read().unwrap();
+            (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
+        };
+        let url = format!("{}/models?pageSize=100", base_url);
+        let provider_hint = if base_url.contains("googleapis.com") {
+            "gemini"
+        } else {
+            "custom"
+        };
+
+        let resp = self
+            .http
+            .get(&url)
+            .header("x-goog-api-key", &api_key)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let res_json: Value = resp.json().await?;
+        if !status.is_success() {
+            let msg = res_json["error"]["message"]
+                .as_str()
+                .or_else(|| res_json["message"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| res_json.to_string());
+            return Err(format!("Gagal scan /models ({}): {}", status, msg).into());
+        }
+
+        let models = parse_models_response(&res_json, provider_hint);
+        if models.is_empty() {
+            return Err("Server /models tidak mengembalikan model yang kompatibel".into());
+        }
+        Ok(models)
     }
 
     /// Kirim seluruh riwayat + deklarasi tool dengan model default.
@@ -77,7 +139,11 @@ impl GeminiClient {
         contents: &[Value],
         function_declarations: &[Value],
     ) -> Result<ModelTurn, BoxError> {
-        let url = format!("{}/models/{}:generateContent", self.base_url, model);
+        let (api_key, base_url) = {
+            let c = self.creds.read().unwrap();
+            (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
+        };
+        let url = format!("{}/models/{}:generateContent", base_url, model);
 
         let mut body = json!({
             "systemInstruction": { "parts": [{ "text": system_instruction }] },
@@ -91,7 +157,8 @@ impl GeminiClient {
         let resp = self
             .http
             .post(&url)
-            .header("x-goog-api-key", &self.api_key)
+            .header("x-goog-api-key", &api_key)
+            .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
             .await?;

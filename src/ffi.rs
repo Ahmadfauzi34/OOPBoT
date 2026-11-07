@@ -141,6 +141,30 @@ pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
             "active_model": h.agent.model(),
             "models": h.agent.list_models(),
         }),
+        "scan_models" => match h.runtime.block_on(h.agent.scan_models()) {
+            Ok(models) => json!({
+                "ok": true,
+                "count": models.len(),
+                "active_model": h.agent.model(),
+                "models": models,
+            }),
+            Err(e) => json!({ "ok": false, "error": e.to_string() }),
+        },
+        "set_provider" => {
+            let Some(api_key) = req["api_key"].as_str() else {
+                return json!({ "ok": false, "error": "missing 'api_key'" });
+            };
+            let base_url = req["base_url"].as_str();
+            match h.runtime.block_on(h.agent.update_provider_token(api_key, base_url)) {
+                Ok(models) => json!({
+                    "ok": true,
+                    "count": models.len(),
+                    "active_model": h.agent.model(),
+                    "models": models,
+                }),
+                Err(e) => json!({ "ok": false, "error": e.to_string() }),
+            }
+        }
         "set_model" => {
             let Some(m) = req["model"].as_str() else {
                 return json!({ "ok": false, "error": "missing 'model'" });

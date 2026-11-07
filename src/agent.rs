@@ -152,6 +152,32 @@ impl GeminiAgent {
         self.catalog.lock().unwrap().list().to_vec()
     }
 
+    /// Scan daftar model dari server provider menggunakan token aktif,
+    /// lalu perbarui `ModelCatalog`.
+    pub async fn scan_models(&self) -> Result<Vec<ModelInfo>, BoxError> {
+        let scanned = self.client.scan_models().await?;
+        let mut cat = self.catalog.lock().unwrap();
+        cat.replace_with_scanned(scanned.clone());
+        Ok(scanned)
+    }
+
+    /// Ganti token (dan opsional `base_url`) secara langsung, simpan ke `~/.config/oopbot/.env`,
+    /// lalu otomatis scan daftar model dari provider tersebut.
+    pub async fn update_provider_token(
+        &self,
+        api_key: &str,
+        base_url: Option<&str>,
+    ) -> Result<Vec<ModelInfo>, BoxError> {
+        let clean_key = api_key.trim().to_string();
+        if clean_key.is_empty() {
+            return Err("Token/API key tidak boleh kosong".into());
+        }
+        let clean_url = base_url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
+        self.client.update_credentials(clean_key.clone(), clean_url.clone());
+        save_token_to_user_env(&clean_key, clean_url.as_deref(), &self.model());
+        self.scan_models().await
+    }
+
     pub fn list_tabs(&self) -> (usize, Vec<ChatSession>) {
         let tabs = self.tabs.lock().unwrap();
         (tabs.active_index(), tabs.list().to_vec())
@@ -448,4 +474,20 @@ fn default_system_instruction(tools: &ToolRegistry) -> String {
         },
         tools = tools.names().join(", "),
     )
+}
+
+fn save_token_to_user_env(api_key: &str, base_url: Option<&str>, model: &str) {
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(home).join(".config/oopbot");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let env_path = dir.join(".env");
+    let mut content = format!("GEMINI_API_KEY={}\nGEMINI_MODEL={}\n", api_key, model);
+    if let Some(url) = base_url {
+        content.push_str(&format!("GEMINI_BASE_URL={}\n", url));
+    }
+    let _ = std::fs::write(&env_path, content);
 }

@@ -36,6 +36,8 @@ KONFIGURASI (.env di direktori kerja atau ~/.config/oopbot/.env):
     GEMINI_MODEL=...       (opsional)
 
 PERINTAH DI DALAM CHAT (ALA PIPKIN):
+    /scan                  Scan otomatis daftar model dari API key aktif
+    /token <KEY> [URL]     Ganti token/API key (& opsional base URL) + auto-scan model
     /models                Lihat daftar model & model aktif
     /model <NO|ID>         Ganti model untuk tab aktif (misal: /model 2)
     /tabs                  Lihat semua tab sesi percakapan
@@ -101,16 +103,20 @@ fn load_env() {
 
 fn render_models(agent: &GeminiAgent) {
     let active = agent.model();
-    println!("\n📦 Daftar Model (pilih dengan `/model <nomor|id>`):");
+    println!("\n📦 Daftar Model (pilih dengan `/model <nomor|id>`, atau `/scan` untuk refresh):");
     for (idx, m) in agent.list_models().iter().enumerate() {
         let mark = if m.id == active { "●" } else { " " };
+        let ctx = m
+            .input_token_limit
+            .map(|n| format!(" [ctx: {}k]", n / 1000))
+            .unwrap_or_default();
         println!(
-            "  {} [{}] {} ({}) — {}",
+            "  {} [{:>2}] {}{} ({})",
             mark,
             idx + 1,
             m.id,
-            m.label,
-            m.description
+            ctx,
+            m.label
         );
     }
     println!();
@@ -172,12 +178,47 @@ fn render_timeline_steps(agent: &GeminiAgent) {
 }
 
 /// Tangani slash command interaktif; kembalikan `true` jika input sudah ditangani.
-fn handle_slash_command(agent: &GeminiAgent, input: &str) -> bool {
+async fn handle_slash_command(agent: &GeminiAgent, input: &str) -> bool {
     let mut parts = input.splitn(2, char::is_whitespace);
     let cmd = parts.next().unwrap_or("");
     let arg = parts.next().map(str::trim).unwrap_or("");
 
     match cmd {
+        "/scan" => {
+            println!("🔍 Memindai daftar model dari provider...");
+            match agent.scan_models().await {
+                Ok(models) => {
+                    println!("✅ Ditemukan {} model!", models.len());
+                    render_models(agent);
+                }
+                Err(e) => eprintln!("❌ Gagal scan model: {}\n", e),
+            }
+            true
+        }
+        "/token" => {
+            if arg.is_empty() {
+                println!("Gunakan: `/token <API_KEY> [BASE_URL]`\n");
+                return true;
+            }
+            let mut tok_parts = arg.split_whitespace();
+            let api_key = tok_parts.next().unwrap_or("");
+            let base_url = tok_parts.next();
+            println!("🔑 Memperbarui token & memindai daftar model...");
+            match agent.update_provider_token(api_key, base_url).await {
+                Ok(models) => {
+                    println!(
+                        "✅ Token disimpan ke ~/.config/oopbot/.env & {} model berhasil di-scan!",
+                        models.len()
+                    );
+                    render_models(agent);
+                }
+                Err(e) => eprintln!(
+                    "⚠️  Token disimpan, namun auto-scan gagal: {}\n",
+                    e
+                ),
+            }
+            true
+        }
         "/models" => {
             render_models(agent);
             true
@@ -304,7 +345,7 @@ async fn main() -> Result<(), BoxError> {
         env!("CARGO_PKG_VERSION"),
         agent.tool_names().join(", ")
     );
-    println!("💡 Perintah: /models, /model <id>, /tabs, /new, /tab <no>, /steps, reset, keluar");
+    println!("💡 Perintah: /scan, /token <key>, /models, /model <id>, /tabs, /new, /tab <no>, /steps, reset, keluar");
     if cli.auto_approve {
         println!("⚠️  Mode --yes: semua tool dijalankan tanpa konfirmasi!");
     }
@@ -339,7 +380,7 @@ async fn main() -> Result<(), BoxError> {
             _ => {}
         }
 
-        if input.starts_with('/') && handle_slash_command(&agent, input) {
+        if input.starts_with('/') && handle_slash_command(&agent, input).await {
             continue;
         }
 
