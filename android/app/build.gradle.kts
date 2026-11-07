@@ -419,9 +419,7 @@ android {
     // Release builds get both from .github/workflows/release.yml; local builds keep these placeholders.
     versionCode = providers.gradleProperty("pipkin.versionCode").map(String::toInt).getOrElse(1)
     versionName = providers.gradleProperty("pipkin.versionName").getOrElse("0.0.0-dev")
-    // 64-bit phones and the emulator; every ABI adds the grammars' and llama.cpp's whole native libraries, and arm64
-    // also llama.cpp's OpenCL backend.
-    ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    ndk { abiFilters += listOf("arm64-v8a") }
     externalNativeBuild {
       cmake {
         arguments += "-DTREE_SITTER_SOURCES=${syntaxSourcesDir.get().asFile}"
