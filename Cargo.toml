@@ -1,0 +1,27 @@
+[package]
+name = "oopbot"
+version = "0.1.0"
+edition = "2021"
+description = "Eksperimen agent harness (Gemini + tool calling) untuk Termux"
+
+[[bin]]
+name = "oopbot"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "time", "io-util"] }
+# rustls (bukan OpenSSL) supaya cross-compile ke Android tidak butuh libssl,
+# dan webpki-roots supaya sertifikat CA dibundel di binary (Android/Termux
+# tidak punya /etc/ssl/certs standar).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dotenvy = "0.15"
+async-trait = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

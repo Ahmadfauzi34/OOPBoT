@@ -1,0 +1,84 @@
+name: build-termux
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: aarch64-linux-android
+  # Termux butuh Android 7+ (API 24)
+  ANDROID_API: "24"
+  BIN_NAME: oopbot
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  build-android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+
+      - name: Konfigurasi linker Android NDK
+        run: |
+          # Runner ubuntu-latest sudah punya Android NDK terpasang.
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          test -d "$NDK" || { echo "Android NDK tidak ditemukan"; exit 1; }
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$BIN/${TARGET}${ANDROID_API}-clang"
+          test -x "$CC" || { echo "Compiler tidak ditemukan: $CC"; exit 1; }
+          {
+            echo "CC_aarch64_linux_android=$CC"
+            echo "AR_aarch64_linux_android=$BIN/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CC"
+          } >> "$GITHUB_ENV"
+
+      - name: Build release
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Kemas binary
+        run: |
+          mkdir -p dist
+          cp "target/$TARGET/release/$BIN_NAME" "dist/$BIN_NAME-$TARGET"
+          cd dist
+          sha256sum "$BIN_NAME-$TARGET" > "$BIN_NAME-$TARGET.sha256"
+          file "$BIN_NAME-$TARGET" || true
+          ls -lh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ env.TARGET }}
+          path: dist/*
+
+      - name: Publikasikan GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+          fi
