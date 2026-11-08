@@ -5,10 +5,13 @@
 //! dengan binary native Rust `oopbot`.
 
 use crate::gemini::{
-    function_response_part, user_text, BoxError, FunctionCall, GeminiClient,
-    DEFAULT_GEMINI_BASE_URL,
+    function_response_part, user_message_with_images, BoxError, FunctionCall, GeminiClient,
+    GenerationOptions, DEFAULT_GEMINI_BASE_URL,
 };
-use crate::models::{ModelCatalog, ModelInfo};
+use crate::models::{
+    builtin_providers, infer_api_from_provider, infer_input_from_id, infer_reasoning_from_id,
+    resolve_model_scope, ModelCatalog, ModelInfo,
+};
 use crate::tools::ToolRegistry;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -16,18 +19,13 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const BUILTIN_PROVIDER_URLS: &[(&str, &str)] = &[
-    ("google", DEFAULT_GEMINI_BASE_URL),
-    ("openrouter", "https://openrouter.ai/api/v1"),
-    ("zai", "https://api.z.ai/api/coding/paas/v4"),
-    ("kimi-coding", "https://api.kimi.com/coding/v1"),
-    ("openai", "https://api.openai.com/v1"),
-];
-
 #[derive(Debug, Clone)]
 struct ProviderEndpoint {
+    name: String,
     base_url: String,
+    api: String,
     api_key: String,
+    has_auth: bool,
     models: Vec<ModelInfo>,
 }
 
@@ -51,6 +49,7 @@ pub struct RpcServer {
     llm_history: Vec<Value>,
     entry_seq: usize,
     total_tokens: u64,
+    total_cost: f64,
 }
 
 impl RpcServer {
@@ -80,27 +79,32 @@ impl RpcServer {
         let settings = read_json_file(&config_dir.join("settings.json"));
         let mut active_provider = settings["defaultProvider"]
             .as_str()
+            .filter(|s| !s.trim().is_empty())
             .unwrap_or("google")
             .to_string();
         let mut active_model = settings["defaultModel"]
             .as_str()
+            .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| catalog.default_model())
             .to_string();
-        let thinking_level = settings["defaultThinkingLevel"]
+        let requested_thinking = settings["defaultThinkingLevel"]
             .as_str()
+            .filter(|s| !s.trim().is_empty())
             .unwrap_or("medium")
             .to_string();
 
-        // Jika provider default belum punya key tetapi provider lain punya key, pilih yang aktif.
+        // Jika provider default belum terkonfigurasi tetapi provider lain sudah punya key/lokal, pilih yang siap pakai.
         if !providers
             .get(&active_provider)
-            .map(|p| !p.api_key.is_empty())
+            .map(|p| p.has_auth)
             .unwrap_or(false)
         {
-            if let Some((pid, ep)) = providers.iter().find(|(_, p)| !p.api_key.is_empty()) {
+            if let Some((pid, ep)) = providers.iter().find(|(_, p)| p.has_auth && !p.models.is_empty()) {
                 active_provider = pid.clone();
-                if let Some(first) = ep.models.first() {
-                    active_model = first.id.clone();
+                if !ep.models.iter().any(|m| m.id == active_model) {
+                    if let Some(first) = ep.models.first() {
+                        active_model = first.id.clone();
+                    }
                 }
             }
         }
@@ -117,15 +121,18 @@ impl RpcServer {
         providers
             .entry("google".to_string())
             .or_insert_with(|| ProviderEndpoint {
+                name: "Google Gemini (OOPBoT)".to_string(),
                 base_url: DEFAULT_GEMINI_BASE_URL.to_string(),
+                api: "google-generative-ai".to_string(),
                 api_key: String::new(),
+                has_auth: false,
                 models: catalog.list().to_vec(),
             });
 
         let (session_file, session_id, session_name, ui_messages, llm_history, entry_seq) =
             init_or_load_session(&config_dir, &cwd, session_path.as_deref());
 
-        Ok(Self {
+        let mut server = Self {
             cwd,
             config_dir,
             session_file,
@@ -133,7 +140,7 @@ impl RpcServer {
             session_name,
             active_provider,
             active_model,
-            thinking_level,
+            thinking_level: requested_thinking.clone(),
             system_instruction,
             providers,
             catalog,
@@ -143,7 +150,12 @@ impl RpcServer {
             llm_history,
             entry_seq,
             total_tokens: 0,
-        })
+            total_cost: 0.0,
+        };
+        server.thinking_level = server
+            .active_model_info()
+            .clamp_thinking_level(&requested_thinking);
+        Ok(server)
     }
 
     fn send_line(value: &Value) {
@@ -174,49 +186,122 @@ impl RpcServer {
         }));
     }
 
+    /// Cari `ModelInfo` lengkap untuk model aktif saat ini beserta seluruh override dari `models.json`.
+    pub fn active_model_info(&self) -> ModelInfo {
+        if let Some(ep) = self.providers.get(&self.active_provider) {
+            if let Some(m) = ep
+                .models
+                .iter()
+                .find(|m| m.id.eq_ignore_ascii_case(&self.active_model))
+            {
+                let mut cloned = m.clone();
+                cloned.provider = self.active_provider.clone();
+                return cloned;
+            }
+        }
+        for (pid, ep) in &self.providers {
+            if let Some(m) = ep
+                .models
+                .iter()
+                .find(|m| m.id.eq_ignore_ascii_case(&self.active_model))
+            {
+                let mut cloned = m.clone();
+                cloned.provider = pid.clone();
+                return cloned;
+            }
+        }
+        if let Some(m) = self.catalog.find(&self.active_model) {
+            let mut cloned = m.clone();
+            cloned.provider = self.active_provider.clone();
+            return cloned;
+        }
+        let default_api = self
+            .providers
+            .get(&self.active_provider)
+            .map(|p| p.api.clone())
+            .unwrap_or_else(|| infer_api_from_provider(&self.active_provider));
+        ModelInfo {
+            id: self.active_model.clone(),
+            label: self.active_model.clone(),
+            provider: self.active_provider.clone(),
+            supports_tools: true,
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(65_536),
+            description: "Active model".to_string(),
+            api: default_api,
+            reasoning: infer_reasoning_from_id(&self.active_model),
+            thinking_level_map: None,
+            input: infer_input_from_id(&self.active_model),
+            cost: None,
+        }
+    }
+
     fn current_model_json(&self) -> Value {
-        let name = self
-            .catalog
-            .find(&self.active_model)
-            .map(|m| m.label.clone())
-            .unwrap_or_else(|| self.active_model.clone());
-        json!({
-            "provider": self.active_provider,
-            "id": self.active_model,
-            "name": name,
-            "input": ["text", "image"],
-        })
+        self.active_model_info()
+            .to_pipkin_json(Some(&self.active_provider))
     }
 
     fn available_models_json(&self) -> Vec<Value> {
-        let mut list = Vec::new();
-        for (pid, ep) in &self.providers {
+        let mut all_models: Vec<ModelInfo> = Vec::new();
+        let any_authenticated = self.providers.values().any(|ep| ep.has_auth);
+
+        // Urutkan provider secara deterministik (built-in lebih dulu, lalu custom).
+        let mut provider_ids: Vec<String> = self.providers.keys().cloned().collect();
+        provider_ids.sort_by(|a, b| {
+            let a_builtin = a == "google";
+            let b_builtin = b == "google";
+            b_builtin.cmp(&a_builtin).then_with(|| a.cmp(b))
+        });
+
+        for pid in provider_ids {
+            let Some(ep) = self.providers.get(&pid) else {
+                continue;
+            };
+            // Hanya tampilkan model dari provider yang sudah dikonfigurasi di aplikasi
+            // (atau provider aktif/google bila belum ada satupun provider yang login).
+            if any_authenticated && !ep.has_auth && pid != self.active_provider {
+                continue;
+            }
+            if !any_authenticated && pid != "google" && pid != self.active_provider {
+                continue;
+            }
             for m in &ep.models {
-                list.push(json!({
-                    "provider": pid,
-                    "id": m.id,
-                    "name": m.label,
-                    "input": ["text", "image"],
-                    "contextWindow": m.input_token_limit.unwrap_or(1_048_576),
-                    "maxTokens": m.output_token_limit.unwrap_or(65_536),
-                    "reasoning": m.supports_tools,
-                }));
+                let mut item = m.clone();
+                item.provider = pid.clone();
+                all_models.push(item);
             }
         }
-        if list.is_empty() {
+
+        if all_models.is_empty() {
             for m in self.catalog.list() {
-                list.push(json!({
-                    "provider": "google",
-                    "id": m.id,
-                    "name": m.label,
-                    "input": ["text", "image"],
-                    "contextWindow": m.input_token_limit.unwrap_or(1_048_576),
-                    "maxTokens": m.output_token_limit.unwrap_or(65_536),
-                    "reasoning": m.supports_tools,
-                }));
+                let mut item = m.clone();
+                item.provider = "google".to_string();
+                all_models.push(item);
             }
         }
-        list
+
+        // Terapkan filter `enabledModels` dari `settings.json` bila diatur oleh aplikasi Android.
+        let settings = read_json_file(&self.config_dir.join("settings.json"));
+        if let Some(patterns_arr) = settings["enabledModels"].as_array() {
+            let patterns: Vec<String> = patterns_arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            if !patterns.is_empty() {
+                let scoped = resolve_model_scope(&patterns, &all_models);
+                if !scoped.is_empty() {
+                    return scoped
+                        .into_iter()
+                        .map(|(m, _)| m.to_pipkin_json(Some(&m.provider)))
+                        .collect();
+                }
+            }
+        }
+
+        all_models
+            .iter()
+            .map(|m| m.to_pipkin_json(Some(&m.provider)))
+            .collect()
     }
 
     fn state_json(&self) -> Value {
@@ -280,6 +365,19 @@ impl RpcServer {
         }
     }
 
+    fn sync_thinking_level_for_active_model(&mut self) {
+        let clamped = self
+            .active_model_info()
+            .clamp_thinking_level(&self.thinking_level);
+        if clamped != self.thinking_level {
+            self.thinking_level = clamped.clone();
+            Self::send_line(&json!({
+                "type": "thinking_level_changed",
+                "level": clamped,
+            }));
+        }
+    }
+
     async fn handle_slash_command(&mut self, cmd_line: &str) -> Option<String> {
         let parts: Vec<&str> = cmd_line.split_whitespace().collect();
         let cmd = parts.first().copied()?;
@@ -292,14 +390,20 @@ impl RpcServer {
                         let preview: Vec<String> = scanned
                             .iter()
                             .take(15)
-                            .map(|m| format!("- `{}` ({})", m.id, m.label))
+                            .map(|m| {
+                                let think_badge = if m.reasoning { " 🧠" } else { "" };
+                                format!("- `{}` ({}){}", m.id, m.label, think_badge)
+                            })
                             .collect();
                         self.catalog.replace_with_scanned(scanned.clone());
-                        if let Some(ep) = self.providers.get_mut(&self.active_provider) {
-                            ep.models = scanned;
-                        }
+                        save_scanned_models_to_config(
+                            &self.config_dir,
+                            &self.active_provider,
+                            &scanned,
+                        );
+                        self.refresh_credentials();
                         Some(format!(
-                            "Berhasil men-scan **{} model** dari `{}`:\n{}\n\nGunakan pemilih model di atas atau ketik `/model <ID>` untuk mengganti model.",
+                            "Berhasil men-scan **{} model** dari `{}` dan menyimpannya ke `models.json`:\n{}\n\nGunakan pemilih model di atas atau ketik `/model <ID>` untuk mengganti model.",
                             count,
                             self.client.base_url(),
                             preview.join("\n")
@@ -334,55 +438,230 @@ impl RpcServer {
                             }
                         }
                         self.catalog.replace_with_scanned(scanned.clone());
-                        if let Some(ep) = self.providers.get_mut(&self.active_provider) {
-                            ep.api_key = api_key.to_string();
-                            if let Some(u) = &base_url {
-                                ep.base_url = u.clone();
-                            }
-                            ep.models = scanned;
-                        }
+                        save_scanned_models_to_config(
+                            &self.config_dir,
+                            &self.active_provider,
+                            &scanned,
+                        );
+                        self.refresh_credentials();
+                        save_settings_fields(
+                            &self.config_dir,
+                            Some(&self.active_provider),
+                            Some(&self.active_model),
+                            None,
+                        );
                         Some(format!(
-                            "Token berhasil disimpan & **{} model** terdeteksi otomatis! Model aktif sekarang: `{}`.",
-                            count, self.active_model
+                            "Token berhasil disimpan & **{} model** terdeteksi otomatis! Model aktif sekarang: `{}` (`{}`).",
+                            count, self.active_model, self.active_provider
                         ))
                     }
-                    Err(e) => Some(format!(
-                        "Token disimpan, namun auto-scan `/models` gagal: {}",
-                        e
-                    )),
+                    Err(e) => {
+                        self.refresh_credentials();
+                        Some(format!(
+                            "Token disimpan, namun auto-scan `/models` gagal: {}",
+                            e
+                        ))
+                    }
                 }
             }
             "/models" => {
-                let list = self.catalog.list();
-                let lines: Vec<String> = list
+                self.refresh_credentials();
+                let avail = self.available_models_json();
+                let lines: Vec<String> = avail
                     .iter()
                     .enumerate()
                     .map(|(i, m)| {
-                        let mark = if m.id == self.active_model {
-                            " (aktif)"
+                        let pid = m["provider"].as_str().unwrap_or("");
+                        let mid = m["id"].as_str().unwrap_or("");
+                        let name = m["name"].as_str().unwrap_or(mid);
+                        let cw = m["contextWindow"].as_u64().unwrap_or(0) / 1000;
+                        let think = if m["reasoning"].as_bool() == Some(true) {
+                            " · 🧠 thinking"
                         } else {
                             ""
                         };
-                        format!("{}. `{}` — {}{}", i + 1, m.id, m.label, mark)
+                        let mark = if pid == self.active_provider && mid == self.active_model {
+                            " **(aktif)**"
+                        } else {
+                            ""
+                        };
+                        format!(
+                            "{}. `{}/{}` — {} ({}k ctx{}){}",
+                            i + 1,
+                            pid,
+                            mid,
+                            name,
+                            cw,
+                            think,
+                            mark
+                        )
                     })
                     .collect();
-                Some(format!("**Daftar Model ({}):**\n{}", list.len(), lines.join("\n")))
+                Some(format!(
+                    "**Daftar Model Tersedia ({}):**\n{}",
+                    avail.len(),
+                    lines.join("\n")
+                ))
             }
             "/model" => {
                 if parts.len() < 2 {
+                    let info = self.active_model_info();
                     return Some(format!(
-                        "Model aktif saat ini: `{}` (`{}`). Gunakan `/model <ID>` untuk mengganti.",
-                        self.active_model, self.active_provider
+                        "Model aktif saat ini: `{}/{}` (**{}**)\n- API: `{}`\n- Context window: `{}` token\n- Max output: `{}` token\n- Thinking: `{}` (level aktif: `{}`)\n\nGunakan `/model <ID>` atau `/model <provider>/<ID>` untuk mengganti.",
+                        self.active_provider,
+                        self.active_model,
+                        info.label,
+                        info.api,
+                        info.input_token_limit.unwrap_or(1_048_576),
+                        info.output_token_limit.unwrap_or(65_536),
+                        info.reasoning,
+                        self.thinking_level
                     ));
                 }
                 let target = parts[1].trim();
-                if let Some(info) = self.catalog.find(target) {
+                if let Some((prov, mid)) = target.split_once('/') {
+                    if self.providers.contains_key(prov) {
+                        self.active_provider = prov.to_string();
+                        self.active_model = mid.to_string();
+                    } else {
+                        self.active_model = target.to_string();
+                    }
+                } else if let Some(info) = self.catalog.find(target) {
                     self.active_model = info.id.clone();
                 } else {
-                    self.catalog.register_custom(target, target);
-                    self.active_model = target.to_string();
+                    // Cek apakah ada di salah satu provider
+                    let mut found = None;
+                    for (pid, ep) in &self.providers {
+                        if let Some(m) = ep
+                            .models
+                            .iter()
+                            .find(|m| m.id.eq_ignore_ascii_case(target))
+                        {
+                            found = Some((pid.clone(), m.id.clone()));
+                            break;
+                        }
+                    }
+                    if let Some((pid, mid)) = found {
+                        self.active_provider = pid;
+                        self.active_model = mid;
+                    } else {
+                        self.catalog.register_custom(target, target);
+                        self.active_model = target.to_string();
+                    }
                 }
-                Some(format!("Model aktif diganti ke `{}`.", self.active_model))
+                self.refresh_credentials();
+                self.sync_thinking_level_for_active_model();
+                save_settings_fields(
+                    &self.config_dir,
+                    Some(&self.active_provider),
+                    Some(&self.active_model),
+                    Some(&self.thinking_level),
+                );
+                Some(format!(
+                    "Model aktif diganti ke `{}/{}` (thinking: `{}`).",
+                    self.active_provider, self.active_model, self.thinking_level
+                ))
+            }
+            "/thinking" => {
+                let info = self.active_model_info();
+                let supported = info.available_thinking_levels();
+                if parts.len() < 2 {
+                    return Some(format!(
+                        "Level thinking saat ini: `{}` (didukung oleh `{}`: `{}`).\nGunakan `/thinking <{}>` untuk mengubah.",
+                        self.thinking_level,
+                        self.active_model,
+                        supported.join(", "),
+                        supported.join("|")
+                    ));
+                }
+                let requested = parts[1].trim().to_ascii_lowercase();
+                let clamped = info.clamp_thinking_level(&requested);
+                self.thinking_level = clamped.clone();
+                save_settings_fields(&self.config_dir, None, None, Some(&clamped));
+                Self::send_line(&json!({
+                    "type": "thinking_level_changed",
+                    "level": clamped,
+                }));
+                Some(format!(
+                    "Level thinking diatur ke `{}` untuk model `{}`.",
+                    self.thinking_level, self.active_model
+                ))
+            }
+            "/provider" => {
+                if parts.len() < 2 {
+                    let mut lines = Vec::new();
+                    for (pid, ep) in &self.providers {
+                        let mark = if *pid == self.active_provider {
+                            " **(aktif)**"
+                        } else {
+                            ""
+                        };
+                        let auth_badge = if ep.has_auth { "✅ siap" } else { "⚪ belum ada key" };
+                        lines.push(format!(
+                            "- `{}` ({}) — {} · {} model{}",
+                            pid,
+                            ep.base_url,
+                            auth_badge,
+                            ep.models.len(),
+                            mark
+                        ));
+                    }
+                    lines.sort();
+                    return Some(format!(
+                        "**Daftar Provider:**\n{}\n\nGunakan `/provider <ID>` untuk berpindah provider.",
+                        lines.join("\n")
+                    ));
+                }
+                let target_pid = parts[1].trim();
+                if let Some(ep) = self.providers.get(target_pid).cloned() {
+                    self.active_provider = target_pid.to_string();
+                    if let Some(first) = ep.models.first() {
+                        self.active_model = first.id.clone();
+                    }
+                    self.refresh_credentials();
+                    self.sync_thinking_level_for_active_model();
+                    save_settings_fields(
+                        &self.config_dir,
+                        Some(&self.active_provider),
+                        Some(&self.active_model),
+                        Some(&self.thinking_level),
+                    );
+                    Some(format!(
+                        "Provider aktif diganti ke `{}` dengan model `{}`.",
+                        self.active_provider, self.active_model
+                    ))
+                } else {
+                    Some(format!("Provider `{}` tidak ditemukan.", target_pid))
+                }
+            }
+            "/max-tokens" => {
+                if parts.len() < 2 {
+                    let cur = self
+                        .active_model_info()
+                        .output_token_limit
+                        .unwrap_or(65_536);
+                    return Some(format!(
+                        "Batas `maxTokens` model `{}` saat ini: `{}`.\nGunakan `/max-tokens <angka>` untuk mengubah dan menyimpan ke `models.json`.",
+                        self.active_model, cur
+                    ));
+                }
+                let Ok(max_tok) = parts[1].trim().parse::<u64>() else {
+                    return Some("Nilai `/max-tokens` harus berupa angka bulat positif.".to_string());
+                };
+                if max_tok == 0 {
+                    return Some("Nilai `/max-tokens` harus lebih besar dari 0.".to_string());
+                }
+                save_model_override_to_config(
+                    &self.config_dir,
+                    &self.active_provider,
+                    &self.active_model,
+                    &json!({ "maxTokens": max_tok }),
+                );
+                self.refresh_credentials();
+                Some(format!(
+                    "`maxTokens` untuk `{}/{}` berhasil disimpan ke `{}`.",
+                    self.active_provider, self.active_model, max_tok
+                ))
             }
             "/clear" => {
                 self.ui_messages.clear();
@@ -393,15 +672,31 @@ impl RpcServer {
         }
     }
 
-    async fn execute_prompt(&mut self, prompt: &str) {
+    async fn execute_prompt(&mut self, prompt: &str, images: &[(String, String)]) {
         self.refresh_credentials();
+        self.sync_thinking_level_for_active_model();
         let started_ms = epoch_ms();
 
         Self::send_line(&json!({ "type": "agent_start" }));
 
+        let mut user_content_blocks = Vec::new();
+        if !prompt.is_empty() {
+            user_content_blocks.push(json!({ "type": "text", "text": prompt }));
+        }
+        for (mime, data) in images {
+            user_content_blocks.push(json!({
+                "type": "image",
+                "mimeType": mime,
+                "data": data,
+            }));
+        }
+        if user_content_blocks.is_empty() {
+            user_content_blocks.push(json!({ "type": "text", "text": "" }));
+        }
+
         let user_msg = json!({
             "role": "user",
-            "content": [{ "type": "text", "text": prompt }],
+            "content": user_content_blocks,
             "timestamp": started_ms,
         });
         Self::send_line(&json!({ "type": "message_start", "message": user_msg }));
@@ -409,10 +704,10 @@ impl RpcServer {
         self.ui_messages.push(user_msg.clone());
         self.append_session_entry("message", json!({ "message": user_msg }));
 
-        // Cek apakah perintah slash internal (/scan, /token, /models, /model, /clear)
-        if prompt.trim_start().starts_with('/') {
+        // Cek apakah perintah slash internal (/scan, /token, /models, /model, /thinking, /provider, /max-tokens, /clear)
+        if prompt.trim_start().starts_with('/') && images.is_empty() {
             if let Some(reply_text) = self.handle_slash_command(prompt.trim()).await {
-                self.emit_assistant_reply(&reply_text, started_ms);
+                self.emit_assistant_reply_with_thoughts(&reply_text, &[], started_ms);
                 Self::send_line(&json!({ "type": "turn_end" }));
                 Self::send_line(&json!({ "type": "agent_end" }));
                 Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
@@ -420,16 +715,32 @@ impl RpcServer {
             }
         }
 
-        if self.client.api_key().trim().is_empty() {
+        let provider_has_auth = self
+            .providers
+            .get(&self.active_provider)
+            .map(|p| p.has_auth)
+            .unwrap_or(false);
+        if !provider_has_auth && self.client.api_key().trim().is_empty() {
             let msg = "API key belum diatur. Silakan buka **Settings › Providers & models** di Pipkin untuk menempelkan API key (Google Gemini / OpenRouter / Custom), atau ketik langsung di sini:\n\n`/token <API_KEY>`";
-            self.emit_assistant_reply(msg, started_ms);
+            self.emit_assistant_reply_with_thoughts(msg, &[], started_ms);
             Self::send_line(&json!({ "type": "turn_end" }));
             Self::send_line(&json!({ "type": "agent_end" }));
             Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
             return;
         }
 
-        self.llm_history.push(user_text(prompt));
+        let active_info = self.active_model_info();
+        let gen_options = GenerationOptions {
+            api: Some(active_info.api.clone()),
+            max_tokens: active_info.output_token_limit,
+            thinking_level: Some(self.thinking_level.clone()),
+            reasoning: active_info.reasoning,
+            thinking_level_map: active_info.thinking_level_map.clone(),
+            session_id: Some(self.session_id.clone()),
+        };
+
+        self.llm_history
+            .push(user_message_with_images(prompt, images));
         let decls = self.tools.declarations();
         let max_steps = 25usize;
 
@@ -437,11 +748,12 @@ impl RpcServer {
             let step_start_ms = epoch_ms();
             let turn_res = self
                 .client
-                .generate_with_model(
+                .generate_with_options(
                     &self.active_model,
                     &self.system_instruction,
                     &self.llm_history,
                     &decls,
+                    &gen_options,
                 )
                 .await;
 
@@ -465,10 +777,24 @@ impl RpcServer {
             };
 
             self.llm_history.push(turn.raw_content.clone());
-            self.total_tokens += (prompt.len() as u64 / 4) + (turn.text.len() as u64 / 4) + 120;
+            if let Some(usage) = turn.usage {
+                self.total_tokens = usage.input_tokens + usage.output_tokens;
+                if let Some(cost) = &active_info.cost {
+                    self.total_cost += (usage.input_tokens as f64 / 1_000_000.0) * cost.input
+                        + (usage.output_tokens as f64 / 1_000_000.0) * cost.output;
+                }
+            } else {
+                let est_in = (prompt.len() as u64 / 4) + 60;
+                let est_out = (turn.text.len() as u64 / 4) + 60;
+                self.total_tokens += est_in + est_out;
+                if let Some(cost) = &active_info.cost {
+                    self.total_cost += (est_in as f64 / 1_000_000.0) * cost.input
+                        + (est_out as f64 / 1_000_000.0) * cost.output;
+                }
+            }
 
             if turn.function_calls.is_empty() {
-                self.emit_assistant_reply(&turn.text, step_start_ms);
+                self.emit_assistant_reply_with_thoughts(&turn.text, &turn.thoughts, step_start_ms);
                 break;
             }
 
@@ -484,6 +810,29 @@ impl RpcServer {
 
             let mut content_blocks = Vec::new();
             let mut content_idx = 0usize;
+
+            for thought in &turn.thoughts {
+                Self::send_line(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_start",
+                        "contentIndex": content_idx
+                    }
+                }));
+                Self::send_line(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_end",
+                        "contentIndex": content_idx,
+                        "content": thought
+                    }
+                }));
+                content_blocks.push(json!({
+                    "type": "thinking",
+                    "thinking": thought
+                }));
+                content_idx += 1;
+            }
 
             if !turn.text.is_empty() {
                 Self::send_line(&json!({
@@ -611,7 +960,12 @@ impl RpcServer {
         Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
     }
 
-    fn emit_assistant_reply(&mut self, text: &str, started_ms: u64) {
+    fn emit_assistant_reply_with_thoughts(
+        &mut self,
+        text: &str,
+        thoughts: &[String],
+        started_ms: u64,
+    ) {
         let now_ms = epoch_ms();
         Self::send_line(&json!({
             "type": "message_start",
@@ -621,18 +975,48 @@ impl RpcServer {
                 "timestamp": started_ms
             }
         }));
+
+        let mut content_blocks = Vec::new();
+        let mut content_idx = 0usize;
+
+        for thought in thoughts {
+            if thought.trim().is_empty() {
+                continue;
+            }
+            Self::send_line(&json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_start",
+                    "contentIndex": content_idx
+                }
+            }));
+            Self::send_line(&json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_end",
+                    "contentIndex": content_idx,
+                    "content": thought
+                }
+            }));
+            content_blocks.push(json!({
+                "type": "thinking",
+                "thinking": thought
+            }));
+            content_idx += 1;
+        }
+
         Self::send_line(&json!({
             "type": "message_update",
             "assistantMessageEvent": {
                 "type": "text_start",
-                "contentIndex": 0
+                "contentIndex": content_idx
             }
         }));
         Self::send_line(&json!({
             "type": "message_update",
             "assistantMessageEvent": {
                 "type": "text_delta",
-                "contentIndex": 0,
+                "contentIndex": content_idx,
                 "delta": text
             }
         }));
@@ -640,13 +1024,15 @@ impl RpcServer {
             "type": "message_update",
             "assistantMessageEvent": {
                 "type": "text_end",
-                "contentIndex": 0,
+                "contentIndex": content_idx,
                 "content": text
             }
         }));
+        content_blocks.push(json!({ "type": "text", "text": text }));
+
         let msg = json!({
             "role": "assistant",
-            "content": [{ "type": "text", "text": text }],
+            "content": content_blocks,
             "stopReason": "stop",
             "timestamp": started_ms,
             "durationMs": now_ms.saturating_sub(started_ms),
@@ -693,6 +1079,7 @@ impl RpcServer {
 
             match cmd_type.as_str() {
                 "get_state" => {
+                    self.refresh_credentials();
                     Self::send_response(&id, "get_state", self.state_json());
                 }
                 "get_messages" => {
@@ -703,7 +1090,11 @@ impl RpcServer {
                     );
                 }
                 "get_session_stats" => {
-                    let window = 1_048_576u64;
+                    let window = self
+                        .active_model_info()
+                        .input_token_limit
+                        .unwrap_or(1_048_576)
+                        .max(1);
                     let pct = (self.total_tokens as f64 / window as f64) * 100.0;
                     Self::send_response(
                         &id,
@@ -714,7 +1105,7 @@ impl RpcServer {
                                 "contextWindow": window,
                                 "percent": pct
                             },
-                            "cost": 0.0
+                            "cost": self.total_cost
                         }),
                     );
                 }
@@ -727,25 +1118,40 @@ impl RpcServer {
                     );
                 }
                 "set_model" => {
-                    if let Some(p) = cmd["provider"].as_str() {
+                    if let Some(p) = cmd["provider"].as_str().filter(|s| !s.trim().is_empty()) {
                         self.active_provider = p.to_string();
                     }
-                    if let Some(m) = cmd["modelId"].as_str() {
+                    if let Some(m) = cmd["modelId"].as_str().filter(|s| !s.trim().is_empty()) {
                         self.active_model = m.to_string();
                     }
                     self.refresh_credentials();
+                    self.sync_thinking_level_for_active_model();
+                    save_settings_fields(
+                        &self.config_dir,
+                        Some(&self.active_provider),
+                        Some(&self.active_model),
+                        Some(&self.thinking_level),
+                    );
                     Self::send_response(&id, "set_model", self.current_model_json());
                 }
                 "get_available_thinking_levels" => {
+                    self.refresh_credentials();
+                    let levels = self.active_model_info().available_thinking_levels();
                     Self::send_response(
                         &id,
                         "get_available_thinking_levels",
-                        json!({ "levels": ["off", "low", "medium", "high"] }),
+                        json!({ "levels": levels }),
                     );
                 }
                 "set_thinking_level" => {
-                    if let Some(l) = cmd["level"].as_str() {
-                        self.thinking_level = l.to_string();
+                    if let Some(l) = cmd["level"].as_str().filter(|s| !s.trim().is_empty()) {
+                        let clamped = self.active_model_info().clamp_thinking_level(l);
+                        self.thinking_level = clamped.clone();
+                        save_settings_fields(&self.config_dir, None, None, Some(&clamped));
+                        Self::send_line(&json!({
+                            "type": "thinking_level_changed",
+                            "level": clamped,
+                        }));
                     }
                     Self::send_response(&id, "set_thinking_level", json!({}));
                 }
@@ -777,8 +1183,11 @@ impl RpcServer {
                             "commands": [
                                 { "name": "scan", "description": "Scan daftar model langsung dari token provider aktif" },
                                 { "name": "token", "description": "Ganti API key & URL provider (/token <KEY> [URL])" },
-                                { "name": "models", "description": "Tampilkan semua model di katalog" },
-                                { "name": "model", "description": "Ganti model aktif (/model <ID>)" },
+                                { "name": "models", "description": "Tampilkan semua model yang tersedia di aplikasi" },
+                                { "name": "model", "description": "Ganti model aktif (/model <ID> atau /model <provider>/<ID>)" },
+                                { "name": "thinking", "description": "Atur level penalaran (/thinking <off|minimal|low|medium|high|xhigh>)" },
+                                { "name": "provider", "description": "Lihat atau ganti provider aktif (/provider <ID>)" },
+                                { "name": "max-tokens", "description": "Atur batas token output model aktif (/max-tokens <angka>)" },
                                 { "name": "clear", "description": "Bersihkan memori sesi saat ini" }
                             ]
                         }),
@@ -814,13 +1223,14 @@ impl RpcServer {
                 }
                 "prompt" | "steer" => {
                     let message = cmd["message"].as_str().unwrap_or_default().to_string();
+                    let images = extract_prompt_images(&cmd["images"]);
                     Self::send_response(
                         &id,
                         &cmd_type,
                         json!({ "disposition": "started" }),
                     );
-                    if !message.trim().is_empty() {
-                        self.execute_prompt(&message).await;
+                    if !message.trim().is_empty() || !images.is_empty() {
+                        self.execute_prompt(&message, &images).await;
                     }
                 }
                 other => {
@@ -832,6 +1242,25 @@ impl RpcServer {
         }
         Ok(())
     }
+}
+
+fn extract_prompt_images(images_val: &Value) -> Vec<(String, String)> {
+    let Some(arr) = images_val.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in arr {
+        let data = item["data"].as_str().unwrap_or_default().trim();
+        if data.is_empty() {
+            continue;
+        }
+        let mime = item["mimeType"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("image/jpeg");
+        out.push((mime.to_string(), data.to_string()));
+    }
+    out
 }
 
 pub async fn run_rpc_mode(
@@ -914,90 +1343,117 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
     let auth_json = read_json_file(&config_dir.join("auth.json"));
     let models_json = read_json_file(&config_dir.join("models.json"));
 
-    for &(id, default_url) in BUILTIN_PROVIDER_URLS {
-        let api_key = extract_auth_key(&auth_json, id);
-        let models = if id == "google" {
-            catalog.list().to_vec()
-        } else {
-            Vec::new()
-        };
+    // 1. Muat seluruh provider referensi bawaan dari src/models.rs
+    for entry in builtin_providers() {
+        let api_key = extract_auth_key(&auth_json, &entry.id);
+        let has_auth = !api_key.is_empty();
+        let mut models = entry.models;
+        if entry.id == "google" {
+            // Sinkronkan model tambahan bila catalog sudah pernah di-scan di sesi ini
+            for m in catalog.list() {
+                if !models.iter().any(|existing| existing.id == m.id) {
+                    let mut cloned = m.clone();
+                    cloned.provider = "google".to_string();
+                    models.push(cloned);
+                }
+            }
+        }
         map.insert(
-            id.to_string(),
+            entry.id.clone(),
             ProviderEndpoint {
-                base_url: default_url.to_string(),
+                name: entry.name,
+                base_url: entry.base_url,
+                api: entry.api,
                 api_key,
+                has_auth,
                 models,
             },
         );
     }
 
-    // Baca custom providers & overrides dari models.json
+    // 2. Terapkan konfigurasi aplikasi dari models.json (custom providers, models[], dan modelOverrides{})
     if let Some(providers_obj) = models_json["providers"].as_object() {
         for (id, pval) in providers_obj {
+            let existing = map.get(id).cloned();
             let base_url = pval["baseUrl"]
                 .as_str()
+                .filter(|s| !s.trim().is_empty())
                 .map(str::to_string)
-                .or_else(|| map.get(id).map(|p| p.base_url.clone()))
+                .or_else(|| existing.as_ref().map(|p| p.base_url.clone()))
                 .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string());
-            let api_key = pval["apiKey"]
+            let api = pval["api"]
                 .as_str()
-                .filter(|k| !k.is_empty() && *k != "no-api-key")
+                .filter(|s| !s.trim().is_empty())
                 .map(str::to_string)
-                .or_else(|| {
-                    let k = extract_auth_key(&auth_json, id);
-                    if k.is_empty() {
-                        None
-                    } else {
-                        Some(k)
-                    }
-                })
-                .unwrap_or_default();
+                .or_else(|| existing.as_ref().map(|p| p.api.clone()))
+                .unwrap_or_else(|| infer_api_from_provider(id));
+            let name = pval["name"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+                .or_else(|| existing.as_ref().map(|p| p.name.clone()))
+                .unwrap_or_else(|| id.clone());
 
-            let mut parsed_models = Vec::new();
+            let raw_model_key = pval["apiKey"].as_str().unwrap_or("");
+            let is_keyless_local = raw_model_key == "no-api-key"
+                || id == "pipkin-local"
+                || base_url.contains("127.0.0.1")
+                || base_url.contains("localhost");
+            let api_key = if !raw_model_key.is_empty() && raw_model_key != "no-api-key" {
+                raw_model_key.to_string()
+            } else {
+                extract_auth_key(&auth_json, id)
+            };
+            let has_auth = !api_key.is_empty() || is_keyless_local;
+
+            let overrides = pval.get("modelOverrides");
+
+            // Mulai dari model bawaan provider (bila ada), lalu terapkan modelOverrides
+            let mut merged_models: Vec<ModelInfo> = existing
+                .map(|p| p.models)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|mut m| {
+                    m.provider = id.clone();
+                    m.api = api.clone();
+                    if let Some(ov) = overrides.and_then(|o| o.get(&m.id)) {
+                        m.apply_override(ov);
+                    }
+                    m
+                })
+                .collect();
+
+            // Tambahkan atau perbarui model dari array `models` di models.json
             if let Some(arr) = pval["models"].as_array() {
                 for item in arr {
-                    if let Some(mid) = item.as_str() {
-                        parsed_models.push(ModelInfo {
-                            id: mid.to_string(),
-                            label: mid.to_string(),
-                            provider: id.clone(),
-                            supports_tools: true,
-                            input_token_limit: Some(128_000),
-                            output_token_limit: Some(16_384),
-                            description: "Custom provider model".to_string(),
-                        });
-                    } else if let Some(mid) = item["id"].as_str() {
-                        let label = item["name"].as_str().unwrap_or(mid).to_string();
-                        parsed_models.push(ModelInfo {
-                            id: mid.to_string(),
-                            label,
-                            provider: id.clone(),
-                            supports_tools: true,
-                            input_token_limit: item["contextWindow"].as_u64(),
-                            output_token_limit: item["maxTokens"].as_u64(),
-                            description: "Custom provider model".to_string(),
-                        });
+                    if let Some(mut info) = ModelInfo::from_pipkin_json(item, id, &api) {
+                        if let Some(ov) = overrides.and_then(|o| o.get(&info.id)) {
+                            info.apply_override(ov);
+                        }
+                        if let Some(slot) = merged_models.iter_mut().find(|m| m.id == info.id) {
+                            *slot = info;
+                        } else {
+                            merged_models.push(info);
+                        }
                     }
-                }
-            }
-            if parsed_models.is_empty() {
-                if let Some(existing) = map.get(id) {
-                    parsed_models = existing.models.clone();
                 }
             }
 
             map.insert(
                 id.clone(),
                 ProviderEndpoint {
+                    name,
                     base_url,
+                    api,
                     api_key,
-                    models: parsed_models,
+                    has_auth,
+                    models: merged_models,
                 },
             );
         }
     }
 
-    // Fallback ke ~/.config/oopbot/.env atau env var GEMINI_API_KEY
+    // 3. Fallback ke ~/.config/oopbot/.env atau env var GEMINI_API_KEY
     let env_key = std::env::var("GEMINI_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
@@ -1008,6 +1464,7 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
             if google.api_key.is_empty() {
                 google.api_key = env_key;
             }
+            google.has_auth = true;
         }
     }
 
@@ -1029,6 +1486,90 @@ fn extract_auth_key(auth_json: &Value, provider_id: &str) -> String {
         return s.to_string();
     }
     String::new()
+}
+
+fn save_settings_fields(
+    config_dir: &Path,
+    default_provider: Option<&str>,
+    default_model: Option<&str>,
+    default_thinking_level: Option<&str>,
+) {
+    let settings_path = config_dir.join("settings.json");
+    let mut settings = read_json_file(&settings_path);
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    if let Some(p) = default_provider.filter(|s| !s.is_empty()) {
+        settings["defaultProvider"] = json!(p);
+    }
+    if let Some(m) = default_model.filter(|s| !s.is_empty()) {
+        settings["defaultModel"] = json!(m);
+    }
+    if let Some(l) = default_thinking_level.filter(|s| !s.is_empty()) {
+        settings["defaultThinkingLevel"] = json!(l);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(&settings) {
+        let _ = std::fs::write(&settings_path, format!("{}\n", text));
+    }
+}
+
+fn save_scanned_models_to_config(config_dir: &Path, provider_id: &str, scanned: &[ModelInfo]) {
+    if scanned.is_empty() {
+        return;
+    }
+    let models_path = config_dir.join("models.json");
+    let mut models_json = read_json_file(&models_path);
+    if !models_json.is_object() {
+        models_json = json!({ "providers": {} });
+    }
+    if !models_json["providers"].is_object() {
+        models_json["providers"] = json!({});
+    }
+    if !models_json["providers"][provider_id].is_object() {
+        models_json["providers"][provider_id] = json!({});
+    }
+    let serialized: Vec<Value> = scanned
+        .iter()
+        .map(|m| m.to_pipkin_json(Some(provider_id)))
+        .collect();
+    models_json["providers"][provider_id]["models"] = json!(serialized);
+    if let Ok(text) = serde_json::to_string_pretty(&models_json) {
+        let _ = std::fs::write(&models_path, format!("{}\n", text));
+    }
+}
+
+fn save_model_override_to_config(
+    config_dir: &Path,
+    provider_id: &str,
+    model_id: &str,
+    override_patch: &Value,
+) {
+    let Some(patch_obj) = override_patch.as_object() else {
+        return;
+    };
+    let models_path = config_dir.join("models.json");
+    let mut models_json = read_json_file(&models_path);
+    if !models_json.is_object() {
+        models_json = json!({ "providers": {} });
+    }
+    if !models_json["providers"].is_object() {
+        models_json["providers"] = json!({});
+    }
+    if !models_json["providers"][provider_id].is_object() {
+        models_json["providers"][provider_id] = json!({});
+    }
+    if !models_json["providers"][provider_id]["modelOverrides"].is_object() {
+        models_json["providers"][provider_id]["modelOverrides"] = json!({});
+    }
+    if !models_json["providers"][provider_id]["modelOverrides"][model_id].is_object() {
+        models_json["providers"][provider_id]["modelOverrides"][model_id] = json!({});
+    }
+    for (k, v) in patch_obj {
+        models_json["providers"][provider_id]["modelOverrides"][model_id][k] = v.clone();
+    }
+    if let Ok(text) = serde_json::to_string_pretty(&models_json) {
+        let _ = std::fs::write(&models_path, format!("{}\n", text));
+    }
 }
 
 fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str, base_url: Option<&str>) {
@@ -1158,20 +1699,29 @@ fn init_or_load_session(
 fn ui_message_to_llm(msg: &Value) -> Option<Value> {
     match msg["role"].as_str()? {
         "user" => {
-            let text = if let Some(s) = msg["content"].as_str() {
-                s.to_string()
+            let mut text = String::new();
+            let mut images = Vec::new();
+            if let Some(s) = msg["content"].as_str() {
+                text = s.to_string();
             } else if let Some(arr) = msg["content"].as_array() {
-                arr.iter()
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                String::new()
-            };
-            if text.is_empty() {
+                let mut texts = Vec::new();
+                for b in arr {
+                    if let Some(t) = b["text"].as_str() {
+                        texts.push(t);
+                    } else if b["type"].as_str() == Some("image") {
+                        let mime = b["mimeType"].as_str().unwrap_or("image/jpeg").to_string();
+                        let data = b["data"].as_str().unwrap_or_default().to_string();
+                        if !data.is_empty() {
+                            images.push((mime, data));
+                        }
+                    }
+                }
+                text = texts.join("\n");
+            }
+            if text.is_empty() && images.is_empty() {
                 None
             } else {
-                Some(user_text(&text))
+                Some(user_message_with_images(&text, &images))
             }
         }
         "assistant" => {
@@ -1264,4 +1814,63 @@ mod tests {
         assert!(is_err);
         assert!(text.ends_with("Command exited with code 2"));
     }
+
+    #[test]
+    fn load_providers_applies_model_overrides_and_local_providers() {
+        let tmp = std::env::temp_dir().join(format!("oopbot_rpc_test_{}", epoch_ms()));
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(
+            tmp.join("models.json"),
+            serde_json::to_string_pretty(&json!({
+                "providers": {
+                    "google": {
+                        "modelOverrides": {
+                            "gemini-2.5-flash": {
+                                "name": "Flash Override Dari Aplikasi",
+                                "maxTokens": 8192,
+                                "reasoning": false
+                            }
+                        }
+                    },
+                    "pipkin-local": {
+                        "baseUrl": "http://127.0.0.1:8080/v1",
+                        "api": "openai-completions",
+                        "apiKey": "no-api-key",
+                        "models": [
+                            {
+                                "id": "qwen3-4b",
+                                "name": "Qwen3 4B Local",
+                                "reasoning": true,
+                                "contextWindow": 32768,
+                                "maxTokens": 4096
+                            }
+                        ]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let cat = ModelCatalog::builtin();
+        let providers = load_providers(&tmp, &cat);
+        let google = providers.get("google").unwrap();
+        let flash = google
+            .models
+            .iter()
+            .find(|m| m.id == "gemini-2.5-flash")
+            .unwrap();
+        assert_eq!(flash.label, "Flash Override Dari Aplikasi");
+        assert_eq!(flash.output_token_limit, Some(8192));
+        assert!(!flash.reasoning);
+
+        let local = providers.get("pipkin-local").unwrap();
+        assert!(local.has_auth);
+        assert_eq!(local.models.len(), 1);
+        assert_eq!(local.models[0].id, "qwen3-4b");
+        assert_eq!(local.models[0].input_token_limit, Some(32768));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
+

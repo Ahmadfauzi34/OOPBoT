@@ -8,7 +8,9 @@ use crate::events::{
     AgentEvent, CliEventSink, EventSink, MemoryEventCollector, StepsOutcome, TimelineEntry,
     ToolStatus,
 };
-use crate::gemini::{function_response_part, user_text, BoxError, FunctionCall, GeminiClient};
+use crate::gemini::{
+    function_response_part, user_text, BoxError, FunctionCall, GeminiClient, GenerationOptions,
+};
 use crate::models::{ModelCatalog, ModelInfo};
 use crate::session::{ChatSession, WorkspaceTabs};
 use crate::tools::ToolRegistry;
@@ -78,6 +80,7 @@ pub struct GeminiAgent {
     max_steps: usize,
     catalog: Mutex<ModelCatalog>,
     tabs: Mutex<WorkspaceTabs>,
+    thinking_level: Mutex<String>,
 }
 
 impl GeminiAgent {
@@ -123,12 +126,65 @@ impl GeminiAgent {
             max_steps,
             catalog: Mutex::new(catalog),
             tabs: Mutex::new(tabs),
+            thinking_level: Mutex::new("medium".to_string()),
         }
     }
 
     /// Model yang sedang aktif di tab saat ini.
     pub fn model(&self) -> String {
         self.tabs.lock().unwrap().active().model.clone()
+    }
+
+    /// Info lengkap model aktif saat ini.
+    pub fn active_model_info(&self) -> ModelInfo {
+        let active_id = self.model();
+        let cat = self.catalog.lock().unwrap();
+        cat.find(&active_id).cloned().unwrap_or_else(|| ModelInfo {
+            id: active_id.clone(),
+            label: active_id,
+            provider: "google".into(),
+            supports_tools: true,
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(65_536),
+            description: "Active model".into(),
+            api: "google-generative-ai".into(),
+            reasoning: true,
+            thinking_level_map: None,
+            input: vec!["text".into(), "image".into()],
+            cost: None,
+        })
+    }
+
+    pub fn thinking_level(&self) -> String {
+        self.thinking_level.lock().unwrap().clone()
+    }
+
+    pub fn set_thinking_level(&self, level: &str) -> String {
+        let clamped = self.active_model_info().clamp_thinking_level(level.trim());
+        *self.thinking_level.lock().unwrap() = clamped.clone();
+        clamped
+    }
+
+    /// Terapkan konfigurasi override ke model di katalog (`maxTokens`, `contextWindow`, `reasoning`, `thinkingLevelMap`, dsb.).
+    pub fn configure_model(&self, model_id: &str, override_json: &Value) -> ModelInfo {
+        let mut cat = self.catalog.lock().unwrap();
+        let mut info = cat.find(model_id).cloned().unwrap_or_else(|| ModelInfo {
+            id: model_id.to_string(),
+            label: model_id.to_string(),
+            provider: "custom".into(),
+            supports_tools: true,
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(65_536),
+            description: "Configured model".into(),
+            api: "google-generative-ai".into(),
+            reasoning: true,
+            thinking_level_map: None,
+            input: vec!["text".into(), "image".into()],
+            cost: None,
+        });
+        info.apply_override(override_json);
+        cat.upsert_model(info.clone());
+        info
     }
 
     /// Ganti model pada tab yang sedang aktif (bisa lewat nomor katalog `1..N` atau ID model).
@@ -351,6 +407,16 @@ impl Agent for GeminiAgent {
         let turn_started = Instant::now();
         let mut tool_steps = 0usize;
 
+        let model_info = self.active_model_info();
+        let gen_options = GenerationOptions {
+            api: Some(model_info.api.clone()),
+            max_tokens: model_info.output_token_limit,
+            thinking_level: Some(self.thinking_level()),
+            reasoning: model_info.reasoning,
+            thinking_level_map: model_info.thinking_level_map.clone(),
+            session_id: Some(session_id.clone()),
+        };
+
         self.emit(
             AgentEvent::TurnStart {
                 session_id,
@@ -362,9 +428,25 @@ impl Agent for GeminiAgent {
         for step_idx in 1..=self.max_steps {
             let turn = self
                 .client
-                .generate_with_model(&active_model, &self.system_instruction, &history, &decls)
+                .generate_with_options(
+                    &active_model,
+                    &self.system_instruction,
+                    &history,
+                    &decls,
+                    &gen_options,
+                )
                 .await?;
             history.push(turn.raw_content.clone());
+
+            for thought in &turn.thoughts {
+                self.emit(
+                    AgentEvent::Thinking {
+                        step_index: step_idx,
+                        text: thought.clone(),
+                    },
+                    &collector,
+                );
+            }
 
             if turn.function_calls.is_empty() {
                 self.emit(

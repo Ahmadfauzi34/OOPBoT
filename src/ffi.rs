@@ -9,6 +9,7 @@
 use crate::agent::{Agent, Approver, GeminiAgent};
 use crate::events::{AgentEvent, EventSink};
 use crate::gemini::GeminiClient;
+use crate::models::builtin_catalog_json;
 use crate::tools::ToolRegistry;
 use serde_json::{json, Value};
 use std::ffi::{c_void, CStr, CString};
@@ -92,6 +93,13 @@ pub extern "C" fn oopbot_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }
 
+/// Katalog referensi provider & model bawaan Rust dalam JSON (`*mut c_char`).
+/// Bebaskan dengan `oopbot_string_free`.
+#[no_mangle]
+pub extern "C" fn oopbot_reference_catalog() -> *mut c_char {
+    to_c_string(builtin_catalog_json())
+}
+
 /// Buat instance engine `OopbotHandle` baru di dalam memori `.so`.
 ///
 /// # Safety
@@ -136,9 +144,25 @@ pub unsafe extern "C" fn oopbot_engine_request(
 
 pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
     match req["op"].as_str().unwrap_or("") {
+        "catalog" => {
+            let mut cat = builtin_catalog_json();
+            cat["ok"] = json!(true);
+            cat
+        }
+        "get_state" => {
+            let info = h.agent.active_model_info();
+            json!({
+                "ok": true,
+                "active_model": h.agent.model(),
+                "model": info.to_pipkin_json(None),
+                "thinking_level": h.agent.thinking_level(),
+                "available_thinking_levels": info.available_thinking_levels(),
+            })
+        }
         "models" => json!({
             "ok": true,
             "active_model": h.agent.model(),
+            "thinking_level": h.agent.thinking_level(),
             "models": h.agent.list_models(),
         }),
         "scan_models" => match h.runtime.block_on(h.agent.scan_models()) {
@@ -170,7 +194,39 @@ pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
                 return json!({ "ok": false, "error": "missing 'model'" });
             };
             let active = h.agent.set_active_model(m);
-            json!({ "ok": true, "active_model": active })
+            let clamped_level = h.agent.set_thinking_level(&h.agent.thinking_level());
+            let info = h.agent.active_model_info();
+            json!({
+                "ok": true,
+                "active_model": active,
+                "thinking_level": clamped_level,
+                "model": info.to_pipkin_json(None),
+            })
+        }
+        "set_thinking_level" => {
+            let Some(level) = req["level"].as_str() else {
+                return json!({ "ok": false, "error": "missing 'level'" });
+            };
+            let clamped = h.agent.set_thinking_level(level);
+            json!({
+                "ok": true,
+                "thinking_level": clamped,
+                "available_thinking_levels": h.agent.active_model_info().available_thinking_levels(),
+            })
+        }
+        "configure_model" => {
+            let target_model = req["model"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| h.agent.model());
+            let patch = req.get("override").unwrap_or(req);
+            let updated = h.agent.configure_model(&target_model, patch);
+            let clamped = h.agent.set_thinking_level(&h.agent.thinking_level());
+            json!({
+                "ok": true,
+                "model": updated.to_pipkin_json(None),
+                "thinking_level": clamped,
+            })
         }
         "tabs" => {
             let (active_index, tabs) = h.agent.list_tabs();
@@ -220,10 +276,10 @@ pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
     }
 }
 
-/// Bebaskan string hasil `oopbot_engine_request`.
+/// Bebaskan string hasil `oopbot_engine_request` atau `oopbot_reference_catalog`.
 ///
 /// # Safety
-/// `ptr` harus berasal dari `oopbot_engine_request`.
+/// `ptr` harus berasal dari `oopbot_engine_request` atau `oopbot_reference_catalog`.
 #[no_mangle]
 pub unsafe extern "C" fn oopbot_string_free(ptr: *mut c_char) {
     if !ptr.is_null() {
@@ -298,6 +354,15 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
     rust_to_jstring(env, env!("CARGO_PKG_VERSION"))
 }
 
+/// `OopbotBridge.referenceCatalog(): String`
+#[no_mangle]
+pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_referenceCatalog(
+    env: JniEnv,
+    _class: JObject,
+) -> JString {
+    rust_to_jstring(env, &builtin_catalog_json().to_string())
+}
+
 /// `OopbotBridge.engineNew(apiKey: String, defaultModel: String, autoApprove: Boolean): Long`
 #[no_mangle]
 pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
@@ -351,8 +416,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ffi_models_and_tabs_roundtrip() {
+    fn ffi_models_thinking_and_tabs_roundtrip() {
         unsafe {
+            let cat_ptr = oopbot_reference_catalog();
+            let cat_str = CStr::from_ptr(cat_ptr).to_str().unwrap().to_owned();
+            oopbot_string_free(cat_ptr);
+            let cat_v: Value = serde_json::from_str(&cat_str).unwrap();
+            assert_eq!(cat_v["defaultProvider"], "google");
+            assert!(cat_v["providers"].as_array().unwrap().len() >= 6);
+
             let key = CString::new("dummy_key").unwrap();
             let model = CString::new("gemini-2.5-flash").unwrap();
             let handle = oopbot_engine_new(key.as_ptr(), model.as_ptr(), false);
@@ -367,6 +439,24 @@ mod tests {
             assert_eq!(v["ok"], true);
             assert_eq!(v["active_model"], "gemini-2.5-flash");
 
+            let req_cfg = CString::new(
+                r#"{"op":"configure_model","model":"gemini-2.5-flash","override":{"maxTokens":12345,"name":"Flash FFI"}}"#,
+            )
+            .unwrap();
+            let cfg_ptr = oopbot_engine_request(handle, req_cfg.as_ptr());
+            let cfg_v: Value =
+                serde_json::from_str(CStr::from_ptr(cfg_ptr).to_str().unwrap()).unwrap();
+            oopbot_string_free(cfg_ptr);
+            assert_eq!(cfg_v["model"]["maxTokens"], 12345);
+            assert_eq!(cfg_v["model"]["name"], "Flash FFI");
+
+            let req_lvl = CString::new(r#"{"op":"set_thinking_level","level":"high"}"#).unwrap();
+            let lvl_ptr = oopbot_engine_request(handle, req_lvl.as_ptr());
+            let lvl_v: Value =
+                serde_json::from_str(CStr::from_ptr(lvl_ptr).to_str().unwrap()).unwrap();
+            oopbot_string_free(lvl_ptr);
+            assert_eq!(lvl_v["thinking_level"], "high");
+
             let req_tab = CString::new(r#"{"op":"new_tab","model":"gemini-2.5-pro"}"#).unwrap();
             let tab_ptr = oopbot_engine_request(handle, req_tab.as_ptr());
             let tab_v: Value =
@@ -378,3 +468,4 @@ mod tests {
         }
     }
 }
+

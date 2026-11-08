@@ -1,7 +1,9 @@
 use oopbot::agent::{Agent, CliApprover, GeminiAgent};
 use oopbot::events::{StepRecord, TimelineEntry};
 use oopbot::gemini::{BoxError, GeminiClient};
+use oopbot::models::builtin_catalog_json;
 use oopbot::tools::ToolRegistry;
+use serde_json::json;
 use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -29,7 +31,10 @@ PEMAKAIAN:
 OPSI:
     -m, --model <NAMA>     Model Gemini (default: $GEMINI_MODEL atau {model})
     -p, --prompt <TEKS>    Jalankan 1 prompt non-interaktif lalu keluar
-        --mode <MODE>      Mode daemon (`rpc` untuk koneksi aplikasi Android Pipkin)
+        --mode <MODE>      Mode mesin:
+                           - `rpc`         : daemon JSONL untuk aplikasi Android Pipkin
+                           - `catalog`     : cetak katalog referensi provider & model JSON
+                           - `scan-models` : scan daftar model live dari provider & cetak JSON
         --session <PATH>   Path file sesi JSONL (untuk `--mode rpc`)
     -y, --yes              Setujui otomatis semua tool (HATI-HATI)
         --max-steps <N>    Batas langkah tool per pesan (default {steps})
@@ -45,6 +50,7 @@ PERINTAH DI DALAM CHAT (ALA PIPKIN):
     /token <KEY> [URL]     Ganti token/API key (& opsional base URL) + auto-scan model
     /models                Lihat daftar model & model aktif
     /model <NO|ID>         Ganti model untuk tab aktif (misal: /model 2)
+    /thinking <LEVEL>      Atur level penalaran (off|minimal|low|medium|high|xhigh)
     /tabs                  Lihat semua tab sesi percakapan
     /new [MODEL]           Buat tab baru (opsional langsung pilih model)
     /tab <NO|ID>           Pindah ke tab tertentu
@@ -253,6 +259,20 @@ async fn handle_slash_command(agent: &GeminiAgent, input: &str) -> bool {
             }
             true
         }
+        "/thinking" => {
+            if arg.is_empty() {
+                let levels = agent.active_model_info().available_thinking_levels();
+                println!(
+                    "🧠 Level thinking saat ini: {} (tersedia: {})\n",
+                    agent.thinking_level(),
+                    levels.join(", ")
+                );
+            } else {
+                let clamped = agent.set_thinking_level(arg);
+                println!("✅ Level thinking diubah ke: {}\n", clamped);
+            }
+            true
+        }
         "/tabs" => {
             render_tabs(agent);
             true
@@ -319,8 +339,35 @@ async fn main() -> Result<(), BoxError> {
     };
     load_env();
 
-    if cli.mode.as_deref() == Some("rpc") {
-        return oopbot::rpc::run_rpc_mode(cli.session, cli.system_append).await;
+    match cli.mode.as_deref() {
+        Some("rpc") => {
+            return oopbot::rpc::run_rpc_mode(cli.session, cli.system_append).await;
+        }
+        Some("catalog") => {
+            println!("{}", serde_json::to_string(&builtin_catalog_json())?);
+            return Ok(());
+        }
+        Some("scan-models") => {
+            let api_key = env::var("OOPBOT_SCAN_API_KEY")
+                .or_else(|_| env::var("GEMINI_API_KEY"))
+                .unwrap_or_default();
+            let base_url = env::var("OOPBOT_SCAN_BASE_URL")
+                .ok()
+                .filter(|u| !u.trim().is_empty());
+            let client = GeminiClient::new(api_key.clone(), DEFAULT_MODEL.to_string())?;
+            client.update_credentials(api_key, base_url);
+            match client.scan_models().await {
+                Ok(scanned) => {
+                    let models: Vec<_> = scanned.iter().map(|m| m.to_pipkin_json(None)).collect();
+                    println!("{}", json!({ "ok": true, "models": models }));
+                }
+                Err(e) => {
+                    println!("{}", json!({ "ok": false, "error": e.to_string() }));
+                }
+            }
+            return Ok(());
+        }
+        _ => {}
     }
 
     let api_key = match env::var("GEMINI_API_KEY") {
