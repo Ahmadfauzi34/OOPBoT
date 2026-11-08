@@ -1,11 +1,14 @@
 /**
  * Lightweight built-in replacement for `@earendil-works/pi-coding-agent`'s SDK (`SettingsManager`, `ModelRuntime`,
- * `SessionManager`, and `resolveModelScopeWithDiagnostics`) when running with the native Rust `oopbot` engine in
- * Termux, so `host.mjs` needs no `npm ci` or `node_modules/@earendil-works/pi-coding-agent` on disk.
+ * `SessionManager`, and `resolveModelScopeWithDiagnostics`) backed by the native Rust `oopbot` reference engine in
+ * Termux (`oopbot --mode catalog` / `oopbot --mode scan-models`), so `host.mjs` needs no `npm ci` or
+ * `node_modules/@earendil-works/pi-coding-agent` on disk.
  */
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { PiSdk } from "./env.js";
 import { isObject, type JsonObject } from "./framing.js";
@@ -18,7 +21,12 @@ interface BuiltinProvider {
   models: JsonObject[];
 }
 
-const BUILTIN_CATALOGUE: readonly BuiltinProvider[] = [
+/**
+ * Mirror of `builtin_providers()` in `src/models.rs`, used when the native `oopbot` binary is not yet installed
+ * (e.g. during first-time setup or host unit tests). When `oopbot` is present on disk, `getReferenceCatalogue()`
+ * queries `oopbot --mode catalog` directly so the Rust engine is the single source of truth.
+ */
+const FALLBACK_CATALOGUE: readonly BuiltinProvider[] = [
   {
     id: "google",
     name: "Google Gemini (OOPBoT)",
@@ -34,6 +42,7 @@ const BUILTIN_CATALOGUE: readonly BuiltinProvider[] = [
         maxTokens: 65_536,
         reasoning: true,
         input: ["text", "image"],
+        cost: { input: 0.1, output: 0.4, cacheRead: 0.025, cacheWrite: 0.1 },
       },
       {
         id: "gemini-2.5-flash",
@@ -44,6 +53,7 @@ const BUILTIN_CATALOGUE: readonly BuiltinProvider[] = [
         maxTokens: 65_536,
         reasoning: true,
         input: ["text", "image"],
+        cost: { input: 0.3, output: 2.5, cacheRead: 0.075, cacheWrite: 0.3 },
       },
       {
         id: "gemini-2.5-pro",
@@ -54,6 +64,28 @@ const BUILTIN_CATALOGUE: readonly BuiltinProvider[] = [
         maxTokens: 65_536,
         reasoning: true,
         input: ["text", "image"],
+        cost: { input: 1.25, output: 10.0, cacheRead: 0.31, cacheWrite: 1.25 },
+      },
+      {
+        id: "gemini-2.5-flash-lite",
+        name: "Gemini 2.5 Flash-Lite",
+        provider: "google",
+        api: "google-generative-ai",
+        contextWindow: 1_048_576,
+        maxTokens: 65_536,
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 0.1, output: 0.4, cacheRead: 0.025, cacheWrite: 0.1 },
+      },
+      {
+        id: "gemma-4-31b-it",
+        name: "Gemma 4 31B IT",
+        provider: "google",
+        api: "google-generative-ai",
+        contextWindow: 131_072,
+        maxTokens: 8_192,
+        reasoning: true,
+        input: ["text", "image"],
       },
     ],
   },
@@ -62,37 +94,242 @@ const BUILTIN_CATALOGUE: readonly BuiltinProvider[] = [
     name: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
     api: "openai-completions",
-    models: [],
+    models: [
+      {
+        id: "google/gemini-2.5-flash",
+        name: "Gemini 2.5 Flash",
+        provider: "openrouter",
+        api: "openai-completions",
+        contextWindow: 1_048_576,
+        maxTokens: 65_536,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "google/gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        provider: "openrouter",
+        api: "openai-completions",
+        contextWindow: 1_048_576,
+        maxTokens: 65_536,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "anthropic/claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        provider: "openrouter",
+        api: "openai-completions",
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "deepseek/deepseek-r1",
+        name: "DeepSeek R1",
+        provider: "openrouter",
+        api: "openai-completions",
+        contextWindow: 128_000,
+        maxTokens: 32_768,
+        reasoning: true,
+        input: ["text"],
+      },
+    ],
   },
   {
     id: "zai",
     name: "Z.ai Coding Plan",
     baseUrl: "https://api.z.ai/api/coding/paas/v4",
     api: "openai-completions",
-    models: [],
+    models: [
+      {
+        id: "glm-4.5",
+        name: "GLM-4.5",
+        provider: "zai",
+        api: "openai-completions",
+        contextWindow: 128_000,
+        maxTokens: 16_384,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "glm-4.5-air",
+        name: "GLM-4.5 Air",
+        provider: "zai",
+        api: "openai-completions",
+        contextWindow: 128_000,
+        maxTokens: 16_384,
+        reasoning: true,
+        input: ["text"],
+      },
+    ],
   },
   {
     id: "kimi-coding",
     name: "Kimi Code",
     baseUrl: "https://api.kimi.com/coding/v1",
     api: "openai-completions",
-    models: [],
+    models: [
+      {
+        id: "kimi-k2-0711-preview",
+        name: "Kimi K2",
+        provider: "kimi-coding",
+        api: "openai-completions",
+        contextWindow: 131_072,
+        maxTokens: 32_768,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "kimi-thinking-preview",
+        name: "Kimi Thinking",
+        provider: "kimi-coding",
+        api: "openai-completions",
+        contextWindow: 131_072,
+        maxTokens: 32_768,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+    ],
   },
   {
     id: "anthropic",
     name: "Anthropic",
     baseUrl: "https://api.anthropic.com/v1",
     api: "anthropic-messages",
-    models: [],
+    models: [
+      {
+        id: "claude-sonnet-4-20250514",
+        name: "Claude Sonnet 4",
+        provider: "anthropic",
+        api: "anthropic-messages",
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 3.0, output: 15.0, cacheRead: 0.3, cacheWrite: 3.75 },
+      },
+      {
+        id: "claude-opus-4-20250514",
+        name: "Claude Opus 4",
+        provider: "anthropic",
+        api: "anthropic-messages",
+        contextWindow: 200_000,
+        maxTokens: 32_000,
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 15.0, output: 75.0, cacheRead: 1.5, cacheWrite: 18.75 },
+      },
+      {
+        id: "claude-3-5-haiku-latest",
+        name: "Claude 3.5 Haiku",
+        provider: "anthropic",
+        api: "anthropic-messages",
+        contextWindow: 200_000,
+        maxTokens: 8_192,
+        reasoning: false,
+        input: ["text", "image"],
+        cost: { input: 0.8, output: 4.0, cacheRead: 0.08, cacheWrite: 1.0 },
+      },
+    ],
   },
   {
     id: "openai-codex",
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     api: "openai-responses",
-    models: [],
+    models: [
+      {
+        id: "gpt-5",
+        name: "GPT-5",
+        provider: "openai-codex",
+        api: "openai-responses",
+        contextWindow: 400_000,
+        maxTokens: 128_000,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "gpt-5-mini",
+        name: "GPT-5 Mini",
+        provider: "openai-codex",
+        api: "openai-responses",
+        contextWindow: 400_000,
+        maxTokens: 128_000,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+      {
+        id: "o4-mini",
+        name: "o4-mini",
+        provider: "openai-codex",
+        api: "openai-responses",
+        contextWindow: 200_000,
+        maxTokens: 100_000,
+        reasoning: true,
+        input: ["text", "image"],
+      },
+    ],
   },
 ];
+
+let cachedRustCatalogue: readonly BuiltinProvider[] | null = null;
+
+function resolveOopbotBinary(): string | null {
+  const candidates = [
+    process.env.OOPBOT_BIN,
+    join(homedir(), ".pipkin", "bin", "oopbot"),
+    process.env.PREFIX ? join(process.env.PREFIX, "bin", "oopbot") : undefined,
+    "/data/data/com.termux/files/usr/bin/oopbot",
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.length > 0 && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * Queries `oopbot --mode catalog` from the Rust engine if available on disk, falling back to `FALLBACK_CATALOGUE`.
+ */
+function getReferenceCatalogue(): readonly BuiltinProvider[] {
+  if (cachedRustCatalogue !== null) return cachedRustCatalogue;
+  const bin = resolveOopbotBinary();
+  if (bin !== null) {
+    try {
+      const stdout = execFileSync(bin, ["--mode", "catalog"], {
+        encoding: "utf8",
+        timeout: 3_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const parsed: unknown = JSON.parse(stdout);
+      if (isObject(parsed) && Array.isArray(parsed.providers)) {
+        const providers: BuiltinProvider[] = [];
+        for (const p of parsed.providers) {
+          if (!isObject(p) || typeof p.id !== "string") continue;
+          const models = Array.isArray(p.models) ? p.models.filter((m): m is JsonObject => isObject(m)) : [];
+          providers.push({
+            id: p.id,
+            name: typeof p.name === "string" ? p.name : p.id,
+            baseUrl: typeof p.baseUrl === "string" ? p.baseUrl : "",
+            api: typeof p.api === "string" ? p.api : "openai-completions",
+            models,
+          });
+        }
+        if (providers.length > 0) {
+          cachedRustCatalogue = providers;
+          return cachedRustCatalogue;
+        }
+      }
+    } catch {
+      // Fallback to built-in mirror if binary execution fails.
+    }
+  }
+  cachedRustCatalogue = FALLBACK_CATALOGUE;
+  return cachedRustCatalogue;
+}
 
 class OopbotSettingsManager {
   globalSettings: JsonObject = {};
@@ -248,14 +485,15 @@ class OopbotModelRuntime {
   }
 
   getProviders(): { id: string; name: string; baseUrl: string }[] {
-    const list = BUILTIN_CATALOGUE.map((p) => {
+    const catalogue = getReferenceCatalogue();
+    const list = catalogue.map((p) => {
       const override = isObject(this.modelsDoc[p.id]) ? (this.modelsDoc[p.id] as JsonObject) : undefined;
       const baseUrl = typeof override?.baseUrl === "string" ? override.baseUrl : p.baseUrl;
       return { id: p.id, name: p.name, baseUrl };
     });
     if (!this.builtinOnly) {
       for (const [id, entry] of Object.entries(this.modelsDoc)) {
-        if (!isObject(entry) || BUILTIN_CATALOGUE.some((b) => b.id === id)) continue;
+        if (!isObject(entry) || catalogue.some((b) => b.id === id)) continue;
         list.push({
           id,
           name: id,
@@ -271,34 +509,51 @@ class OopbotModelRuntime {
   }
 
   getModels(providerId?: string): JsonObject[] {
+    const catalogue = getReferenceCatalogue();
     const providers = providerId === undefined ? this.getProviders().map((p) => p.id) : [providerId];
     const result: JsonObject[] = [];
     for (const pid of providers) {
-      const builtin = BUILTIN_CATALOGUE.find((b) => b.id === pid);
+      const builtin = catalogue.find((b) => b.id === pid);
       const entry = !this.builtinOnly && isObject(this.modelsDoc[pid]) ? (this.modelsDoc[pid] as JsonObject) : undefined;
       const overrides = isObject(entry?.modelOverrides) ? (entry.modelOverrides as JsonObject) : {};
       const extraList = Array.isArray(entry?.models) ? entry.models : [];
-      const extraIds = new Set<string>();
+      const byId = new Map<string, JsonObject>();
 
       if (builtin !== undefined) {
         for (const baseModel of builtin.models) {
           const mid = String(baseModel.id);
           const ov = isObject(overrides[mid]) ? (overrides[mid] as JsonObject) : {};
-          result.push({ ...baseModel, ...ov, provider: pid, id: mid });
+          byId.set(mid, { ...baseModel, ...ov, provider: pid, id: mid });
         }
       }
       for (const extra of extraList) {
-        if (typeof extra === "string" && !extraIds.has(extra)) {
-          extraIds.add(extra);
-          result.push({ id: extra, name: extra, provider: pid, api: builtin?.api ?? "openai-completions" });
-        } else if (isObject(extra) && typeof extra.id === "string" && !extraIds.has(extra.id)) {
-          extraIds.add(extra.id);
-          result.push({
+        if (typeof extra === "string") {
+          const ov = isObject(overrides[extra]) ? (overrides[extra] as JsonObject) : {};
+          const prev = byId.get(extra);
+          byId.set(extra, {
+            id: extra,
+            name: extra,
             provider: pid,
             api: builtin?.api ?? "openai-completions",
+            ...prev,
+            ...ov,
+          });
+        } else if (isObject(extra) && typeof extra.id === "string") {
+          const mid = extra.id;
+          const ov = isObject(overrides[mid]) ? (overrides[mid] as JsonObject) : {};
+          const prev = byId.get(mid);
+          byId.set(mid, {
+            provider: pid,
+            api: builtin?.api ?? "openai-completions",
+            ...prev,
             ...extra,
+            ...ov,
+            id: mid,
           });
         }
+      }
+      for (const modelObj of byId.values()) {
+        result.push(modelObj);
       }
     }
     return result;
@@ -392,7 +647,7 @@ class OopbotModelRuntime {
           name: typeof item.displayName === "string" ? item.displayName : id,
           contextWindow: typeof item.inputTokenLimit === "number" ? item.inputTokenLimit : 1_048_576,
           maxTokens: typeof item.outputTokenLimit === "number" ? item.outputTokenLimit : 65_536,
-          reasoning: true,
+          reasoning: typeof item.thinking === "boolean" ? item.thinking : !id.includes("gemini-1.5"),
           input: ["text", "image"],
         });
       }
