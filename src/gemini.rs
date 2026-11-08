@@ -151,12 +151,13 @@ impl GeminiClient {
             let c = self.creds.read().unwrap();
             (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
         };
-        let url = if base_url.contains("googleapis.com") {
+        let is_native_google = base_url.contains("googleapis.com") && !base_url.contains("/openai");
+        let url = if is_native_google {
             format!("{}/models?pageSize=100", base_url)
         } else {
             format!("{}/models", base_url)
         };
-        let provider_hint = if base_url.contains("googleapis.com") {
+        let provider_hint = if is_native_google {
             "google"
         } else if base_url.contains("openrouter.ai") {
             "openrouter"
@@ -172,12 +173,13 @@ impl GeminiClient {
 
         let mut req = self.http.get(&url).timeout(Duration::from_secs(20));
         if !api_key.is_empty() {
-            if base_url.contains("googleapis.com") {
+            if is_native_google {
                 req = req.header("x-goog-api-key", &api_key);
             } else {
                 req = req.header("Authorization", format!("Bearer {}", api_key));
             }
         }
+
         let resp = req.send().await?;
 
         let status = resp.status();
@@ -247,8 +249,9 @@ impl GeminiClient {
             (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
         };
 
+        let is_native_google = base_url.contains("googleapis.com") && !base_url.contains("/openai");
         let api_kind = options.api.as_deref().unwrap_or_else(|| {
-            if base_url.contains("googleapis.com") {
+            if is_native_google {
                 "google-generative-ai"
             } else if base_url.contains("anthropic.com") {
                 "anthropic-messages"
@@ -272,7 +275,7 @@ impl GeminiClient {
                     .await;
             }
             "openai-completions" | "openai-responses" => {
-                if !base_url.contains("googleapis.com") {
+                if !is_native_google {
                     return self
                         .generate_openai_compatible(
                             &api_key,
@@ -287,7 +290,7 @@ impl GeminiClient {
                 }
             }
             _ => {
-                if !base_url.contains("googleapis.com") && options.api.is_none() {
+                if !is_native_google && options.api.is_none() {
                     return self
                         .generate_openai_compatible(
                             &api_key,
@@ -302,6 +305,7 @@ impl GeminiClient {
                 }
             }
         }
+
 
         let clean_model = model.strip_prefix("models/").unwrap_or(model);
         let url = format!("{}/models/{}:generateContent", base_url, clean_model);
