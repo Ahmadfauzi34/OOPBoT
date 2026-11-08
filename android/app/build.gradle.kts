@@ -88,8 +88,29 @@ abstract class PinnedSources : DefaultTask() {
     val archive = temporaryDir.resolve("$name.tar.gz")
     var lastError: Exception? = null
     var downloaded = false
+    val releaseRegex = Regex("""https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(.*)""")
+    val releaseMatch = releaseRegex.matchEntire(url)
     for (attempt in 1..5) {
       try {
+        if (releaseMatch != null) {
+          val (owner, repo, tag, asset) = releaseMatch.destructured
+          try {
+            val pb = ProcessBuilder(
+              "gh", "release", "download", tag,
+              "-R", "$owner/$repo",
+              "-p", asset,
+              "-O", archive.absolutePath,
+              "--clobber"
+            )
+            val proc = pb.start()
+            if (proc.waitFor() == 0 && archive.exists() && archive.length() > 0) {
+              downloaded = true
+              break
+            }
+          } catch (_: Exception) {
+            // gh CLI may not be available; fall back to standard HTTP stream
+          }
+        }
         URI(url).toURL().openStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
         downloaded = true
         break

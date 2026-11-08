@@ -132,6 +132,8 @@ jobs:
 
       - name: Build Debug APK (installable out-of-the-box)
         working-directory: android
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           VER="${GITHUB_REF_NAME#v}"
           gradle :app:assembleDebug -Ppipkin.versionName="$VER" -Ppipkin.versionCode=1
