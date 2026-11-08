@@ -5,10 +5,25 @@ import os from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isObject } from "./framing.js";
+import { oopbotSdk } from "./oopbot-sdk.js";
 
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+export const OOPBOT_RELEASE_URL =
+  "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android";
 
 export type PiSdk = typeof PiModule;
+
+export function oopbotBinaryPath(root: string): string {
+  return join(root, "bin", "oopbot");
+}
+
+export async function resolveOopbotBinary(root: string, prefix: string): Promise<string | null> {
+  const inRoot = oopbotBinaryPath(root);
+  if (await exists(inRoot)) return inRoot;
+  const inPrefix = join(prefix, "bin", "oopbot");
+  if (await exists(inPrefix)) return inPrefix;
+  return null;
+}
 
 /** Values the Termux bootstrap exports before exec'ing node. */
 export interface HostEnv {
@@ -100,9 +115,13 @@ export async function installedPiVersion(root: string): Promise<string | null> {
   }
 }
 
-/** The Pi SDK is never bundled: it is loaded from the pinned install so host.mjs stays small. */
+/** Loads the pinned SDK when present on disk, or falls back to the built-in OOPBoT SDK when running the native Rust engine. */
 export async function loadPi(root: string): Promise<PiSdk> {
-  return (await import(pathToFileURL(join(piPackageDir(root), "dist", "index.js")).href)) as PiSdk;
+  const index = join(piPackageDir(root), "dist", "index.js");
+  if (await exists(index)) {
+    return (await import(pathToFileURL(index).href)) as PiSdk;
+  }
+  return oopbotSdk;
 }
 
 export function readHostEnv(): HostEnv | undefined {

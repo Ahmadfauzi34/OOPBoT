@@ -11,7 +11,15 @@ import {
   HELLO_TOPIC,
   OutputMerger,
 } from "../channel.js";
-import { folderNotFound, HostError, installedPiVersion, loadPi, piEntry, piInstallComplete } from "../env.js";
+import {
+  folderNotFound,
+  HostError,
+  installedPiVersion,
+  loadPi,
+  piEntry,
+  piInstallComplete,
+  resolveOopbotBinary,
+} from "../env.js";
 import { isObject } from "../framing.js";
 import type { ModeContext } from "../mode.js";
 import { nullableStringParam, stringParam } from "../params.js";
@@ -147,8 +155,8 @@ async function remoteChat(ctx: ModeContext, cwd: string, extensionFiles: { name:
 }
 
 /**
- * Bridges the socket to `pi --mode rpc` byte-for-byte. Pi exits on stdin EOF, so closing the
- * socket stops the agent; signals only cover a Pi that ignores EOF.
+ * Bridges the socket to `oopbot --mode rpc` (or `pi --mode rpc` in unit tests) byte-for-byte. The agent exits on stdin
+ * EOF, so closing the socket stops the agent; signals only cover an agent that ignores EOF.
  */
 export async function rpc(ctx: ModeContext): Promise<void> {
   const cwd = stringParam(ctx.params, "cwd");
@@ -206,7 +214,8 @@ export async function rpc(ctx: ModeContext): Promise<void> {
     return;
   }
 
-  const args = [await piEntry(ctx.env.root), "--mode", "rpc"];
+  const oopbotBin = await resolveOopbotBinary(ctx.env.root, ctx.env.prefix);
+  const args = oopbotBin !== null ? ["--mode", "rpc"] : [await piEntry(ctx.env.root), "--mode", "rpc"];
   if (sessionPath !== null) args.push("--session", sessionPath);
   if (pipkinExtensions.some(({ name }) => name === WEB_ACCESS_EXTENSION)) await defaultWebToolsToEager(ctx.env.configDir);
   const settings = await readGlobalSettings(ctx.env.configDir);
@@ -221,7 +230,7 @@ export async function rpc(ctx: ModeContext): Promise<void> {
   args.push("--append-system-prompt", remote === null ? SYSTEM_APPEND : remote.prompt);
   const env = await termuxSessionEnv(ctx.env);
   // The channel socket goes last, at CHANNEL_FD; Pi hands none of its fds past stderr to the commands it runs.
-  const child = spawn(process.execPath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
+  const child = spawn(oopbotBin ?? process.execPath, args, { cwd, env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
   const channel = child.stdio[CHANNEL_FD] as Socket;
   const { socket } = ctx.conn;
   const stderr = new TailBuffer();

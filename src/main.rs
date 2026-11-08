@@ -14,11 +14,14 @@ struct Cli {
     auto_approve: bool,
     max_steps: usize,
     prompt: Option<String>,
+    mode: Option<String>,
+    session: Option<String>,
+    system_append: Option<String>,
 }
 
 fn print_help() {
     println!(
-        "oopbot {ver} — hybrid agent harness Gemini (Termux CLI + liboopbot.so)
+        "oopbot {ver} — hybrid agent harness Gemini (Termux CLI + Pipkin RPC + liboopbot.so)
 
 PEMAKAIAN:
     oopbot [OPSI]
@@ -26,13 +29,15 @@ PEMAKAIAN:
 OPSI:
     -m, --model <NAMA>     Model Gemini (default: $GEMINI_MODEL atau {model})
     -p, --prompt <TEKS>    Jalankan 1 prompt non-interaktif lalu keluar
+        --mode <MODE>      Mode daemon (`rpc` untuk koneksi aplikasi Android Pipkin)
+        --session <PATH>   Path file sesi JSONL (untuk `--mode rpc`)
     -y, --yes              Setujui otomatis semua tool (HATI-HATI)
         --max-steps <N>    Batas langkah tool per pesan (default {steps})
     -h, --help             Tampilkan bantuan
     -V, --version          Tampilkan versi
 
 KONFIGURASI (.env di direktori kerja atau ~/.config/oopbot/.env):
-    GEMINI_API_KEY=...     (wajib)
+    GEMINI_API_KEY=...     (wajib di CLI, atau atur via UI Android Pipkin)
     GEMINI_MODEL=...       (opsional)
 
 PERINTAH DI DALAM CHAT (ALA PIPKIN):
@@ -60,6 +65,9 @@ fn parse_args() -> Result<Cli, String> {
         auto_approve: false,
         max_steps: DEFAULT_MAX_STEPS,
         prompt: None,
+        mode: None,
+        session: None,
+        system_append: None,
     };
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -78,6 +86,19 @@ fn parse_args() -> Result<Cli, String> {
             }
             "-p" | "--prompt" => {
                 cli.prompt = Some(args.next().ok_or("--prompt butuh teks")?);
+            }
+            "--mode" => {
+                cli.mode = Some(args.next().ok_or("--mode butuh nilai")?);
+            }
+            "--session" => {
+                cli.session = Some(args.next().ok_or("--session butuh path")?);
+            }
+            "--extension" => {
+                // Diteruskan oleh host.mjs Pipkin; diabaikan karena tool sudah built-in di Rust.
+                let _ = args.next();
+            }
+            "--append-system-prompt" => {
+                cli.system_append = Some(args.next().ok_or("--append-system-prompt butuh teks")?);
             }
             "--max-steps" => {
                 cli.max_steps = args
@@ -297,6 +318,10 @@ async fn main() -> Result<(), BoxError> {
         }
     };
     load_env();
+
+    if cli.mode.as_deref() == Some("rpc") {
+        return oopbot::rpc::run_rpc_mode(cli.session, cli.system_append).await;
+    }
 
     let api_key = match env::var("GEMINI_API_KEY") {
         Ok(k) if !k.trim().is_empty() => k.trim().to_string(),

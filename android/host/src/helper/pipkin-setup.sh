@@ -64,6 +64,14 @@ if ! node_ok; then
   pkg install -y nodejs
   node_ok || fail "Node.js couldn't be installed. Check your internet connection and paste the command again."
 fi
+if [ "${PREFIX#*/com.termux}" != "$PREFIX" ] && [ ! -x "$PREFIX/bin/oopbot" ]; then
+  say "Installing OOPBoT Rust engine..."
+  curl -fsSL -m 60 "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android" \
+    -o "$PREFIX/bin/oopbot.$$.tmp" &&
+    chmod 755 "$PREFIX/bin/oopbot.$$.tmp" &&
+    mv -f "$PREFIX/bin/oopbot.$$.tmp" "$PREFIX/bin/oopbot" ||
+    rm -f "$PREFIX/bin/oopbot.$$.tmp"
+fi
 
 # 3. The helper's files and ports, the boot script, the shell hooks and <name>-start.
 { mkdir -p "$dir" && chmod 700 "$dir"; } || fail "Couldn't create $dir."

@@ -1,8 +1,18 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
-import { HostError, installedPiVersion, piInstallComplete, piInstallingMarker } from "../env.js";
+import {
+  HostError,
+  installedPiVersion,
+  OOPBOT_RELEASE_URL,
+  oopbotBinaryPath,
+  PI_PACKAGE,
+  piInstallComplete,
+  piInstallingMarker,
+  piPackageDir,
+  resolveOopbotBinary,
+} from "../env.js";
 import type { JsonObject } from "../framing.js";
 import { type InstallLock, withInstallLock } from "../install-lock.js";
 import type { ModeContext } from "../mode.js";
@@ -88,6 +98,63 @@ export async function npmCi(ctx: ModeContext, cwd: string, lock: InstallLock): P
 }
 
 /**
+ * Installs the native Rust `oopbot` binary in Termux (`$PIPKIN_ROOT/bin/oopbot` and `$PREFIX/bin/oopbot`) instead of
+ * downloading `@earendil-works/pi-coding-agent` via `npm ci`.
+ */
+async function installOopbotRuntime(ctx: ModeContext, expectedVersion: string): Promise<void> {
+  const send = (line: string): void => {
+    ctx.conn.send({ type: "pipkin_progress", line });
+  };
+  send("Installing oopbot Rust engine...");
+  const binPath = oopbotBinaryPath(ctx.env.root);
+  await mkdir(dirname(binPath), { recursive: true });
+  const prefixBin = join(ctx.env.prefix, "bin", "oopbot");
+  const hasPrefixBin = await stat(prefixBin).then(
+    (s) => s.isFile() && s.size > 0,
+    () => false,
+  );
+  if (hasPrefixBin && ctx.params.reinstall !== true) {
+    await copyFile(prefixBin, binPath);
+    await chmod(binPath, 0o755);
+  } else {
+    send(`Downloading ${OOPBOT_RELEASE_URL}`);
+    let response: Response;
+    try {
+      response = await fetch(OOPBOT_RELEASE_URL, { signal: ctx.signal });
+    } catch {
+      throw new HostError("npm_offline", "Couldn't download oopbot. Check your internet connection, then retry.", {
+        key: "agent_download_offline",
+      });
+    }
+    if (!response.ok) {
+      throw new HostError("npm_failed", `Failed to download oopbot (HTTP ${response.status})`, {
+        key: "command_failed",
+        args: { command: "download oopbot", exit: response.status },
+      });
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const tmpPath = `${binPath}.tmp`;
+    await writeFile(tmpPath, bytes);
+    await chmod(tmpPath, 0o755);
+    await copyFile(tmpPath, binPath);
+    await chmod(binPath, 0o755);
+    await rm(tmpPath, { force: true });
+    await copyFile(binPath, prefixBin)
+      .then(() => chmod(prefixBin, 0o755))
+      .catch(() => undefined);
+  }
+
+  const pkgDir = piPackageDir(ctx.env.root);
+  const cliPath = join(pkgDir, "dist", "bundle", "cli.js");
+  await mkdir(dirname(cliPath), { recursive: true });
+  await writeFile(
+    join(pkgDir, "package.json"),
+    `${JSON.stringify({ name: PI_PACKAGE, version: expectedVersion, bin: { pi: "dist/bundle/cli.js" } }, null, 2)}\n`,
+  );
+  await writeFile(cliPath, "#!/usr/bin/env node\n");
+}
+
+/**
  * Installs the pinned runtime unless it's already installed in full, or always when `reinstall` is true, then
  * Pipkin's extensions.
  */
@@ -99,6 +166,7 @@ export async function ensure(ctx: ModeContext): Promise<JsonObject> {
   const piDir = join(ctx.env.root, "pi");
   await mkdir(piDir, { recursive: true });
   await mkdir(ctx.env.configDir, { recursive: true });
+  const isTermux = ctx.env.prefix.includes("com.termux");
 
   await withInstallLock(ctx.env.root, ctx.signal, async (lock) => {
     const packageJsonPath = join(piDir, "package.json");
@@ -107,19 +175,26 @@ export async function ensure(ctx: ModeContext): Promise<JsonObject> {
       readFile(packageJsonPath, "utf8").catch(() => null),
       readFile(lockPath, "utf8").catch(() => null),
     ]);
+    const hasRuntime = isTermux
+      ? (await resolveOopbotBinary(ctx.env.root, ctx.env.prefix)) !== null && (await piInstallComplete(ctx.env.root))
+      : await piInstallComplete(ctx.env.root);
     // rpc refuses a package.json that differs from the app's, so both files must match to skip the install.
     const current =
       ctx.params.reinstall !== true &&
       (await installedPiVersion(ctx.env.root)) === expectedVersion &&
       onDiskPackageJson === packageJson &&
       onDiskLock === packageLock &&
-      (await piInstallComplete(ctx.env.root));
+      hasRuntime;
     if (current) return;
     const marker = piInstallingMarker(ctx.env.root);
     await writeFile(marker, "");
     await writeFile(packageJsonPath, packageJson);
     await writeFile(lockPath, packageLock);
-    await npmCi(ctx, piDir, lock);
+    if (isTermux) {
+      await installOopbotRuntime(ctx, expectedVersion);
+    } else {
+      await npmCi(ctx, piDir, lock);
+    }
     await rm(marker, { force: true });
   });
   await installPipkinExtensions(ctx.env.root, pipkinExtensions);

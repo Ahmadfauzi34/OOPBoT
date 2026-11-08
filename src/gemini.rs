@@ -64,6 +64,10 @@ impl GeminiClient {
         self.creds.read().unwrap().base_url.clone()
     }
 
+    pub fn api_key(&self) -> String {
+        self.creds.read().unwrap().api_key.clone()
+    }
+
     /// Ganti API key (dan opsional `base_url`) secara dinamis di memori.
     pub fn update_credentials(&self, api_key: String, base_url: Option<String>) {
         let mut creds = self.creds.write().unwrap();
@@ -131,7 +135,7 @@ impl GeminiClient {
         .await
     }
 
-    /// Kirim seluruh riwayat + deklarasi tool untuk model tertentu (mendukung model per-tab).
+    /// Kirim seluruh riwayat + deklarasi tool untuk model tertentu (mendukung Gemini & OpenAI-compatible).
     pub async fn generate_with_model(
         &self,
         model: &str,
@@ -143,7 +147,21 @@ impl GeminiClient {
             let c = self.creds.read().unwrap();
             (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
         };
-        let url = format!("{}/models/{}:generateContent", base_url, model);
+        if !base_url.contains("googleapis.com") {
+            return self
+                .generate_openai_compatible(
+                    &api_key,
+                    &base_url,
+                    model,
+                    system_instruction,
+                    contents,
+                    function_declarations,
+                )
+                .await;
+        }
+
+        let clean_model = model.strip_prefix("models/").unwrap_or(model);
+        let url = format!("{}/models/{}:generateContent", base_url, clean_model);
 
         let mut body = json!({
             "systemInstruction": { "parts": [{ "text": system_instruction }] },
@@ -174,6 +192,154 @@ impl GeminiClient {
         }
 
         parse_model_turn(&res_json)
+    }
+
+    async fn generate_openai_compatible(
+        &self,
+        api_key: &str,
+        base_url: &str,
+        model: &str,
+        system_instruction: &str,
+        contents: &[Value],
+        function_declarations: &[Value],
+    ) -> Result<ModelTurn, BoxError> {
+        let url = format!("{}/chat/completions", base_url);
+        let mut messages = vec![json!({ "role": "system", "content": system_instruction })];
+
+        for item in contents {
+            let role = item["role"].as_str().unwrap_or("user");
+            let Some(parts) = item["parts"].as_array() else {
+                continue;
+            };
+            if role == "model" {
+                let mut text_buf = String::new();
+                let mut tool_calls = Vec::new();
+                for (idx, part) in parts.iter().enumerate() {
+                    if let Some(t) = part["text"].as_str() {
+                        text_buf.push_str(t);
+                    }
+                    if let Some(fc) = part.get("functionCall") {
+                        let call_id = fc["id"]
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| format!("call_{}", idx));
+                        let name = fc["name"].as_str().unwrap_or_default();
+                        let args_str = serde_json::to_string(fc.get("args").unwrap_or(&json!({})))
+                            .unwrap_or_else(|_| "{}".into());
+                        tool_calls.push(json!({
+                            "id": call_id,
+                            "type": "function",
+                            "function": { "name": name, "arguments": args_str }
+                        }));
+                    }
+                }
+                let mut msg = json!({ "role": "assistant" });
+                if !text_buf.is_empty() || tool_calls.is_empty() {
+                    msg["content"] = json!(text_buf);
+                }
+                if !tool_calls.is_empty() {
+                    msg["tool_calls"] = json!(tool_calls);
+                }
+                messages.push(msg);
+            } else {
+                let mut user_texts = Vec::new();
+                for (idx, part) in parts.iter().enumerate() {
+                    if let Some(t) = part["text"].as_str() {
+                        user_texts.push(t.to_string());
+                    }
+                    if let Some(fr) = part.get("functionResponse") {
+                        let call_id = fr["id"]
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| format!("call_{}", idx));
+                        let content_str =
+                            serde_json::to_string(fr.get("response").unwrap_or(&json!({})))
+                                .unwrap_or_else(|_| "{}".into());
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": content_str
+                        }));
+                    }
+                }
+                if !user_texts.is_empty() {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": user_texts.join("\n")
+                    }));
+                }
+            }
+        }
+
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+        });
+        if !function_declarations.is_empty() {
+            let tools: Vec<Value> = function_declarations
+                .iter()
+                .map(|decl| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": decl["name"],
+                            "description": decl["description"],
+                            "parameters": decl["parameters"]
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = json!(tools);
+        }
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let res_json: Value = resp.json().await?;
+        if !status.is_success() {
+            let msg = res_json["error"]["message"]
+                .as_str()
+                .or_else(|| res_json["message"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| res_json.to_string());
+            return Err(format!("Provider API {}: {}", status, msg).into());
+        }
+
+        let message = &res_json["choices"][0]["message"];
+        let text = message["content"].as_str().unwrap_or_default().trim().to_string();
+        let mut function_calls = Vec::new();
+        let mut raw_parts = Vec::new();
+        if !text.is_empty() {
+            raw_parts.push(json!({ "text": text }));
+        }
+        if let Some(tcs) = message["tool_calls"].as_array() {
+            for tc in tcs {
+                let id = tc["id"].as_str().map(str::to_string);
+                let name = tc["function"]["name"].as_str().unwrap_or_default().to_string();
+                let args_str = tc["function"]["arguments"].as_str().unwrap_or("{}");
+                let args: Value = serde_json::from_str(args_str).unwrap_or_else(|_| json!({}));
+                raw_parts.push(json!({
+                    "functionCall": {
+                        "id": id,
+                        "name": name,
+                        "args": args
+                    }
+                }));
+                function_calls.push(FunctionCall { id, name, args });
+            }
+        }
+
+        Ok(ModelTurn {
+            raw_content: json!({ "role": "model", "parts": raw_parts }),
+            text,
+            function_calls,
+        })
     }
 }
 
