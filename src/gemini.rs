@@ -125,8 +125,8 @@ impl GeminiClient {
     }
 
     /// Scan daftar model yang tersedia untuk token saat ini dari `<base_url>/models`.
-    /// Mengirimkan `x-goog-api-key` (untuk Gemini) sekaligus `Authorization: Bearer`
-    /// (untuk provider OpenAI-compatible seperti OpenRouter/Groq/DeepSeek).
+    /// Mengirimkan `x-goog-api-key` untuk Google Gemini, atau `Authorization: Bearer`
+    /// untuk provider OpenAI-compatible (OpenRouter, Groq, DeepSeek, dsb).
     pub async fn scan_models(&self) -> Result<Vec<ModelInfo>, BoxError> {
         let (api_key, base_url) = {
             let c = self.creds.read().unwrap();
@@ -153,9 +153,11 @@ impl GeminiClient {
 
         let mut req = self.http.get(&url).timeout(Duration::from_secs(20));
         if !api_key.is_empty() {
-            req = req
-                .header("x-goog-api-key", &api_key)
-                .header("Authorization", format!("Bearer {}", api_key));
+            if base_url.contains("googleapis.com") {
+                req = req.header("x-goog-api-key", &api_key);
+            } else {
+                req = req.header("Authorization", format!("Bearer {}", api_key));
+            }
         }
         let resp = req.send().await?;
 
@@ -325,11 +327,13 @@ impl GeminiClient {
         }
 
         // API key lewat header, bukan query string, supaya tidak bocor di log/error.
+        // PENTING: Untuk Google Generative Language API, kirimkan HANYA `x-goog-api-key`.
+        // Jangan sertakan `Authorization: Bearer` karena Google API Gateway akan menganggapnya
+        // sebagai OAuth2 access token dan memicu error 401 "API keys are not supported by this API".
         let resp = self
             .http
             .post(&url)
             .header("x-goog-api-key", &api_key)
-            .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
             .await?;
