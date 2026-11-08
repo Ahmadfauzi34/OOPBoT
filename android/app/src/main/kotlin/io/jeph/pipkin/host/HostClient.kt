@@ -67,9 +67,10 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     }
   }
 
-  /** The Pi version the bundled `pi/package.json` pins. */
+  /** The agent version the bundled `pi/package.json` pins (OOPBoT engine version). */
   val expectedPiVersion: String by lazy {
-    JSONObject(packageJson).getJSONObject("dependencies").getString(PI_PACKAGE)
+    val deps = JSONObject(packageJson).getJSONObject("dependencies")
+    deps.optString(OOPBOT_PACKAGE, deps.optString(PI_PACKAGE, "0.5.0"))
   }
 
   /** Hello of the most recent host that connected; Pi's version is updated after [ensure]. */
@@ -504,6 +505,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     const val TAG = "PipkinHost"
     const val PACKAGE_JSON = "pi/package.json"
     const val PACKAGE_LOCK = "pi/package-lock.json"
+    const val OOPBOT_PACKAGE = "oopbot"
     const val PI_PACKAGE = "@earendil-works/pi-coding-agent"
     const val DEFAULT_TIMEOUT_MILLIS = 60_000L
     const val ENSURE_TIMEOUT_MILLIS = 15 * 60_000L

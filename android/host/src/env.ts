@@ -1,4 +1,5 @@
 import type * as PiModule from "@earendil-works/pi-coding-agent";
+import { execFileSync } from "node:child_process";
 import { constants } from "node:fs";
 import { access, readFile, realpath } from "node:fs/promises";
 import os from "node:os";
@@ -8,6 +9,7 @@ import { isObject } from "./framing.js";
 import { oopbotSdk } from "./oopbot-sdk.js";
 
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+export const OOPBOT_PACKAGE = "oopbot";
 export const OOPBOT_RELEASE_URL =
   "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android";
 
@@ -88,9 +90,11 @@ export function piInstallingMarker(root: string): string {
   return join(root, "pi", ".pipkin-installing");
 }
 
-/** Whether the last install of the runtime finished and Pi's CLI script is still on disk. */
+/** Whether the last install of the runtime finished and the engine is still on disk. */
 export async function piInstallComplete(root: string): Promise<boolean> {
   if (await exists(piInstallingMarker(root))) return false;
+  const oopbot = await resolveOopbotBinary(root, process.env.PREFIX ?? "");
+  if (oopbot !== null) return true;
   const entry = await piEntry(root).catch(() => null);
   return entry !== null && (await exists(entry));
 }
@@ -102,8 +106,22 @@ function exists(path: string): Promise<boolean> {
   );
 }
 
-/** The installed Pi version, or null when Pipkin has not installed Pi yet. */
+/** The installed agent/OOPBoT version, or null when Pipkin has not installed the engine yet. */
 export async function installedPiVersion(root: string): Promise<string | null> {
+  const oopbotBin = await resolveOopbotBinary(root, process.env.PREFIX ?? "");
+  if (oopbotBin !== null) {
+    try {
+      const versionFile = join(dirname(oopbotBin), "oopbot.version");
+      const saved = await readFile(versionFile, "utf8").catch(() => null);
+      if (saved && saved.trim().length > 0) return saved.trim();
+      const stdout = execFileSync(oopbotBin, ["--version"], { encoding: "utf8", timeout: 2000 });
+      const match = /oopbot\s+([0-9a-zA-Z.-]+)/.exec(stdout);
+      if (match && match[1]) return match[1];
+    } catch {
+      return "0.5.0";
+    }
+  }
+
   try {
     const manifest = JSON.parse(await readFile(join(piPackageDir(root), "package.json"), "utf8")) as unknown;
     if (manifest !== null && typeof manifest === "object" && "version" in manifest && typeof manifest.version === "string") {
@@ -115,8 +133,12 @@ export async function installedPiVersion(root: string): Promise<string | null> {
   }
 }
 
-/** Loads the pinned SDK when present on disk, or falls back to the built-in OOPBoT SDK when running the native Rust engine. */
+/** Loads the built-in OOPBoT SDK when running native Rust, or falls back to legacy SDK on disk. */
 export async function loadPi(root: string): Promise<PiSdk> {
+  const oopbot = await resolveOopbotBinary(root, process.env.PREFIX ?? "");
+  if (oopbot !== null) {
+    return oopbotSdk;
+  }
   const index = join(piPackageDir(root), "dist", "index.js");
   if (await exists(index)) {
     return (await import(pathToFileURL(index).href)) as PiSdk;

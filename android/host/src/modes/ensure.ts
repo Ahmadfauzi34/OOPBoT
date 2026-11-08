@@ -7,10 +7,8 @@ import {
   installedPiVersion,
   OOPBOT_RELEASE_URL,
   oopbotBinaryPath,
-  PI_PACKAGE,
   piInstallComplete,
   piInstallingMarker,
-  piPackageDir,
   resolveOopbotBinary,
 } from "../env.js";
 import type { JsonObject } from "../framing.js";
@@ -144,14 +142,9 @@ async function installOopbotRuntime(ctx: ModeContext, expectedVersion: string): 
       .catch(() => undefined);
   }
 
-  const pkgDir = piPackageDir(ctx.env.root);
-  const cliPath = join(pkgDir, "dist", "bundle", "cli.js");
-  await mkdir(dirname(cliPath), { recursive: true });
-  await writeFile(
-    join(pkgDir, "package.json"),
-    `${JSON.stringify({ name: PI_PACKAGE, version: expectedVersion, bin: { pi: "dist/bundle/cli.js" } }, null, 2)}\n`,
-  );
-  await writeFile(cliPath, "#!/usr/bin/env node\n");
+  // Record oopbot version directly for fast verification without legacy Pi node_modules
+  const versionFile = join(dirname(binPath), "oopbot.version");
+  await writeFile(versionFile, `${expectedVersion}\n`);
 }
 
 /**
@@ -176,23 +169,21 @@ export async function ensure(ctx: ModeContext): Promise<JsonObject> {
       readFile(lockPath, "utf8").catch(() => null),
     ]);
     const hasRuntime = isTermux
-      ? (await resolveOopbotBinary(ctx.env.root, ctx.env.prefix)) !== null && (await piInstallComplete(ctx.env.root))
+      ? (await resolveOopbotBinary(ctx.env.root, ctx.env.prefix)) !== null
       : await piInstallComplete(ctx.env.root);
     // rpc refuses a package.json that differs from the app's, so both files must match to skip the install.
     const current =
       ctx.params.reinstall !== true &&
       (await installedPiVersion(ctx.env.root)) === expectedVersion &&
-      onDiskPackageJson === packageJson &&
-      onDiskLock === packageLock &&
-      hasRuntime;
+      (isTermux ? hasRuntime : onDiskPackageJson === packageJson && onDiskLock === packageLock && hasRuntime);
     if (current) return;
     const marker = piInstallingMarker(ctx.env.root);
     await writeFile(marker, "");
-    await writeFile(packageJsonPath, packageJson);
-    await writeFile(lockPath, packageLock);
     if (isTermux) {
       await installOopbotRuntime(ctx, expectedVersion);
     } else {
+      await writeFile(packageJsonPath, packageJson);
+      await writeFile(lockPath, packageLock);
       await npmCi(ctx, piDir, lock);
     }
     await rm(marker, { force: true });

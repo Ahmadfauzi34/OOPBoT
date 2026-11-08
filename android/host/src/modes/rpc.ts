@@ -179,11 +179,13 @@ export async function rpc(ctx: ModeContext): Promise<void> {
     fail(ctx, refusal);
     return;
   }
-  // The runtime's packages and Pipkin's extensions can change while Pi's version stays put; ensure installs both.
-  const installedPackageJson = await readFile(join(ctx.env.root, "pi", "package.json"), "utf8").catch(() => null);
-  if (installedPackageJson !== packageJson) {
-    fail(ctx, new HostError("pi_version", "The agent's packages are out of date", { key: "agent_packages_outdated" }));
-    return;
+  const oopbotBin = await resolveOopbotBinary(ctx.env.root, ctx.env.prefix);
+  if (oopbotBin === null) {
+    const installedPackageJson = await readFile(join(ctx.env.root, "pi", "package.json"), "utf8").catch(() => null);
+    if (installedPackageJson !== packageJson) {
+      fail(ctx, new HostError("pi_version", "The agent's packages are out of date", { key: "agent_packages_outdated" }));
+      return;
+    }
   }
   if (!(await piInstallComplete(ctx.env.root))) {
     fail(ctx, new HostError("pi_version", "The agent's install is incomplete", { key: "agent_install_incomplete" }));
@@ -214,7 +216,6 @@ export async function rpc(ctx: ModeContext): Promise<void> {
     return;
   }
 
-  const oopbotBin = await resolveOopbotBinary(ctx.env.root, ctx.env.prefix);
   const args = oopbotBin !== null ? ["--mode", "rpc"] : [await piEntry(ctx.env.root), "--mode", "rpc"];
   if (sessionPath !== null) args.push("--session", sessionPath);
   if (pipkinExtensions.some(({ name }) => name === WEB_ACCESS_EXTENSION)) await defaultWebToolsToEager(ctx.env.configDir);

@@ -83,10 +83,10 @@
     <string name="onboarding_storage_done">Termux can use phone storage.</string>
 
     <string name="onboarding_install_title">Install the agent</string>
-    <string name="onboarding_install_body">Pipkin installs its agent, Pi %1$s, in Termux. It takes a few minutes.</string>
+    <string name="onboarding_install_body">Pipkin installs its agent, OOPBoT %1$s, in Termux. It takes a few seconds.</string>
     <string name="onboarding_install_checking">Checking the agent…</string>
     <string name="onboarding_install_running">Installing…</string>
-    <string name="onboarding_install_done">Pi %1$s is installed.</string>
+    <string name="onboarding_install_done">OOPBoT %1$s is installed.</string>
     <string name="onboarding_install_failed">Installing the agent failed.</string>
     <string name="onboarding_install_action">Install</string>
     <!-- Shown on the Termux setup step when opening Termux didn't start Pipkin's helper there. -->
