@@ -1,3 +1,4 @@
+import java.io.IOException
 import java.net.URI
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -105,7 +106,7 @@ abstract class PinnedSources : DefaultTask() {
             }
           }
           if (code != 200) {
-            throw java.io.IOException("HTTP $code for $currentUrl")
+            throw IOException("HTTP $code for $currentUrl")
           }
           conn.inputStream.use { input -> archive.outputStream().use { input.copyTo(it) } }
           downloaded = true
@@ -118,7 +119,7 @@ abstract class PinnedSources : DefaultTask() {
       }
     }
     if (!downloaded) {
-      throw lastError ?: java.io.IOException("Failed to download $url")
+      throw lastError ?: IOException("Failed to download $url")
     }
     val digest = MessageDigest.getInstance("SHA-256").digest(archive.readBytes())
     val actual = digest.joinToString("") { "%02x".format(it) }
