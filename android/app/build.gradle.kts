@@ -90,29 +90,9 @@ abstract class PinnedSources : DefaultTask() {
     var downloaded = false
     for (attempt in 1..5) {
       try {
-        var currentUrl = url
-        for (redirect in 0..5) {
-          val conn = URI(currentUrl).toURL().openConnection() as java.net.HttpURLConnection
-          conn.connectTimeout = 30000
-          conn.readTimeout = 60000
-          conn.instanceFollowRedirects = true
-          conn.setRequestProperty("User-Agent", "Pipkin-Build")
-          val code = conn.responseCode
-          if (code in 301..308) {
-            val location = conn.getHeaderField("Location")
-            if (location != null) {
-              currentUrl = location
-              continue
-            }
-          }
-          if (code != 200) {
-            throw IOException("HTTP $code for $currentUrl")
-          }
-          conn.inputStream.use { input -> archive.outputStream().use { input.copyTo(it) } }
-          downloaded = true
-          break
-        }
-        if (downloaded) break
+        URI(url).toURL().openStream().use { input -> archive.outputStream().use { input.copyTo(it) } }
+        downloaded = true
+        break
       } catch (e: Exception) {
         lastError = e
         Thread.sleep(attempt * 2000L)
