@@ -110,12 +110,16 @@ impl GeminiAgent {
         max_steps: usize,
     ) -> Self {
         let system_instruction = default_system_instruction(&tools);
-        let mut catalog = ModelCatalog::builtin();
+        let mut catalog = ModelCatalog::all_builtin();
         let default_m = client.model();
+        if catalog.find(&default_m).is_none() {
+            catalog.register_custom(&default_m, &default_m);
+        }
         catalog.set_default_model(&default_m);
         let tabs = WorkspaceTabs::default_storage_path()
             .and_then(|p| WorkspaceTabs::load_from_file(&p))
             .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
+
 
         Self {
             name: name.to_string(),
@@ -572,9 +576,46 @@ fn save_token_to_user_env(api_key: &str, base_url: Option<&str>, model: &str) {
         return;
     }
     let env_path = dir.join(".env");
-    let mut content = format!("GEMINI_API_KEY={}\nGEMINI_MODEL={}\n", api_key, model);
-    if let Some(url) = base_url {
-        content.push_str(&format!("GEMINI_BASE_URL={}\n", url));
+    let mut content = String::new();
+    let key = api_key.trim();
+    let url_lower = base_url.unwrap_or("").to_lowercase();
+
+    if key.starts_with("sk-or-") || url_lower.contains("openrouter.ai") {
+        content.push_str(&format!("OPENROUTER_API_KEY={}\n", key));
+        if let Some(url) = base_url {
+            content.push_str(&format!("OPENROUTER_BASE_URL={}\n", url));
+        }
+        content.push_str(&format!("OOPBOT_MODEL={}\n", model));
+    } else if url_lower.contains("deepseek.com") {
+        content.push_str(&format!("DEEPSEEK_API_KEY={}\n", key));
+        if let Some(url) = base_url {
+            content.push_str(&format!("DEEPSEEK_BASE_URL={}\n", url));
+        }
+        content.push_str(&format!("OOPBOT_MODEL={}\n", model));
+    } else if url_lower.contains("anthropic.com") || key.starts_with("sk-ant-") {
+        content.push_str(&format!("ANTHROPIC_API_KEY={}\n", key));
+        if let Some(url) = base_url {
+            content.push_str(&format!("ANTHROPIC_BASE_URL={}\n", url));
+        }
+        content.push_str(&format!("OOPBOT_MODEL={}\n", model));
+    } else if url_lower.contains("openai.com") {
+        content.push_str(&format!("OPENAI_API_KEY={}\n", key));
+        if let Some(url) = base_url {
+            content.push_str(&format!("OPENAI_BASE_URL={}\n", url));
+        }
+        content.push_str(&format!("OOPBOT_MODEL={}\n", model));
+    } else if url_lower.contains("googleapis.com") || key.starts_with("AIzaSy") {
+        content.push_str(&format!("GEMINI_API_KEY={}\nGEMINI_MODEL={}\n", key, model));
+        if let Some(url) = base_url {
+            content.push_str(&format!("GEMINI_BASE_URL={}\n", url));
+        }
+    } else {
+        content.push_str(&format!("OOPBOT_API_KEY={}\n", key));
+        if let Some(url) = base_url {
+            content.push_str(&format!("OOPBOT_BASE_URL={}\n", url));
+        }
+        content.push_str(&format!("OOPBOT_MODEL={}\n", model));
     }
     let _ = std::fs::write(&env_path, content);
 }
+

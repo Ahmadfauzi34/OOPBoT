@@ -23,7 +23,7 @@ flowchart LR
 ```
 
 - **Tanpa `npm ci` 150 MB di Termux**: Saat aplikasi Android menjalankan mode `ensure` di Termux (`android/host/src/modes/ensure.ts`), host langsung mengunduh/menyalin binary native `oopbot-aarch64-linux-android` ke `$PIPKIN_ROOT/bin/oopbot` dan `$PREFIX/bin/oopbot`.
-- **Manajemen Settings, Provider & Auto-Scan Model (`android/host/src/oopbot-sdk.ts`)**: Saat Anda menempelkan API key Google Gemini di menu **Settings → Providers** pada aplikasi Android, `oopbot-sdk.ts` otomatis memindai endpoint `/v1beta/models` dan menyimpan daftar model terbaru ke `models.json`.
+- **Manajemen Settings, Multi-Provider & Auto-Scan Model (`android/host/src/oopbot-sdk.ts`)**: Saat Anda menambahkan API key provider pilihan Anda (OpenRouter, DeepSeek, Google Gemini, Anthropic, OpenAI, Z.ai, atau Kimi) di menu **Settings → Providers** pada aplikasi Android atau via terminal, sistem otomatis memindai daftar model live dari endpoint provider (`/v1beta/models` atau `/v1/models`) dan menyimpannya ke `models.json`.
 - **Protokol RPC JSONL Penuh (`src/rpc.rs`)**: Setiap tab percakapan di aplikasi Android menjalankan `oopbot --mode rpc` yang mengirimkan stream event real-time (`thinking_start/end`, `toolcall_start/end`, `tool_execution_start/end`, `text_start/delta/end`, `turn_end`, `agent_end`, `agent_settled`) langsung ke komponen UI `ChatTimeline.kt` dan `StepFigure.kt`.
 
 ---
@@ -35,11 +35,23 @@ pkg install -y curl
 curl -fsSL https://raw.githubusercontent.com/Ahmadfauzi34/OOPBoT/main/install.sh | sh
 ```
 
-Lalu isi API key atau gunakan `/token` di dalam sesi:
+Lalu atur API key salah satu provider pilihan Anda (OpenRouter, DeepSeek, Gemini, OpenAI, Claude, atau Ollama):
 ```sh
-nano ~/.config/oopbot/.env     # GEMINI_API_KEY=xxxx
+# Pilihan 1: OpenRouter (Ratusan model: DeepSeek V3/R1, Claude 3.5, dsb)
+export OPENROUTER_API_KEY=sk-or-v1-...
+
+# Pilihan 2: DeepSeek
+export DEEPSEEK_API_KEY=sk-...
+
+# Pilihan 3: Google Gemini
+export GEMINI_API_KEY=...
+
+# Pilihan 4: Simpan di file konfigurasi
+nano ~/.config/oopbot/.env
+
 oopbot
 ```
+
 
 ---
 

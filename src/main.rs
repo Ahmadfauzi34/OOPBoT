@@ -8,8 +8,8 @@ use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-const DEFAULT_MODEL: &str = "gemini-3.5-flash-lite";
 const DEFAULT_MAX_STEPS: usize = 25;
+
 
 struct Cli {
     model: Option<String>,
@@ -23,13 +23,13 @@ struct Cli {
 
 fn print_help() {
     println!(
-        "oopbot {ver} — hybrid agent harness Gemini (Termux CLI + Pipkin RPC + liboopbot.so)
+        "oopbot {ver} — Universal Agent Harness for Termux & Android (Multi-Provider)
 
 PEMAKAIAN:
     oopbot [OPSI]
 
 OPSI:
-    -m, --model <NAMA>     Model Gemini (default: $GEMINI_MODEL atau {model})
+    -m, --model <NAMA>     Model AI (default sesuai provider aktif atau $OOPBOT_MODEL)
     -p, --prompt <TEKS>    Jalankan 1 prompt non-interaktif lalu keluar
         --mode <MODE>      Mode mesin:
                            - `rpc`         : daemon JSONL untuk aplikasi Android Pipkin
@@ -41,13 +41,19 @@ OPSI:
     -h, --help             Tampilkan bantuan
     -V, --version          Tampilkan versi
 
-KONFIGURASI (.env di direktori kerja atau ~/.config/oopbot/.env):
-    GEMINI_API_KEY=...     (wajib di CLI, atau atur via UI Android Pipkin)
-    GEMINI_MODEL=...       (opsional)
+PROVIDER & KONFIGURASI (.env di direktori kerja atau ~/.config/oopbot/.env):
+    Mendukung berbagai provider AI (pilih salah satu):
+    - OpenRouter   : OPENROUTER_API_KEY=sk-or-v1-...
+    - DeepSeek     : DEEPSEEK_API_KEY=sk-...
+    - Google Gemini: GEMINI_API_KEY=...
+    - OpenAI       : OPENAI_API_KEY=sk-...
+    - Anthropic    : ANTHROPIC_API_KEY=sk-ant-...
+    - Kustom/Lokal : OOPBOT_API_KEY=... & OOPBOT_BASE_URL=http://localhost:11434/v1
+    - Model Opsi   : OOPBOT_MODEL=...
 
-PERINTAH DI DALAM CHAT (ALA PIPKIN):
-    /scan                  Scan otomatis daftar model dari API key aktif
-    /token <KEY> [URL]     Ganti token/API key (& opsional base URL) + auto-scan model
+PERINTAH DI DALAM CHAT:
+    /scan                  Scan otomatis daftar model dari provider aktif
+    /token <KEY> [URL]     Ganti API key (& opsional base URL) + auto-scan model
     /models                Lihat daftar model & model aktif
     /model <NO|ID>         Ganti model untuk tab aktif (misal: /model 2)
     /thinking <LEVEL>      Atur level penalaran (off|minimal|low|medium|high|xhigh)
@@ -60,10 +66,10 @@ PERINTAH DI DALAM CHAT (ALA PIPKIN):
     reset                  Hapus memori tab aktif
     keluar / exit          Keluar",
         ver = env!("CARGO_PKG_VERSION"),
-        model = DEFAULT_MODEL,
         steps = DEFAULT_MAX_STEPS,
     );
 }
+
 
 fn parse_args() -> Result<Cli, String> {
     let mut cli = Cli {
@@ -328,7 +334,167 @@ fn print_error_chain(err: &dyn std::error::Error) {
     eprintln!("\n❌ Terjadi error: {}\n", msg);
 }
 
+struct CliCredentials {
+    provider_name: String,
+    api_key: String,
+    base_url: Option<String>,
+    model: String,
+}
+
+fn resolve_cli_credentials(cli_model: Option<&str>) -> Option<CliCredentials> {
+    // 1. Cek OOPBOT_API_KEY (universal / kustom / lokal)
+    if let Ok(key) = env::var("OOPBOT_API_KEY").map(|s| s.trim().to_string()) {
+        if !key.is_empty() {
+            let base_url = env::var("OOPBOT_BASE_URL").ok().filter(|s| !s.trim().is_empty());
+            let model = cli_model
+                .map(|s| s.to_string())
+                .or_else(|| env::var("OOPBOT_MODEL").ok().filter(|s| !s.trim().is_empty()))
+                .unwrap_or_else(|| {
+                    if key.starts_with("sk-or-") {
+                        "deepseek/deepseek-chat".to_string()
+                    } else {
+                        "default".to_string()
+                    }
+                });
+            return Some(CliCredentials {
+                provider_name: "OOPBoT / Kustom".to_string(),
+                api_key: key,
+                base_url,
+                model,
+            });
+        }
+    }
+
+    // 2. Cek OPENROUTER_API_KEY
+    if let Ok(key) = env::var("OPENROUTER_API_KEY").map(|s| s.trim().to_string()) {
+        if !key.is_empty() {
+            let base_url = env::var("OPENROUTER_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            let model = cli_model
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    env::var("OPENROUTER_MODEL")
+                        .or_else(|_| env::var("OOPBOT_MODEL"))
+                        .ok()
+                        .filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| "deepseek/deepseek-chat".to_string());
+            return Some(CliCredentials {
+                provider_name: "OpenRouter".to_string(),
+                api_key: key,
+                base_url: Some(base_url),
+                model,
+            });
+        }
+    }
+
+    // 3. Cek DEEPSEEK_API_KEY
+    if let Ok(key) = env::var("DEEPSEEK_API_KEY").map(|s| s.trim().to_string()) {
+        if !key.is_empty() {
+            let base_url = env::var("DEEPSEEK_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
+            let model = cli_model
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    env::var("DEEPSEEK_MODEL")
+                        .or_else(|_| env::var("OOPBOT_MODEL"))
+                        .ok()
+                        .filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| "deepseek-chat".to_string());
+            return Some(CliCredentials {
+                provider_name: "DeepSeek".to_string(),
+                api_key: key,
+                base_url: Some(base_url),
+                model,
+            });
+        }
+    }
+
+    // 4. Cek OPENAI_API_KEY
+    if let Ok(key) = env::var("OPENAI_API_KEY").map(|s| s.trim().to_string()) {
+        if !key.is_empty() {
+            let base_url = env::var("OPENAI_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            let model = cli_model
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    env::var("OPENAI_MODEL")
+                        .or_else(|_| env::var("OOPBOT_MODEL"))
+                        .ok()
+                        .filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| "gpt-4o-mini".to_string());
+            return Some(CliCredentials {
+                provider_name: "OpenAI".to_string(),
+                api_key: key,
+                base_url: Some(base_url),
+                model,
+            });
+        }
+    }
+
+    // 5. Cek ANTHROPIC_API_KEY
+    if let Ok(key) = env::var("ANTHROPIC_API_KEY").map(|s| s.trim().to_string()) {
+        if !key.is_empty() {
+            let base_url = env::var("ANTHROPIC_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+            let model = cli_model
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    env::var("ANTHROPIC_MODEL")
+                        .or_else(|_| env::var("OOPBOT_MODEL"))
+                        .ok()
+                        .filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| "claude-3-5-haiku-20241022".to_string());
+            return Some(CliCredentials {
+                provider_name: "Anthropic".to_string(),
+                api_key: key,
+                base_url: Some(base_url),
+                model,
+            });
+        }
+    }
+
+    // 6. Cek GEMINI_API_KEY
+    if let Ok(key) = env::var("GEMINI_API_KEY").map(|s| s.trim().to_string()) {
+        if !key.is_empty() {
+            let base_url = env::var("GEMINI_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            let model = cli_model
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    env::var("GEMINI_MODEL")
+                        .or_else(|_| env::var("OOPBOT_MODEL"))
+                        .ok()
+                        .filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| "gemini-2.5-flash".to_string());
+            return Some(CliCredentials {
+                provider_name: "Google Gemini".to_string(),
+                api_key: key,
+                base_url: Some(base_url),
+                model,
+            });
+        }
+    }
+
+    None
+}
+
 #[tokio::main]
+
 async fn main() -> Result<(), BoxError> {
     let cli = match parse_args() {
         Ok(c) => c,
@@ -348,14 +514,15 @@ async fn main() -> Result<(), BoxError> {
             return Ok(());
         }
         Some("scan-models") => {
-            let api_key = env::var("OOPBOT_SCAN_API_KEY")
-                .or_else(|_| env::var("GEMINI_API_KEY"))
-                .unwrap_or_default();
-            let base_url = env::var("OOPBOT_SCAN_BASE_URL")
-                .ok()
-                .filter(|u| !u.trim().is_empty());
-            let client = GeminiClient::new(api_key.clone(), DEFAULT_MODEL.to_string())?;
-            client.update_credentials(api_key, base_url);
+            let (api_key, base_url) = if let Some(k) = env::var("OOPBOT_SCAN_API_KEY").ok().filter(|s| !s.trim().is_empty()) {
+                (k.trim().to_string(), env::var("OOPBOT_SCAN_BASE_URL").ok())
+
+            } else if let Some(c) = resolve_cli_credentials(None) {
+                (c.api_key, c.base_url)
+            } else {
+                (String::new(), None)
+            };
+            let client = GeminiClient::new_with_base_url(api_key.clone(), "default".to_string(), base_url)?;
             match client.scan_models().await {
                 Ok(scanned) => {
                     let models: Vec<_> = scanned.iter().map(|m| m.to_pipkin_json(None)).collect();
@@ -370,31 +537,42 @@ async fn main() -> Result<(), BoxError> {
         _ => {}
     }
 
-    let api_key = match env::var("GEMINI_API_KEY") {
-        Ok(k) if !k.trim().is_empty() => k.trim().to_string(),
-        _ => {
+    let creds = match resolve_cli_credentials(cli.model.as_deref()) {
+        Some(c) => c,
+        None => {
             eprintln!(
-                "❌ GEMINI_API_KEY tidak ditemukan.\n   Buat file ~/.config/oopbot/.env berisi:\n   GEMINI_API_KEY=xxxxx"
+                "❌ Kunci API (API Key) belum ditemukan.\n\n\
+                 OOPBoT mendukung berbagai provider AI secara mandiri:\n\
+                 1. OpenRouter (Ratusan model: DeepSeek V3/R1, Claude 3.5, Llama):\n\
+                    export OPENROUTER_API_KEY=\"sk-or-v1-...\"\n\n\
+                 2. DeepSeek (Hemat & bertenaga untuk koding):\n\
+                    export DEEPSEEK_API_KEY=\"sk-...\"\n\n\
+                 3. Google Gemini:\n\
+                    export GEMINI_API_KEY=\"...\"\n\n\
+                 4. OpenAI:\n\
+                    export OPENAI_API_KEY=\"sk-...\"\n\n\
+                 5. Anthropic Claude:\n\
+                    export ANTHROPIC_API_KEY=\"sk-ant-...\"\n\n\
+                 6. Server Kustom / Lokal (Ollama, LMStudio, Groq, Together):\n\
+                    export OOPBOT_API_KEY=\"...\"\n\
+                    export OOPBOT_BASE_URL=\"http://localhost:11434/v1\"\n\
+                    export OOPBOT_MODEL=\"llama3.2\"\n\n\
+                 Atau simpan salah satu konfigurasi di atas ke file:\n\
+                    ~/.config/oopbot/.env\n"
             );
             std::process::exit(1);
         }
     };
-    let model = cli
-        .model
-        .clone()
-        .or_else(|| env::var("GEMINI_MODEL").ok().filter(|m| !m.trim().is_empty()))
-        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
+    let client = GeminiClient::new_with_base_url(creds.api_key, creds.model.clone(), creds.base_url)?;
     let agent = GeminiAgent::new(
         "OOPBoT",
-        GeminiClient::new(api_key, model.clone())?,
+        client,
         ToolRegistry::with_defaults(),
         Box::new(CliApprover::new(cli.auto_approve)),
         cli.max_steps,
     );
-    if cli.model.is_some() {
-        agent.set_active_model(&model);
-    }
+    agent.set_active_model(&creds.model);
 
     // Mode satu kali jalan (-p "prompt")
     if let Some(prompt) = cli.prompt {
@@ -412,9 +590,11 @@ async fn main() -> Result<(), BoxError> {
 
     println!("==================================================");
     println!(
-        "🤖 {} v{} | Tools: {}",
+        "🤖 {} v{} | Provider: {} | Model: {} | Tools: {}",
         agent.get_name(),
         env!("CARGO_PKG_VERSION"),
+        creds.provider_name,
+        creds.model,
         agent.tool_names().join(", ")
     );
     println!("💡 Perintah: /scan, /token <key>, /models, /model <id>, /tabs, /new, /tab <no>, /steps, reset, keluar");
@@ -422,6 +602,7 @@ async fn main() -> Result<(), BoxError> {
         println!("⚠️  Mode --yes: semua tool dijalankan tanpa konfirmasi!");
     }
     println!("==================================================\n");
+
 
     loop {
         let (tab_id, _tab_title, tab_model) = agent.active_tab_summary();

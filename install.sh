@@ -63,10 +63,40 @@ install -m 755 "$TMP/$ASSET" "$PREFIX/bin/$BIN_NAME"
 CONF_DIR="$HOME/.config/oopbot"
 mkdir -p "$CONF_DIR"
 if [ ! -f "$CONF_DIR/.env" ]; then
-  printf 'GEMINI_API_KEY=\n# GEMINI_MODEL=gemini-3.5-flash-lite\n' > "$CONF_DIR/.env"
+  cat <<'EOF' > "$CONF_DIR/.env"
+# ==============================================================================
+# OOPBoT Provider Configuration (Pilih salah satu provider berikut)
+# ==============================================================================
+
+# 1. OpenRouter (Akses ratusan model: DeepSeek V3/R1, Claude 3.5, Llama, dsb)
+# OPENROUTER_API_KEY=sk-or-v1-...
+# OOPBOT_MODEL=deepseek/deepseek-chat
+
+# 2. DeepSeek API Langsung
+# DEEPSEEK_API_KEY=sk-...
+# OOPBOT_MODEL=deepseek-chat
+
+# 3. Google Gemini API
+# GEMINI_API_KEY=...
+# GEMINI_MODEL=gemini-2.5-flash
+
+# 4. OpenAI API
+# OPENAI_API_KEY=sk-...
+# OOPBOT_MODEL=gpt-4o-mini
+
+# 5. Anthropic Claude API
+# ANTHROPIC_API_KEY=sk-ant-...
+# OOPBOT_MODEL=claude-3-5-haiku-20241022
+
+# 6. Provider Kustom / Server Lokal (Ollama, vLLM, LMStudio, Groq, Together)
+# OOPBOT_API_KEY=...
+# OOPBOT_BASE_URL=http://localhost:11434/v1
+# OOPBOT_MODEL=llama3.2
+EOF
   chmod 600 "$CONF_DIR/.env"
-  echo "📝 Isi API key di: $CONF_DIR/.env"
+  echo "📝 Template konfigurasi multi-provider dibuat di: $CONF_DIR/.env"
 fi
 
 echo "✅ Terpasang: $("$PREFIX/bin/$BIN_NAME" --version)"
 echo "   Jalankan: $BIN_NAME"
+

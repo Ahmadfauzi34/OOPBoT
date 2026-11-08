@@ -1539,20 +1539,64 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
         }
     }
 
-    // 3. Fallback ke ~/.config/oopbot/.env atau env var GEMINI_API_KEY
-    let env_key = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-        .or_else(read_oopbot_env_key)
-        .unwrap_or_default();
-    if !env_key.is_empty() {
-        if let Some(google) = map.get_mut("google") {
-            if google.api_key.is_empty() {
-                google.api_key = env_key;
+    // 3. Fallback ke ~/.config/oopbot/.env atau environment variables
+    let env_map = read_oopbot_env_map();
+    let get_env_or_file = |key: &str| -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| env_map.get(key).cloned())
+    };
+
+    if let Some(key) = get_env_or_file("OPENROUTER_API_KEY") {
+        if let Some(p) = map.get_mut("openrouter") {
+            if p.api_key.is_empty() {
+                p.api_key = key;
             }
-            google.has_auth = true;
+            p.has_auth = true;
         }
     }
+    if let Some(key) = get_env_or_file("GEMINI_API_KEY") {
+        if let Some(p) = map.get_mut("google") {
+            if p.api_key.is_empty() {
+                p.api_key = key;
+            }
+            p.has_auth = true;
+        }
+    }
+    if let Some(key) = get_env_or_file("OPENAI_API_KEY") {
+        if let Some(p) = map.get_mut("openai-codex") {
+            if p.api_key.is_empty() {
+                p.api_key = key;
+            }
+            p.has_auth = true;
+        }
+    }
+    if let Some(key) = get_env_or_file("ANTHROPIC_API_KEY") {
+        if let Some(p) = map.get_mut("anthropic") {
+            if p.api_key.is_empty() {
+                p.api_key = key;
+            }
+            p.has_auth = true;
+        }
+    }
+    if let Some(key) = get_env_or_file("ZAI_API_KEY") {
+        if let Some(p) = map.get_mut("zai") {
+            if p.api_key.is_empty() {
+                p.api_key = key;
+            }
+            p.has_auth = true;
+        }
+    }
+    if let Some(key) = get_env_or_file("KIMI_API_KEY") {
+        if let Some(p) = map.get_mut("kimi-coding") {
+            if p.api_key.is_empty() {
+                p.api_key = key;
+            }
+            p.has_auth = true;
+        }
+    }
+
 
     map
 }
@@ -1697,20 +1741,30 @@ fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str, base_url: 
     }
 }
 
-fn read_oopbot_env_key() -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
-    let content = std::fs::read_to_string(PathBuf::from(home).join(".config/oopbot/.env")).ok()?;
+fn read_oopbot_env_map() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Ok(home) = std::env::var("HOME") else {
+        return map;
+    };
+    let Ok(content) = std::fs::read_to_string(PathBuf::from(home).join(".config/oopbot/.env")) else {
+        return map;
+    };
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("GEMINI_API_KEY=") {
-            let val = rest.trim().trim_matches('"').trim_matches('\'');
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            let key = k.trim().to_string();
+            let val = v.trim().trim_matches('"').trim_matches('\'').to_string();
             if !val.is_empty() {
-                return Some(val.to_string());
+                map.insert(key, val);
             }
         }
     }
-    None
+    map
 }
+
 
 fn read_json_file(path: &Path) -> Value {
     std::fs::read_to_string(path)

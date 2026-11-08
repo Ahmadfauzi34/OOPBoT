@@ -484,29 +484,37 @@ class OopbotModelRuntime {
     return this.loadError;
   }
 
-  getProviders(): { id: string; name: string; baseUrl: string }[] {
+  getProviders(): { id: string; name: string; baseUrl: string; api?: string }[] {
     const catalogue = getReferenceCatalogue();
-    const list = catalogue.map((p) => {
+    const list: { id: string; name: string; baseUrl: string; api?: string }[] = catalogue.map((p) => {
       const override = isObject(this.modelsDoc[p.id]) ? (this.modelsDoc[p.id] as JsonObject) : undefined;
       const baseUrl = typeof override?.baseUrl === "string" ? override.baseUrl : p.baseUrl;
-      return { id: p.id, name: p.name, baseUrl };
+      const api = typeof override?.api === "string" ? override.api : p.api;
+      return { id: p.id, name: p.name, baseUrl, api };
     });
+
     if (!this.builtinOnly) {
       for (const [id, entry] of Object.entries(this.modelsDoc)) {
         if (!isObject(entry) || catalogue.some((b) => b.id === id)) continue;
-        list.push({
+        const item: { id: string; name: string; baseUrl: string; api?: string } = {
           id,
           name: id,
           baseUrl: typeof entry.baseUrl === "string" ? entry.baseUrl : "",
-        });
+        };
+        if (typeof entry.api === "string") {
+          item.api = entry.api;
+        }
+        list.push(item);
       }
     }
+
     return list;
   }
 
-  getProvider(id: string): { id: string; name: string; baseUrl: string } | undefined {
+  getProvider(id: string): { id: string; name: string; baseUrl: string; api?: string } | undefined {
     return this.getProviders().find((p) => p.id === id);
   }
+
 
   getModels(providerId?: string): JsonObject[] {
     const catalogue = getReferenceCatalogue();
@@ -622,6 +630,45 @@ class OopbotModelRuntime {
 
     if (providerId === "google") {
       await this.scanAndSaveGeminiModels(trimmed);
+    } else {
+      const provider = this.getProvider(providerId);
+      if (provider?.baseUrl && (provider.api === "openai-completions" || provider.api === "openai-responses")) {
+        await this.scanAndSaveOpenAiCompatibleModels(providerId, trimmed, provider.baseUrl);
+      }
+    }
+  }
+
+  private async scanAndSaveOpenAiCompatibleModels(providerId: string, apiKey: string, baseUrl: string): Promise<void> {
+    try {
+      const url = `${baseUrl.replace(/\/+$/, "")}/models`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return;
+      const body: unknown = await response.json();
+      if (!isObject(body) || !Array.isArray(body.data)) return;
+      const scanned: JsonObject[] = [];
+      for (const item of body.data) {
+        if (!isObject(item) || typeof item.id !== "string") continue;
+        const id = item.id;
+        const name = typeof item.name === "string" ? item.name : id;
+        const contextWindow = typeof item.context_length === "number" ? item.context_length : 128_000;
+        scanned.push({
+          id,
+          name,
+          contextWindow,
+          maxTokens: 16_384,
+          reasoning: true,
+          input: ["text"],
+        });
+      }
+      if (scanned.length === 0) return;
+      const existing = isObject(this.modelsDoc[providerId]) ? (this.modelsDoc[providerId] as JsonObject) : {};
+      this.modelsDoc[providerId] = { ...existing, models: scanned, scannedApiKey: apiKey };
+      await writeFile(join(this.configDir, "models.json"), `${JSON.stringify({ providers: this.modelsDoc }, null, 2)}\n`);
+    } catch {
+      // Best-effort auto-scan; built-in provider catalog remains available if offline.
     }
   }
 
@@ -659,6 +706,7 @@ class OopbotModelRuntime {
       // Best-effort auto-scan; built-in Gemini catalog remains available if offline.
     }
   }
+
 
   async logout(providerId: string): Promise<void> {
     await this.load();

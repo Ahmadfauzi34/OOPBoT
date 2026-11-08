@@ -90,18 +90,31 @@ pub struct GeminiClient {
 
 impl GeminiClient {
     pub fn new(api_key: String, default_model: String) -> Result<Self, BoxError> {
+        let base_url = std::env::var("OOPBOT_BASE_URL")
+            .or_else(|_| std::env::var("GEMINI_BASE_URL"))
+            .unwrap_or_else(|_| DEFAULT_GEMINI_BASE_URL.to_string());
+        Self::new_with_base_url(api_key, default_model, Some(base_url))
+    }
+
+    pub fn new_with_base_url(
+        api_key: String,
+        default_model: String,
+        base_url: Option<String>,
+    ) -> Result<Self, BoxError> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
             .user_agent(concat!("oopbot/", env!("CARGO_PKG_VERSION")))
             .build()?;
-        let base_url = std::env::var("GEMINI_BASE_URL")
-            .unwrap_or_else(|_| DEFAULT_GEMINI_BASE_URL.to_string());
+        let base_url = base_url
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string());
         Ok(Self {
             creds: RwLock::new(Credentials { api_key, base_url }),
             default_model: RwLock::new(default_model),
             http,
         })
     }
+
 
     pub fn model(&self) -> String {
         self.default_model.read().unwrap().clone()
