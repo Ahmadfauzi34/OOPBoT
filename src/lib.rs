@@ -4,5 +4,6 @@ pub mod ffi;
 pub mod gemini;
 pub mod models;
 pub mod rpc;
+pub mod plugins;
 pub mod session;
 pub mod tools;

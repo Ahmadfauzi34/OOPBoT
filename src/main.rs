@@ -19,6 +19,7 @@ struct Cli {
     mode: Option<String>,
     session: Option<String>,
     system_append: Option<String>,
+    extensions: Vec<String>,
 }
 
 fn print_help() {
@@ -80,6 +81,7 @@ fn parse_args() -> Result<Cli, String> {
         mode: None,
         session: None,
         system_append: None,
+        extensions: Vec::new(),
     };
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -105,9 +107,9 @@ fn parse_args() -> Result<Cli, String> {
             "--session" => {
                 cli.session = Some(args.next().ok_or("--session butuh path")?);
             }
-            "--extension" => {
-                // Diteruskan oleh host.mjs Pipkin; diabaikan karena tool sudah built-in di Rust.
-                let _ = args.next();
+            "--extension" | "--plugin" => {
+                let ext = args.next().ok_or("--extension/--plugin butuh nilai")?;
+                cli.extensions.push(ext);
             }
             "--append-system-prompt" => {
                 cli.system_append = Some(args.next().ok_or("--append-system-prompt butuh teks")?);
@@ -507,7 +509,7 @@ async fn main() -> Result<(), BoxError> {
 
     match cli.mode.as_deref() {
         Some("rpc") => {
-            return oopbot::rpc::run_rpc_mode(cli.session, cli.system_append).await;
+            return oopbot::rpc::run_rpc_mode(cli.session, cli.system_append, cli.extensions).await;
         }
         Some("catalog") => {
             println!("{}", serde_json::to_string(&builtin_catalog_json())?);
@@ -564,11 +566,18 @@ async fn main() -> Result<(), BoxError> {
         }
     };
 
+    let mut tools = ToolRegistry::with_defaults();
+    let mut plugins = oopbot::plugins::PluginRegistry::with_defaults();
+    for ext in &cli.extensions {
+        plugins.activate(ext);
+    }
+    plugins.register_active_tools(&mut tools);
+
     let client = GeminiClient::new_with_base_url(creds.api_key, creds.model.clone(), creds.base_url)?;
     let agent = GeminiAgent::new(
         "OOPBoT",
         client,
-        ToolRegistry::with_defaults(),
+        tools,
         Box::new(CliApprover::new(cli.auto_approve)),
         cli.max_steps,
     );

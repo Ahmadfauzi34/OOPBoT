@@ -12,6 +12,7 @@ use crate::models::{
     builtin_providers, infer_api_from_provider, infer_input_from_id, infer_reasoning_from_id,
     resolve_model_scope, ModelCatalog, ModelInfo,
 };
+use crate::plugins::PluginRegistry;
 use crate::tools::ToolRegistry;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -43,6 +44,7 @@ pub struct RpcServer {
     catalog: ModelCatalog,
     client: GeminiClient,
     tools: ToolRegistry,
+    plugins: PluginRegistry,
     /// Riwayat pesan dalam format Pipkin (`role: "user" | "assistant" | "toolResult"`).
     ui_messages: Vec<Value>,
     /// Riwayat pesan dalam format `GeminiClient` (`role: "user" | "model", parts: [...]`).
@@ -56,6 +58,7 @@ impl RpcServer {
     pub fn new(
         session_path: Option<String>,
         system_append: Option<String>,
+        extensions: Vec<String>,
     ) -> Result<Self, BoxError> {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let config_dir = std::env::var("PI_CODING_AGENT_DIR")
@@ -66,8 +69,21 @@ impl RpcServer {
             });
         let _ = std::fs::create_dir_all(&config_dir);
 
-        let tools = ToolRegistry::with_defaults();
+        let mut tools = ToolRegistry::with_defaults();
+        let mut plugins = PluginRegistry::with_defaults();
+
+        // Aktifkan plugin berdasarkan argumen --extension / --plugin
+        for ext in &extensions {
+            plugins.activate(ext);
+        }
+        plugins.register_active_tools(&mut tools);
+
         let mut system_instruction = default_rpc_system_instruction(&cwd, &tools);
+        let plugin_system_append = plugins.system_prompt_append();
+        if !plugin_system_append.is_empty() {
+            system_instruction.push_str("\n\n");
+            system_instruction.push_str(&plugin_system_append);
+        }
         if let Some(append) = system_append.filter(|s| !s.trim().is_empty()) {
             system_instruction.push_str("\n\n");
             system_instruction.push_str(&append);
@@ -146,6 +162,7 @@ impl RpcServer {
             catalog,
             client,
             tools,
+            plugins,
             ui_messages,
             llm_history,
             entry_seq,
@@ -156,6 +173,24 @@ impl RpcServer {
             .active_model_info()
             .clamp_thinking_level(&requested_thinking);
         Ok(server)
+    }
+
+    /// Pancarkan event widget aktif (misal checklist Todo) ke antarmuka aplikasi Android via RPC JSONL.
+    pub fn emit_active_widgets(&self) {
+        for plugin in self.plugins.active_plugins() {
+            if plugin.id() == "pipkin-todo" {
+                if let Some(lines) = plugin.render_widget("todos") {
+                    Self::send_line(&json!({
+                        "type": "extension_ui_request",
+                        "id": "todos-widget",
+                        "method": "setWidget",
+                        "widgetKey": "todos",
+                        "widgetLines": lines,
+                        "widgetPlacement": "aboveEditor"
+                    }));
+                }
+            }
+        }
     }
 
     fn send_line(value: &Value) {
@@ -1026,6 +1061,8 @@ impl RpcServer {
                 llm_response_parts.push(function_response_part(&call, llm_val));
             }
 
+            self.emit_active_widgets();
+
             self.llm_history
                 .push(json!({ "role": "user", "parts": llm_response_parts }));
         }
@@ -1132,6 +1169,7 @@ impl RpcServer {
     }
 
     pub async fn run_loop(&mut self) -> Result<(), BoxError> {
+        self.emit_active_widgets();
         let stdin = io::stdin();
         let mut reader = stdin.lock();
         let mut line = String::new();
@@ -1351,8 +1389,9 @@ fn extract_prompt_images(images_val: &Value) -> Vec<(String, String)> {
 pub async fn run_rpc_mode(
     session_path: Option<String>,
     system_append: Option<String>,
+    extensions: Vec<String>,
 ) -> Result<(), BoxError> {
-    let mut server = RpcServer::new(session_path, system_append)?;
+    let mut server = RpcServer::new(session_path, system_append, extensions)?;
     server.run_loop().await
 }
 
@@ -1363,6 +1402,10 @@ fn map_tool_for_pipkin_ui(tool_name: &str, args: &Value) -> (String, Value) {
         "read_file" => ("read".to_string(), args.clone()),
         "write_file" => ("write".to_string(), args.clone()),
         "list_dir" => ("ls".to_string(), args.clone()),
+        "todo" => ("todo".to_string(), args.clone()),
+        "web_search" => ("web_search".to_string(), args.clone()),
+        "fetch_page" => ("fetch_page".to_string(), args.clone()),
+        "background" => ("background".to_string(), args.clone()),
         other => (other.to_string(), args.clone()),
     }
 }
@@ -1417,6 +1460,39 @@ fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool) {
                 (lines.join("\n"), false)
             } else {
                 (val.to_string(), false)
+            }
+        }
+        "todo" => {
+            if let Some(msg) = val["message"].as_str() {
+                (msg.to_string(), val["status"].as_str() == Some("error"))
+            } else {
+                (serde_json::to_string_pretty(val).unwrap_or_default(), false)
+            }
+        }
+        "web_search" => {
+            let count = val["count"].as_u64().unwrap_or(0);
+            let mut out = format!("Ditemukan {} hasil pencarian:\n", count);
+            if let Some(results) = val["results"].as_array() {
+                for (idx, r) in results.iter().enumerate() {
+                    let title = r["title"].as_str().unwrap_or("");
+                    let url = r["url"].as_str().unwrap_or("");
+                    let snippet = r["snippet"].as_str().unwrap_or("");
+                    out.push_str(&format!("{}. [{}]({})\n   {}\n", idx + 1, title, url, snippet));
+                }
+            }
+            (out, false)
+        }
+        "fetch_page" => {
+            let content = val["content"].as_str().unwrap_or_default();
+            (content.to_string(), false)
+        }
+        "background" => {
+            if let Some(msg) = val["message"].as_str() {
+                (msg.to_string(), false)
+            } else if let Some(out) = val["output"].as_str() {
+                (out.to_string(), false)
+            } else {
+                (serde_json::to_string_pretty(val).unwrap_or_default(), false)
             }
         }
         _ => (val.to_string(), false),
@@ -2064,6 +2140,26 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn rpc_server_activates_plugins_from_extensions_arg() {
+        let extensions = vec![
+            "/data/user/0/io.jeph.pipkin/files/extensions/pipkin-todo/index.js".to_string(),
+            "pipkin-web-access".to_string(),
+        ];
+
+        let server = RpcServer::new(None, None, extensions).unwrap();
+        assert!(server.plugins.is_active("pipkin-todo"));
+        assert!(server.plugins.is_active("pipkin-web-access"));
+        assert!(!server.plugins.is_active("pipkin-background"));
+
+        assert!(server.tools.get("todo").is_some());
+        assert!(server.tools.get("web_search").is_some());
+        assert!(server.tools.get("fetch_page").is_some());
+        assert!(server.tools.get("background").is_none());
+        assert!(server.system_instruction.contains("Todo & Task Management Guidelines"));
+        assert!(server.system_instruction.contains("Web Access Guidelines"));
     }
 }
 
