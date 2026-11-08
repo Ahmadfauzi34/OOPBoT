@@ -1,6 +1,6 @@
 [package]
 name = "oopbot"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Hybrid Rust agent harness (Termux CLI/RPC binary + Android cdylib .so)"
 

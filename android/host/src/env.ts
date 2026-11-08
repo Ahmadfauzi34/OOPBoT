@@ -118,7 +118,7 @@ export async function installedPiVersion(root: string): Promise<string | null> {
       const match = /oopbot\s+([0-9a-zA-Z.-]+)/.exec(stdout);
       if (match && match[1]) return match[1];
     } catch {
-      return "0.5.0";
+      return "0.5.1";
     }
   }
 
