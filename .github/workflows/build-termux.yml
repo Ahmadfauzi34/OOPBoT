@@ -134,7 +134,7 @@ jobs:
         working-directory: android
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          ./gradlew :app:assembleDebug -Ppipkin.versionName="$VER" -Ppipkin.versionCode=1
+          gradle :app:assembleDebug -Ppipkin.versionName="$VER" -Ppipkin.versionCode=1
           mkdir -p ../apk-dist
           APK_FILE=$(find app/build -name "*.apk" | head -n 1)
           echo "Found built APK: $APK_FILE"
