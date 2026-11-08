@@ -84,7 +84,7 @@ struct Credentials {
 
 pub struct GeminiClient {
     creds: RwLock<Credentials>,
-    default_model: String,
+    default_model: RwLock<String>,
     http: reqwest::Client,
 }
 
@@ -98,13 +98,19 @@ impl GeminiClient {
             .unwrap_or_else(|_| DEFAULT_GEMINI_BASE_URL.to_string());
         Ok(Self {
             creds: RwLock::new(Credentials { api_key, base_url }),
-            default_model,
+            default_model: RwLock::new(default_model),
             http,
         })
     }
 
-    pub fn model(&self) -> &str {
-        &self.default_model
+    pub fn model(&self) -> String {
+        self.default_model.read().unwrap().clone()
+    }
+
+    /// Ganti model aktif pada klien secara dinamis tanpa membuat ulang HTTP pool.
+    pub fn set_default_model(&self, new_model: &str) {
+        let mut m = self.default_model.write().unwrap();
+        *m = new_model.to_string();
     }
 
     pub fn base_url(&self) -> String {
@@ -186,8 +192,9 @@ impl GeminiClient {
         contents: &[Value],
         function_declarations: &[Value],
     ) -> Result<ModelTurn, BoxError> {
+        let cur_model = self.model();
         self.generate_with_model(
-            &self.default_model,
+            &cur_model,
             system_instruction,
             contents,
             function_declarations,
@@ -300,12 +307,15 @@ impl GeminiClient {
         }
         if let Some(level) = options.thinking_level.as_deref() {
             let model_lower = clean_model.to_ascii_lowercase();
-            let supports_gemini_thinking =
-                options.reasoning && (model_lower.contains("gemini-2.5") || model_lower.contains("gemini-3"));
+            let supports_gemini_thinking = options.reasoning
+                || model_lower.contains("thinking")
+                || model_lower.contains("gemini-2")
+                || model_lower.contains("gemini-3")
+                || model_lower.contains("exp");
             if supports_gemini_thinking {
                 if level == "off" {
-                    // Gemini 2.5 Pro tidak mengizinkan budget 0, hanya Flash/Flash-Lite yang mengizinkan 0.
-                    if !model_lower.contains("pro") {
+                    // Hanya model yang bukan fixed-thinking yang mengizinkan thinkingBudget: 0.
+                    if !model_lower.contains("pro") && !model_lower.contains("thinking-exp") {
                         gen_config.insert(
                             "thinkingConfig".to_string(),
                             json!({ "thinkingBudget": 0 }),

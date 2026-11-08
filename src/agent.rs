@@ -111,10 +111,11 @@ impl GeminiAgent {
     ) -> Self {
         let system_instruction = default_system_instruction(&tools);
         let mut catalog = ModelCatalog::builtin();
-        catalog.set_default_model(client.model());
+        let default_m = client.model();
+        catalog.set_default_model(&default_m);
         let tabs = WorkspaceTabs::default_storage_path()
             .and_then(|p| WorkspaceTabs::load_from_file(&p))
-            .unwrap_or_else(|| WorkspaceTabs::new(client.model()));
+            .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
 
         Self {
             name: name.to_string(),
@@ -201,6 +202,7 @@ impl GeminiAgent {
         let mut tabs = self.tabs.lock().unwrap();
         tabs.active_mut().model = resolved.clone();
         self.persist_tabs(&tabs);
+        self.client.set_default_model(&resolved);
         resolved
     }
 
@@ -252,24 +254,27 @@ impl GeminiAgent {
         let mut tabs = self.tabs.lock().unwrap();
         let created = tabs.new_tab(&model_id).clone();
         self.persist_tabs(&tabs);
+        self.client.set_default_model(&created.model);
         created
     }
 
     pub fn switch_tab(&self, selector: &str) -> Option<ChatSession> {
         let mut tabs = self.tabs.lock().unwrap();
         let switched = tabs.switch_to(selector).cloned();
-        if switched.is_some() {
+        if let Some(ref s) = switched {
             self.persist_tabs(&tabs);
+            self.client.set_default_model(&s.model);
         }
         switched
     }
 
     pub fn close_tab(&self, selector: &str) -> bool {
-        let fallback = self.client.model().to_string();
+        let fallback = self.client.model();
         let mut tabs = self.tabs.lock().unwrap();
         let ok = tabs.close_tab(selector, &fallback);
         if ok {
             self.persist_tabs(&tabs);
+            self.client.set_default_model(&tabs.active().model);
         }
         ok
     }

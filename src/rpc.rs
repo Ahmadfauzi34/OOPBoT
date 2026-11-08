@@ -378,6 +378,71 @@ impl RpcServer {
         }
     }
 
+    /// Deteksi otomatis apakah token provider aktif (atau provider terotentikasi) belum pernah di-scan
+    /// atau token baru saja berganti/ditempelkan di aplikasi Pipkin.
+    /// Jika ya, lakukan auto-scan langsung ke `/models`, simpan hasilnya ke `models.json`,
+    /// dan perbarui model aktif agar sesuai dengan kapabilitas aktual token tersebut.
+    async fn maybe_auto_scan(&mut self) {
+        let ep = match self.providers.get(&self.active_provider) {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        if !ep.has_auth || ep.api_key.trim().is_empty() {
+            return;
+        }
+
+        let models_path = self.config_dir.join("models.json");
+        let models_json = read_json_file(&models_path);
+        let prov_entry = &models_json["providers"][&self.active_provider];
+        let has_saved_models = prov_entry["models"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
+        let scanned_key = prov_entry["scannedApiKey"].as_str().unwrap_or("");
+
+        // Bila sudah tersimpan model hasil scan dan API key belum berubah, tidak perlu scan ulang.
+        if has_saved_models && scanned_key == ep.api_key {
+            return;
+        }
+
+        // Jalankan auto-scan langsung dari token yang ditempel di aplikasi
+        if let Ok(scanned) = self.client.scan_models().await {
+            if !scanned.is_empty() {
+                save_scanned_models_to_config(
+                    &self.config_dir,
+                    &self.active_provider,
+                    &scanned,
+                    &ep.api_key,
+                );
+                self.catalog.replace_with_scanned(scanned.clone());
+                // Jika model aktif saat ini tidak ada di daftar yang di-scan,
+                // ganti ke model hasil scan yang optimal (preferensi: flash non-lite jika ada, atau pertama).
+                if !scanned
+                    .iter()
+                    .any(|m| m.id.eq_ignore_ascii_case(&self.active_model))
+                {
+                    if let Some(pref) = scanned
+                        .iter()
+                        .find(|m| m.id.contains("flash") && !m.id.contains("lite"))
+                    {
+                        self.active_model = pref.id.clone();
+                    } else if let Some(first) = scanned.first() {
+                        self.active_model = first.id.clone();
+                    }
+                }
+                self.client.set_default_model(&self.active_model);
+                self.refresh_credentials();
+                self.sync_thinking_level_for_active_model();
+                save_settings_fields(
+                    &self.config_dir,
+                    Some(&self.active_provider),
+                    Some(&self.active_model),
+                    Some(&self.thinking_level),
+                );
+            }
+        }
+    }
+
     async fn handle_slash_command(&mut self, cmd_line: &str) -> Option<String> {
         let parts: Vec<&str> = cmd_line.split_whitespace().collect();
         let cmd = parts.first().copied()?;
@@ -396,11 +461,18 @@ impl RpcServer {
                             })
                             .collect();
                         self.catalog.replace_with_scanned(scanned.clone());
+                        let cur_key = self
+                            .providers
+                            .get(&self.active_provider)
+                            .map(|p| p.api_key.as_str())
+                            .unwrap_or("");
                         save_scanned_models_to_config(
                             &self.config_dir,
                             &self.active_provider,
                             &scanned,
+                            cur_key,
                         );
+                        self.client.set_default_model(&self.active_model);
                         self.refresh_credentials();
                         Some(format!(
                             "Berhasil men-scan **{} model** dari `{}` dan menyimpannya ke `models.json`:\n{}\n\nGunakan pemilih model di atas atau ketik `/model <ID>` untuk mengganti model.",
@@ -438,10 +510,12 @@ impl RpcServer {
                             }
                         }
                         self.catalog.replace_with_scanned(scanned.clone());
+                        self.client.set_default_model(&self.active_model);
                         save_scanned_models_to_config(
                             &self.config_dir,
                             &self.active_provider,
                             &scanned,
+                            api_key,
                         );
                         self.refresh_credentials();
                         save_settings_fields(
@@ -549,6 +623,7 @@ impl RpcServer {
                         self.active_model = target.to_string();
                     }
                 }
+                self.client.set_default_model(&self.active_model);
                 self.refresh_credentials();
                 self.sync_thinking_level_for_active_model();
                 save_settings_fields(
@@ -1080,6 +1155,7 @@ impl RpcServer {
             match cmd_type.as_str() {
                 "get_state" => {
                     self.refresh_credentials();
+                    self.maybe_auto_scan().await;
                     Self::send_response(&id, "get_state", self.state_json());
                 }
                 "get_messages" => {
@@ -1111,6 +1187,7 @@ impl RpcServer {
                 }
                 "get_available_models" => {
                     self.refresh_credentials();
+                    self.maybe_auto_scan().await;
                     Self::send_response(
                         &id,
                         "get_available_models",
@@ -1118,13 +1195,21 @@ impl RpcServer {
                     );
                 }
                 "set_model" => {
+                    let mut provider_changed = false;
                     if let Some(p) = cmd["provider"].as_str().filter(|s| !s.trim().is_empty()) {
-                        self.active_provider = p.to_string();
+                        if p != self.active_provider {
+                            self.active_provider = p.to_string();
+                            provider_changed = true;
+                        }
                     }
                     if let Some(m) = cmd["modelId"].as_str().filter(|s| !s.trim().is_empty()) {
                         self.active_model = m.to_string();
                     }
                     self.refresh_credentials();
+                    if provider_changed {
+                        self.maybe_auto_scan().await;
+                    }
+                    self.client.set_default_model(&self.active_model);
                     self.sync_thinking_level_for_active_model();
                     save_settings_fields(
                         &self.config_dir,
@@ -1408,23 +1493,10 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
 
             let overrides = pval.get("modelOverrides");
 
-            // Mulai dari model bawaan provider (bila ada), lalu terapkan modelOverrides
-            let mut merged_models: Vec<ModelInfo> = existing
-                .map(|p| p.models)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|mut m| {
-                    m.provider = id.clone();
-                    m.api = api.clone();
-                    if let Some(ov) = overrides.and_then(|o| o.get(&m.id)) {
-                        m.apply_override(ov);
-                    }
-                    m
-                })
-                .collect();
-
-            // Tambahkan atau perbarui model dari array `models` di models.json
-            if let Some(arr) = pval["models"].as_array() {
+            // Jika models.json memiliki array "models" (hasil scan dari token atau konfigurasi aplikasi),
+            // jadikan array tersebut sebagai sumber otoritatif tanpa mencampur model hardcode bawaan!
+            let mut merged_models: Vec<ModelInfo> = Vec::new();
+            if let Some(arr) = pval["models"].as_array().filter(|a| !a.is_empty()) {
                 for item in arr {
                     if let Some(mut info) = ModelInfo::from_pipkin_json(item, id, &api) {
                         if let Some(ov) = overrides.and_then(|o| o.get(&info.id)) {
@@ -1437,6 +1509,20 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
                         }
                     }
                 }
+            } else {
+                merged_models = existing
+                    .map(|p| p.models)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|mut m| {
+                        m.provider = id.clone();
+                        m.api = api.clone();
+                        if let Some(ov) = overrides.and_then(|o| o.get(&m.id)) {
+                            m.apply_override(ov);
+                        }
+                        m
+                    })
+                    .collect();
             }
 
             map.insert(
@@ -1513,7 +1599,12 @@ fn save_settings_fields(
     }
 }
 
-fn save_scanned_models_to_config(config_dir: &Path, provider_id: &str, scanned: &[ModelInfo]) {
+fn save_scanned_models_to_config(
+    config_dir: &Path,
+    provider_id: &str,
+    scanned: &[ModelInfo],
+    api_key: &str,
+) {
     if scanned.is_empty() {
         return;
     }
@@ -1533,6 +1624,9 @@ fn save_scanned_models_to_config(config_dir: &Path, provider_id: &str, scanned: 
         .map(|m| m.to_pipkin_json(Some(provider_id)))
         .collect();
     models_json["providers"][provider_id]["models"] = json!(serialized);
+    if !api_key.is_empty() {
+        models_json["providers"][provider_id]["scannedApiKey"] = json!(api_key);
+    }
     if let Ok(text) = serde_json::to_string_pretty(&models_json) {
         let _ = std::fs::write(&models_path, format!("{}\n", text));
     }
@@ -1869,6 +1963,51 @@ mod tests {
         assert_eq!(local.models.len(), 1);
         assert_eq!(local.models[0].id, "qwen3-4b");
         assert_eq!(local.models[0].input_token_limit, Some(32768));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_providers_uses_scanned_models_without_mixing_hardcoded_models() {
+        let tmp = std::env::temp_dir().join(format!("oopbot_scan_test_{}", epoch_ms()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        // Simulasikan hasil scan live dari token pengguna yang hanya mendukung gemini-2.0-flash
+        let scanned = vec![ModelInfo {
+            id: "gemini-2.0-flash".to_string(),
+            label: "Gemini 2.0 Flash (Scanned)".to_string(),
+            provider: "google".to_string(),
+            supports_tools: true,
+            input_token_limit: Some(1_048_576),
+            output_token_limit: Some(8192),
+            description: "Scanned from token".to_string(),
+            api: "google-generative-ai".to_string(),
+            reasoning: true,
+            thinking_level_map: None,
+            input: vec!["text".to_string(), "image".to_string()],
+            cost: None,
+        }];
+
+        save_scanned_models_to_config(&tmp, "google", &scanned, "test-api-key");
+
+        let cat = ModelCatalog::builtin();
+        let providers = load_providers(&tmp, &cat);
+        let google = providers.get("google").unwrap();
+
+        // Harus HANYA berisi model hasil scan dari token, TIDAK mencampur model hardcode bawaan!
+        assert_eq!(google.models.len(), 1);
+        assert_eq!(google.models[0].id, "gemini-2.0-flash");
+        assert!(!google
+            .models
+            .iter()
+            .any(|m| m.id == "gemini-3.5-flash-lite"));
+
+        // Verifikasi scannedApiKey tersimpan
+        let read_back = read_json_file(&tmp.join("models.json"));
+        assert_eq!(
+            read_back["providers"]["google"]["scannedApiKey"].as_str(),
+            Some("test-api-key")
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
