@@ -127,6 +127,8 @@ jobs:
           "platforms;android-37.0" "build-tools;$BUILD_TOOLS_VERSION" "ndk;30.0.16248370" "cmake;4.1.2" > /dev/null
 
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.8.2'
 
       - name: Build Debug APK (installable out-of-the-box)
         working-directory: android
