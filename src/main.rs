@@ -20,6 +20,8 @@ struct Cli {
     session: Option<String>,
     system_append: Option<String>,
     extensions: Vec<String>,
+    host_mode: Option<String>,
+    host_port: Option<u16>,
 }
 
 fn print_help() {
@@ -82,6 +84,8 @@ fn parse_args() -> Result<Cli, String> {
         session: None,
         system_append: None,
         extensions: Vec::new(),
+        host_mode: None,
+        host_port: None,
     };
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -100,6 +104,17 @@ fn parse_args() -> Result<Cli, String> {
             }
             "-p" | "--prompt" => {
                 cli.prompt = Some(args.next().ok_or("--prompt butuh teks")?);
+            }
+            "host" => {
+                cli.mode = Some("host".to_string());
+                cli.host_mode = args.next();
+                if let Some(port_str) = args.next() {
+                    cli.host_port = port_str.parse().ok();
+                }
+            }
+            "--port" => {
+                let port_str = args.next().ok_or("--port butuh nilai angka")?;
+                cli.host_port = port_str.parse().ok();
             }
             "--mode" => {
                 cli.mode = Some(args.next().ok_or("--mode butuh nilai")?);
@@ -508,6 +523,15 @@ async fn main() -> Result<(), BoxError> {
     load_env();
 
     match cli.mode.as_deref() {
+        Some("host") => {
+            let host_mode = cli.host_mode.unwrap_or_else(|| "rpc".to_string());
+            let port = cli.host_port.unwrap_or(0);
+            if port == 0 {
+                eprintln!("❌ Port host tidak valid");
+                std::process::exit(1);
+            }
+            return oopbot::host::run_host_mode(&host_mode, port).await;
+        }
         Some("rpc") => {
             return oopbot::rpc::run_rpc_mode(cli.session, cli.system_append, cli.extensions).await;
         }

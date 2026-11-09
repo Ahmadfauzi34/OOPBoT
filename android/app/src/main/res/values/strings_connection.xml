@@ -8,9 +8,9 @@
     <string name="host_failure_external_apps">Termux blocked Pipkin\'s commands. Run the setup command in Termux, then retry.</string>
     <string name="host_failure_background">Android blocked starting Termux in the background. Open Pipkin and retry.</string>
     <string name="host_failure_termux_not_initialized">Open Termux once and let it finish installing.</string>
-    <string name="host_failure_node_missing">Node.js is missing in Termux. Run the setup command in Termux, then retry.</string>
+    <string name="host_failure_node_missing">OOPBoT engine is missing in Termux. Run the setup command in Termux, then retry.</string>
     <!-- %1$s is a command to type in Termux, kept as is. -->
-    <string name="host_failure_node_too_old">Node.js can\'t run or is too old. Run `<xliff:g id="command" example="yes | pkg upgrade -y">%1$s</xliff:g>` in Termux, then retry.</string>
+    <string name="host_failure_node_too_old">OOPBoT engine can\'t run or is damaged. Run `<xliff:g id="command" example="yes | pkg upgrade -y">%1$s</xliff:g>` in Termux, then retry.</string>
     <string name="host_failure_internal">Pipkin\'s Termux helper did not receive its token. Retry.</string>
     <!-- %1$d is the helper process's exit status, a number. An exit status is a code, not a count, so it needs no plural forms. -->
     <string name="host_failure_crashed" tools:ignore="PluralsCandidate">Pipkin\'s Termux helper exited with status <xliff:g id="status" example="1">%1$d</xliff:g> before connecting.</string>

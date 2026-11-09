@@ -189,8 +189,8 @@ internal object HostLauncher {
   }
 
   /**
-   * `<mode> <port>` for `host.mjs`, then the host script in pieces; the token is the one stdin line.
-   * Exit codes: 70 Termux env, 72 node missing, 73 node too old, 74 npm missing, 80 token missing.
+   * `<mode> <port>` for native `oopbot host` or fallback `host.mjs`; the token is the one stdin line.
+   * Exit codes: 70 Termux env, 72 engine missing, 80 token missing.
    */
   private val BOOTSTRAP = $$$"""
     set -eu
@@ -199,21 +199,23 @@ internal object HostLauncher {
     [ -n "$PIPKIN_TOKEN" ] || exit 80
     export PIPKIN_TOKEN
     exec </dev/null
-    command -v node >/dev/null 2>&1 || exit 72
-    node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)' || exit 73
-    command -v npm >/dev/null 2>&1 || exit 74
     export PIPKIN_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
     export PI_CODING_AGENT_DIR="$HOME/.$$${TermuxBuild.NAME}/pi"
     mkdir -p "$PIPKIN_ROOT" "$PI_CODING_AGENT_DIR"
     mode=$1
     port=$2
     shift 2
-    host="$PIPKIN_ROOT/host.mjs"
-    # cmp stops reading at the first difference, which would make printf report a broken pipe.
-    if [ ! -f "$host" ] || ! printf '%s' "$@" 2>/dev/null | cmp -s - "$host"; then
-      printf '%s' "$@" > "$host.$$.tmp" && mv -f "$host.$$.tmp" "$host"
+    if command -v oopbot >/dev/null 2>&1; then
+      exec oopbot host "$mode" "$port"
+    elif command -v node >/dev/null 2>&1; then
+      host="$PIPKIN_ROOT/host.mjs"
+      if [ ! -f "$host" ] || ! printf '%s' "$@" 2>/dev/null | cmp -s - "$host"; then
+        printf '%s' "$@" > "$host.$$.tmp" && mv -f "$host.$$.tmp" "$host"
+      fi
+      exec node "$host" "$mode" "$port"
+    else
+      exit 72
     fi
-    exec node "$host" "$mode" "$port"
   """.trimIndent()
 }
 
