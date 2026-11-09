@@ -18,7 +18,17 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+type OutputSink = Arc<Mutex<Box<dyn Write + Send + Sync>>>;
+static OUTPUT_SINK: RwLock<Option<OutputSink>> = RwLock::new(None);
+
+pub fn set_output_sink(sink: Option<OutputSink>) {
+    if let Ok(mut lock) = OUTPUT_SINK.write() {
+        *lock = sink;
+    }
+}
 
 #[derive(Debug, Clone)]
 struct ProviderEndpoint {
@@ -193,8 +203,17 @@ impl RpcServer {
         }
     }
 
-    fn send_line(value: &Value) {
+    pub fn send_line(value: &Value) {
         if let Ok(line) = serde_json::to_string(value) {
+            if let Ok(lock) = OUTPUT_SINK.read() {
+                if let Some(sink) = lock.as_ref() {
+                    if let Ok(mut writer) = sink.lock() {
+                        let _ = writeln!(writer, "{}", line);
+                        let _ = writer.flush();
+                        return;
+                    }
+                }
+            }
             let mut out = io::stdout().lock();
             let _ = writeln!(out, "{}", line);
             let _ = out.flush();
@@ -1198,9 +1217,16 @@ impl RpcServer {
     }
 
     pub async fn run_loop(&mut self) -> Result<(), BoxError> {
-        self.emit_active_widgets();
         let stdin = io::stdin();
         let mut reader = stdin.lock();
+        self.run_loop_with_input(&mut reader).await
+    }
+
+    pub async fn run_loop_with_input(
+        &mut self,
+        reader: &mut dyn BufRead,
+    ) -> Result<(), BoxError> {
+        self.emit_active_widgets();
         let mut line = String::new();
 
         loop {

@@ -52,19 +52,9 @@ write_file() {
   fi
 }
 
-# 2. Node.js 22.19 or newer.
-node_ok() {
-  node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 19) ? 0 : 1)' \
-    >/dev/null 2>&1
-}
+# 2. OOPBoT Native Engine.
 dpkg --configure -a || true
-if ! node_ok; then
-  say "Installing Node.js. This can take a few minutes."
-  yes | pkg upgrade -y
-  pkg install -y nodejs
-  node_ok || fail "Node.js couldn't be installed. Check your internet connection and paste the command again."
-fi
-if [ "${PREFIX#*/com.termux}" != "$PREFIX" ] && [ ! -x "$PREFIX/bin/oopbot" ]; then
+if [ ! -x "$PREFIX/bin/oopbot" ]; then
   say "Installing OOPBoT Rust engine..."
   curl -fsSL -m 60 "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android" \
     -o "$PREFIX/bin/oopbot.$$.tmp" &&
