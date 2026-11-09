@@ -24,7 +24,7 @@ internal object TermuxSetup {
   fun fdroidCommand(packageName: String): String = inBash(
     "{ command -v oopbot >/dev/null 2>&1 || { dpkg --configure -a; yes | pkg upgrade -y && pkg install -y curl && " +
       "curl -fsSL -m 60 \"https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android\" " +
-      "-o \"$PREFIX/bin/oopbot\" && chmod 755 \"$PREFIX/bin/oopbot\"; }; } && " +
+      "-o \"${'$'}PREFIX/bin/oopbot\" && chmod 755 \"${'$'}PREFIX/bin/oopbot\"; }; } && " +
       "mkdir -p ~/.termux && { grep -qx allow-external-apps=true ~/.termux/termux.properties 2>/dev/null " +
       "|| echo allow-external-apps=true >> ~/.termux/termux.properties; } && termux-reload-settings " +
       "&& echo \"OOPBoT setup done\" && am start -n $packageName/${MainActivity::class.java.name} >/dev/null " +
