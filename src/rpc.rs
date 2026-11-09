@@ -145,7 +145,7 @@ impl RpcServer {
                 models: catalog.list().to_vec(),
             });
 
-        let (session_file, session_id, session_name, ui_messages, llm_history, entry_seq) =
+        let (session_file, session_id, session_name, ui_messages, llm_history, entry_seq, total_tokens, total_cost) =
             init_or_load_session(&config_dir, &cwd, session_path.as_deref());
 
         let mut server = Self {
@@ -166,8 +166,8 @@ impl RpcServer {
             ui_messages,
             llm_history,
             entry_seq,
-            total_tokens: 0,
-            total_cost: 0.0,
+            total_tokens,
+            total_cost,
         };
         server.thinking_level = server
             .active_model_info()
@@ -817,7 +817,7 @@ impl RpcServer {
         // Cek apakah perintah slash internal (/scan, /token, /models, /model, /thinking, /provider, /max-tokens, /clear)
         if prompt.trim_start().starts_with('/') && images.is_empty() {
             if let Some(reply_text) = self.handle_slash_command(prompt.trim()).await {
-                self.emit_assistant_reply_with_thoughts(&reply_text, &[], started_ms);
+                self.emit_assistant_reply_with_thoughts(&reply_text, &[], started_ms, None);
                 Self::send_line(&json!({ "type": "turn_end" }));
                 Self::send_line(&json!({ "type": "agent_end" }));
                 Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
@@ -832,7 +832,7 @@ impl RpcServer {
             .unwrap_or(false);
         if !provider_has_auth && self.client.api_key().trim().is_empty() {
             let msg = "API key belum diatur. Silakan buka **Settings › Providers & models** di Pipkin untuk menempelkan API key (Google Gemini / OpenRouter / Custom), atau ketik langsung di sini:\n\n`/token <API_KEY>`";
-            self.emit_assistant_reply_with_thoughts(msg, &[], started_ms);
+            self.emit_assistant_reply_with_thoughts(msg, &[], started_ms, None);
             Self::send_line(&json!({ "type": "turn_end" }));
             Self::send_line(&json!({ "type": "agent_end" }));
             Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
@@ -887,12 +887,13 @@ impl RpcServer {
             };
 
             self.llm_history.push(turn.raw_content.clone());
-            if let Some(usage) = turn.usage {
+            let (turn_in, turn_out) = if let Some(usage) = turn.usage {
                 self.total_tokens = usage.input_tokens + usage.output_tokens;
                 if let Some(cost) = &active_info.cost {
                     self.total_cost += (usage.input_tokens as f64 / 1_000_000.0) * cost.input
                         + (usage.output_tokens as f64 / 1_000_000.0) * cost.output;
                 }
+                (usage.input_tokens, usage.output_tokens)
             } else {
                 let est_in = (prompt.len() as u64 / 4) + 60;
                 let est_out = (turn.text.len() as u64 / 4) + 60;
@@ -901,10 +902,16 @@ impl RpcServer {
                     self.total_cost += (est_in as f64 / 1_000_000.0) * cost.input
                         + (est_out as f64 / 1_000_000.0) * cost.output;
                 }
-            }
+                (est_in, est_out)
+            };
 
             if turn.function_calls.is_empty() {
-                self.emit_assistant_reply_with_thoughts(&turn.text, &turn.thoughts, step_start_ms);
+                self.emit_assistant_reply_with_thoughts(
+                    &turn.text,
+                    &turn.thoughts,
+                    step_start_ms,
+                    Some((turn_in, turn_out)),
+                );
                 break;
             }
 
@@ -1012,6 +1019,11 @@ impl RpcServer {
                 "stopReason": "toolUse",
                 "timestamp": step_start_ms,
                 "durationMs": epoch_ms().saturating_sub(step_start_ms),
+                "usage": {
+                    "input": turn_in,
+                    "output": turn_out,
+                    "totalTokens": turn_in + turn_out
+                }
             });
             Self::send_line(&json!({
                 "type": "message_end",
@@ -1067,6 +1079,15 @@ impl RpcServer {
                 .push(json!({ "role": "user", "parts": llm_response_parts }));
         }
 
+        // Simpan total token & cost sesi secara permanen ke file sesi JSONL
+        self.append_session_entry(
+            "session_stats",
+            json!({
+                "total_tokens": self.total_tokens,
+                "total_cost": self.total_cost
+            }),
+        );
+
         Self::send_line(&json!({ "type": "turn_end" }));
         Self::send_line(&json!({ "type": "agent_end" }));
         Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
@@ -1077,6 +1098,7 @@ impl RpcServer {
         text: &str,
         thoughts: &[String],
         started_ms: u64,
+        usage: Option<(u64, u64)>,
     ) {
         let now_ms = epoch_ms();
         Self::send_line(&json!({
@@ -1142,13 +1164,20 @@ impl RpcServer {
         }));
         content_blocks.push(json!({ "type": "text", "text": text }));
 
-        let msg = json!({
+        let mut msg = json!({
             "role": "assistant",
             "content": content_blocks,
             "stopReason": "stop",
             "timestamp": started_ms,
             "durationMs": now_ms.saturating_sub(started_ms),
         });
+        if let Some((turn_in, turn_out)) = usage {
+            msg["usage"] = json!({
+                "input": turn_in,
+                "output": turn_out,
+                "totalTokens": turn_in + turn_out
+            });
+        }
         Self::send_line(&json!({ "type": "message_end", "message": msg }));
         self.ui_messages.push(msg.clone());
         self.append_session_entry("message", json!({ "message": msg }));
@@ -1853,7 +1882,7 @@ fn init_or_load_session(
     config_dir: &Path,
     cwd: &Path,
     session_path: Option<&str>,
-) -> (PathBuf, String, Option<String>, Vec<Value>, Vec<Value>, usize) {
+) -> (PathBuf, String, Option<String>, Vec<Value>, Vec<Value>, usize, u64, f64) {
     if let Some(path_str) = session_path.filter(|s| !s.trim().is_empty()) {
         let path = PathBuf::from(path_str);
         if path.exists() {
@@ -1863,6 +1892,8 @@ fn init_or_load_session(
                 let mut ui_messages = Vec::new();
                 let mut llm_history = Vec::new();
                 let mut seq = 0usize;
+                let mut total_tokens = 0u64;
+                let mut total_cost = 0.0f64;
 
                 for line in content.lines() {
                     let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -1878,6 +1909,15 @@ fn init_or_load_session(
                             session_name = entry["name"].as_str().map(str::to_string);
                             seq += 1;
                         }
+                        "session_stats" => {
+                            seq += 1;
+                            if let Some(t) = entry["total_tokens"].as_u64() {
+                                total_tokens = t;
+                            }
+                            if let Some(c) = entry["total_cost"].as_f64() {
+                                total_cost = c;
+                            }
+                        }
                         "message" => {
                             seq += 1;
                             let msg = &entry["message"];
@@ -1886,6 +1926,29 @@ fn init_or_load_session(
                                 if let Some(llm_item) = ui_message_to_llm(msg) {
                                     llm_history.push(llm_item);
                                 }
+
+                                if msg["role"].as_str() == Some("assistant") {
+                                    if let Some(usage) = msg.get("usage") {
+                                        if let Some(t) = usage["totalTokens"].as_u64().or_else(|| {
+                                            let in_t = usage["input"].as_u64().unwrap_or(0);
+                                            let out_t = usage["output"].as_u64().unwrap_or(0);
+                                            if in_t + out_t > 0 {
+                                                Some(in_t + out_t)
+                                            } else {
+                                                None
+                                            }
+                                        }) {
+                                            total_tokens = t;
+                                        }
+                                    }
+                                    if let Some(cost) = msg
+                                        .get("cost")
+                                        .and_then(|c| c["total"].as_f64())
+                                        .or_else(|| msg["cost"].as_f64())
+                                    {
+                                        total_cost += cost;
+                                    }
+                                }
                             }
                         }
                         _ => {
@@ -1893,6 +1956,26 @@ fn init_or_load_session(
                         }
                     }
                 }
+
+                // Fallback estimasi cerdas jika session lama belum menyimpan field usage/stats
+                if total_tokens == 0 && !ui_messages.is_empty() {
+                    let mut total_chars = 0usize;
+                    for msg in &ui_messages {
+                        if let Some(content) = msg["content"].as_str() {
+                            total_chars += content.len();
+                        } else if let Some(arr) = msg["content"].as_array() {
+                            for block in arr {
+                                if let Some(t) = block["text"].as_str() {
+                                    total_chars += t.len();
+                                } else if let Some(th) = block["thinking"].as_str() {
+                                    total_chars += th.len();
+                                }
+                            }
+                        }
+                    }
+                    total_tokens = (total_chars as u64 / 4) + 500;
+                }
+
                 return (
                     path,
                     session_id,
@@ -1900,6 +1983,8 @@ fn init_or_load_session(
                     ui_messages,
                     llm_history,
                     seq,
+                    total_tokens,
+                    total_cost,
                 );
             }
         }
@@ -1917,7 +2002,7 @@ fn init_or_load_session(
     let session_id = format!("oopbot-{}", now_ms);
     let file_ts = iso_now().replace([':', '.'], "-");
     let file_path = session_dir.join(format!("{}_{}.jsonl", file_ts, session_id));
-    (file_path, session_id, None, Vec::new(), Vec::new(), 0)
+    (file_path, session_id, None, Vec::new(), Vec::new(), 0, 0, 0.0)
 }
 
 fn ui_message_to_llm(msg: &Value) -> Option<Value> {
@@ -2160,6 +2245,66 @@ mod tests {
         assert!(server.tools.get("background").is_none());
         assert!(server.system_instruction.contains("Todo & Task Management Guidelines"));
         assert!(server.system_instruction.contains("Web Access Guidelines"));
+    }
+
+    #[test]
+    fn session_preserves_tokens_and_cost_on_reload() {
+        let tmp = std::env::temp_dir().join(format!("oopbot_session_stats_{}", epoch_ms()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let session_file = tmp.join("test_session.jsonl");
+
+        let lines = vec![
+            json!({
+                "type": "session",
+                "id": "s-12345",
+                "timestamp": "2026-11-09T08:00:00Z",
+                "cwd": "/home/user"
+            })
+            .to_string(),
+            json!({
+                "type": "message",
+                "id": "e0",
+                "message": {
+                    "role": "user",
+                    "content": "Halo apa kabar?"
+                }
+            })
+            .to_string(),
+            json!({
+                "type": "message",
+                "id": "e1",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Kabar baik!" }],
+                    "usage": {
+                        "input": 1250,
+                        "output": 350,
+                        "totalTokens": 1600
+                    },
+                    "cost": 0.0025
+                }
+            })
+            .to_string(),
+            json!({
+                "type": "session_stats",
+                "id": "e2",
+                "total_tokens": 1600,
+                "total_cost": 0.0025
+            })
+            .to_string(),
+        ];
+        std::fs::write(&session_file, lines.join("\n")).unwrap();
+
+        let server = RpcServer::new(
+            Some(session_file.to_string_lossy().to_string()),
+            None,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(server.total_tokens, 1600);
+        assert!((server.total_cost - 0.0025).abs() < 1e-6);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
