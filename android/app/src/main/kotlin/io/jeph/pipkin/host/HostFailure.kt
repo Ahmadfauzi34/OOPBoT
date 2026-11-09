@@ -108,7 +108,8 @@ internal sealed class HostFailure(
   class HelperPortTaken : HostFailure(Kind.HelperPortTaken, R.string.host_failure_helper_port_taken)
 
   private companion object {
-    const val UPGRADE_COMMAND = "yes | pkg upgrade -y"
+    const val UPGRADE_COMMAND =
+      "curl -fsSL \"https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android\" -o \"\${'$'}PREFIX/bin/oopbot\" && chmod 755 \"\${'$'}PREFIX/bin/oopbot\""
 
     val SETUP_KINDS = setOf(
       Kind.MissingTermux,

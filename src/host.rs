@@ -110,7 +110,9 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
             let result = json!({
                 "type": "pipkin_result",
                 "ok": true,
-                "data": {}
+                "data": {
+                    "piVersion": env!("CARGO_PKG_VERSION")
+                }
             });
             writeln!(writer, "{}", serde_json::to_string(&result)?)?;
             writer.flush()?;
