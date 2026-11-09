@@ -206,7 +206,15 @@ internal object HostLauncher {
     port=$2
     shift 2
     if command -v oopbot >/dev/null 2>&1; then
-      exec oopbot host "$mode" "$port"
+      oopbot_ver=$(oopbot --version 2>/dev/null || echo "")
+      case "$oopbot_ver" in
+        "oopbot 0.5."[2-9]*|"oopbot "[1-9]*)
+          exec oopbot host "$mode" "$port"
+          ;;
+        *)
+          exit 73
+          ;;
+      esac
     elif command -v node >/dev/null 2>&1; then
       host="$PIPKIN_ROOT/host.mjs"
       if [ ! -f "$host" ] || ! printf '%s' "$@" 2>/dev/null | cmp -s - "$host"; then
