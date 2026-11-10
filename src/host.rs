@@ -325,9 +325,19 @@ async fn handle_rpc_mode(
 ) -> Result<(), BoxError> {
     let cwd = params["cwd"].as_str().map(PathBuf::from);
     if let Some(ref dir) = cwd {
-        if dir.is_dir() {
-            let _ = env::set_current_dir(dir);
+        if !dir.is_dir() {
+            let err = json!({
+                "type": "pipkin_result",
+                "ok": false,
+                "error": "Folder not found",
+                "code": "cwd_missing"
+            });
+            let mut w = writer;
+            writeln!(w, "{}", serde_json::to_string(&err)?)?;
+            w.flush()?;
+            return Ok(());
         }
+        let _ = env::set_current_dir(dir);
     }
 
     let session_path = params["sessionPath"].as_str().map(str::to_string);
