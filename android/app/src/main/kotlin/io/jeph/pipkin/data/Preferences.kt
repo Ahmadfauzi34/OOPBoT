@@ -21,10 +21,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** App settings in the `oopbot` SharedPreferences file (auto-migrated from `pipkin`). */
+/** App settings in the `oopbot` SharedPreferences file. */
 @Suppress("TooManyFunctions") // One setter per setting, beside the readers they share.
 internal class Preferences(context: Context) {
-  private val prefs = getOrCreatePrefs(context)
+  private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
 
   /**
    * Android's build and when Pipkin was last installed or updated, which [localModelFailedBuilds] are kept for. The
@@ -431,29 +432,8 @@ internal class Preferences(context: Context) {
 
   private companion object {
     const val FILE = "oopbot"
-    const val LEGACY_FILE = "pipkin"
-
-    private fun getOrCreatePrefs(context: Context): SharedPreferences {
-      val app = context.applicationContext
-      val currentPrefs = app.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-      val legacyPrefs = app.getSharedPreferences(LEGACY_FILE, Context.MODE_PRIVATE)
-      if (currentPrefs.all.isEmpty() && legacyPrefs.all.isNotEmpty()) {
-        currentPrefs.edit {
-          for ((key, value) in legacyPrefs.all) {
-            when (value) {
-              is Boolean -> putBoolean(key, value)
-              is Float -> putFloat(key, value)
-              is Int -> putInt(key, value)
-              is Long -> putLong(key, value)
-              is String -> putString(key, value)
-              is Set<*> -> @Suppress("UNCHECKED_CAST") putStringSet(key, value as Set<String>)
-            }
-          }
-        }
-      }
-      return currentPrefs
-    }
     const val SETUP_COMPLETE = "setupComplete"
+
     const val SETUP_COMMAND_COPIED_FOR = "setupCommandCopiedFor"
     const val SETUP_PAGES_PASSED = "setupPagesPassed"
     const val THEME = "theme"

@@ -1983,23 +1983,9 @@ fn read_json_file(path: &Path) -> Value {
             return val;
         }
     }
-
-    // Fallback: jika membaca di .oopbot tapi belum ada, cek di path warisan .pipkin/pi
-    let path_str = path.to_string_lossy();
-    if path_str.contains(".oopbot") {
-        let legacy_str = path_str.replace(".oopbot", ".pipkin/pi");
-        let legacy_path = Path::new(&legacy_str);
-        if legacy_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(legacy_path) {
-                if let Ok(val) = serde_json::from_str(&content) {
-                    return val;
-                }
-            }
-        }
-    }
-
     json!({})
 }
+
 
 fn init_or_load_session(
     config_dir: &Path,

@@ -24,11 +24,9 @@ class PlaySetupTest {
   fun installerIsRenderedWithTheFilesHashesPackageAndThisBuildsTermuxNames() {
     val session = open()
     val installer = String(PlaySetup.respond("/oopbot/${session.sid}/setup.sh", NOW).body)
-    val legacyInstaller = String(PlaySetup.respond("/pipkin/${session.sid}/setup.sh", NOW).body)
-    assertEquals(installer, legacyInstaller)
-    // OOPBoT / Pipkin Dev shares Termux with the release, so the two builds' helpers need ports of their own.
+    // OOPBoT Dev shares Termux with the release, so the two builds' helpers need ports of their own.
     val ports = when (TermuxBuild.NAME) {
-      "pipkin-dev", "oopbot-dev" -> "47320,47321,47322,47323,47324"
+      "oopbot-dev", "pipkin-dev" -> "47320,47321,47322,47323,47324"
       else -> "47310,47311,47312,47313,47314"
     }
     assertEquals(
@@ -39,12 +37,11 @@ class PlaySetupTest {
     assertEquals(sha256(installer), session.installerSha256)
   }
 
-
   @Test
   fun servesEachFileOfAnOpenSession() {
     val session = open()
     for ((name, body) in listOf("helper.mjs" to "helper", "run.sh" to "run", "start.sh" to "start")) {
-      val response = PlaySetup.respond("/pipkin/${session.sid}/$name", NOW)
+      val response = PlaySetup.respond("/oopbot/${session.sid}/$name", NOW)
       assertEquals(200, response.status)
       assertEquals(body, String(response.body))
     }
@@ -53,7 +50,7 @@ class PlaySetupTest {
   @Test
   fun keyDecryptsWithTheTokenAndBecomesPending() {
     val session = open()
-    val response = PlaySetup.respond("/pipkin/${session.sid}/key", NOW)
+    val response = PlaySetup.respond("/oopbot/${session.sid}/key", NOW)
 
     assertEquals(200, response.status)
     val sealed = String(response.body, Charsets.US_ASCII).hexToByteArray()
@@ -73,43 +70,43 @@ class PlaySetupTest {
   fun otherPathsAreNotFound() {
     val session = open()
     assertEquals(404, PlaySetup.respond("/", NOW).status)
+    assertEquals(404, PlaySetup.respond("/pipkin/${session.sid}/setup.sh", NOW).status)
     assertEquals(404, PlaySetup.respond("/oopbot/${session.sid}/host.mjs", NOW).status)
-    assertEquals(404, PlaySetup.respond("/pipkin/${session.sid}/host.mjs", NOW).status)
     assertEquals(404, PlaySetup.respond("/oopbot/${session.sid}/key?again", NOW).status)
     assertEquals(404, PlaySetup.respond("/oopbot/${session.sid}/../key", NOW).status)
   }
 
-
   @Test
   fun unknownSessionsAreGone() {
     open()
-    assertEquals(410, PlaySetup.respond("/pipkin/$SID/setup.sh", NOW).status)
+    assertEquals(410, PlaySetup.respond("/oopbot/$SID/setup.sh", NOW).status)
   }
 
   @Test
   fun aNewerCommandSupersedesTheSession() {
     val first = open()
     val second = open()
-    assertEquals(410, PlaySetup.respond("/pipkin/${first.sid}/key", NOW).status)
-    assertEquals(200, PlaySetup.respond("/pipkin/${second.sid}/key", NOW).status)
+    assertEquals(410, PlaySetup.respond("/oopbot/${first.sid}/key", NOW).status)
+    assertEquals(200, PlaySetup.respond("/oopbot/${second.sid}/key", NOW).status)
   }
 
   @Test
   fun sessionsExpire() {
     val session = open()
-    assertEquals(200, PlaySetup.respond("/pipkin/${session.sid}/run.sh", EXPIRES - 1).status)
-    assertEquals(410, PlaySetup.respond("/pipkin/${session.sid}/run.sh", EXPIRES).status)
+    assertEquals(200, PlaySetup.respond("/oopbot/${session.sid}/run.sh", EXPIRES - 1).status)
+    assertEquals(410, PlaySetup.respond("/oopbot/${session.sid}/run.sh", EXPIRES).status)
   }
 
   @Test
   fun aHelperUsingTheKeyEndsOnlyTheKey() {
     val session = open()
     PlaySetup.complete(KEY)
-    assertEquals(200, PlaySetup.respond("/pipkin/${session.sid}/key", NOW).status)
+    assertEquals(200, PlaySetup.respond("/oopbot/${session.sid}/key", NOW).status)
     PlaySetup.complete(session.key)
-    assertEquals(410, PlaySetup.respond("/pipkin/${session.sid}/key", NOW).status)
-    assertEquals(200, PlaySetup.respond("/pipkin/${session.sid}/setup.sh", NOW).status)
+    assertEquals(410, PlaySetup.respond("/oopbot/${session.sid}/key", NOW).status)
+    assertEquals(200, PlaySetup.respond("/oopbot/${session.sid}/setup.sh", NOW).status)
   }
+
 
   @Test
   fun commandRunsTheInstallerOnlyAfterItsHashChecksInAnyShell() {

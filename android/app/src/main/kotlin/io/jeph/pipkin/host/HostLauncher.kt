@@ -195,23 +195,16 @@ internal object HostLauncher {
   private val BOOTSTRAP = $$$"""
     set -eu
     [ -n "${PREFIX:-}" ] && [ -n "${HOME:-}" ] || exit 70
-    IFS= read -r PIPKIN_TOKEN || exit 80
-    [ -n "$PIPKIN_TOKEN" ] || exit 80
-    export PIPKIN_TOKEN
-    export OOPBOT_TOKEN="$PIPKIN_TOKEN"
+    IFS= read -r OOPBOT_TOKEN || exit 80
+    [ -n "$OOPBOT_TOKEN" ] || exit 80
+    export OOPBOT_TOKEN
+    export PIPKIN_TOKEN="$OOPBOT_TOKEN"
     exec </dev/null
-    export PIPKIN_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
     export OOPBOT_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
-    export PI_CODING_AGENT_DIR="$HOME/.$$${TermuxBuild.NAME}/pi"
-    if [ ! -d "$$PIPKIN_ROOT" ] && [ -d "$HOME/.local/share/pipkin" ]; then
-      ln -s "$HOME/.local/share/pipkin" "$$PIPKIN_ROOT" 2>/dev/null || true
-    fi
-    if [ -d "$HOME/.oopbot" ]; then
-      export OOPBOT_CONFIG_DIR="$HOME/.oopbot"
-    else
-      export OOPBOT_CONFIG_DIR="$PI_CODING_AGENT_DIR"
-    fi
-    mkdir -p "$$PIPKIN_ROOT" "$$PI_CODING_AGENT_DIR" "$$OOPBOT_CONFIG_DIR"
+    export OOPBOT_CONFIG_DIR="$HOME/.oopbot"
+    export PIPKIN_ROOT="$$OOPBOT_ROOT"
+    export PI_CODING_AGENT_DIR="$$OOPBOT_CONFIG_DIR"
+    mkdir -p "$$OOPBOT_ROOT" "$$OOPBOT_CONFIG_DIR"
 
     mode=$1
     port=$2
@@ -227,11 +220,12 @@ internal object HostLauncher {
           ;;
       esac
     elif command -v node >/dev/null 2>&1; then
-      host="$PIPKIN_ROOT/host.mjs"
+      host="$$OOPBOT_ROOT/host.mjs"
       if [ ! -f "$host" ] || ! printf '%s' "$@" 2>/dev/null | cmp -s - "$host"; then
         printf '%s' "$@" > "$host.$$.tmp" && mv -f "$host.$$.tmp" "$host"
       fi
       exec node "$host" "$mode" "$port"
+
     else
       exit 72
     fi

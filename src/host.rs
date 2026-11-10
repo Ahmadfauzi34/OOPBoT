@@ -1736,13 +1736,8 @@ fn handle_list_sessions(config_dir: &Path, home: &str) -> Value {
     let mut session_files = Vec::new();
     collect_session_files(&sessions_dir, &mut session_files);
 
-    // Kompatibilitas mundur: jika config_dir adalah ~/.oopbot, tapi ada sessions lama di ~/.pipkin/pi/sessions, ikut kumpulkan
-    let legacy_sessions_dir = Path::new(home).join(".pipkin/pi/sessions");
-    if legacy_sessions_dir.exists() && legacy_sessions_dir != sessions_dir {
-        collect_session_files(&legacy_sessions_dir, &mut session_files);
-    }
-
     let mut seen_ids = std::collections::HashSet::new();
+
 
     for path in session_files {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -2448,23 +2443,9 @@ fn read_json_file(path: &Path) -> Value {
             return val;
         }
     }
-
-    // Fallback: jika membaca di .oopbot tapi belum ada, cek di path warisan .pipkin/pi
-    let path_str = path.to_string_lossy();
-    if path_str.contains(".oopbot") {
-        let legacy_str = path_str.replace(".oopbot", ".pipkin/pi");
-        let legacy_path = Path::new(&legacy_str);
-        if legacy_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(legacy_path) {
-                if let Ok(val) = serde_json::from_str(&content) {
-                    return val;
-                }
-            }
-        }
-    }
-
     json!({})
 }
+
 
 fn write_json_file(path: &Path, val: &Value) -> Result<(), BoxError> {
     if let Some(parent) = path.parent() {
@@ -2905,27 +2886,18 @@ Binary files a/image.png and b/image.png differ
     }
 
     #[test]
-    fn test_read_json_file_legacy_fallback() {
+    fn test_read_json_file_standard() {
         let temp_dir = std::env::temp_dir().join(format!("oopbot_test_{}", epoch_ms()));
         let oopbot_dir = temp_dir.join(".oopbot");
-        let legacy_dir = temp_dir.join(".pipkin/pi");
-        let _ = std::fs::create_dir_all(&legacy_dir);
-
-        let legacy_auth = legacy_dir.join("auth.json");
-        std::fs::write(&legacy_auth, r#"{"test_provider":{"apiKey":"legacy-secret-123"}}"#).unwrap();
+        let _ = std::fs::create_dir_all(&oopbot_dir);
 
         let oopbot_auth = oopbot_dir.join("auth.json");
-        // auth.json di oopbot_dir belum ada, harus fallback ke legacy_auth
+        std::fs::write(&oopbot_auth, r#"{"test_provider":{"apiKey":"my-secret-456"}}"#).unwrap();
         let val = read_json_file(&oopbot_auth);
-        assert_eq!(val["test_provider"]["apiKey"], "legacy-secret-123");
-
-        // Jika oopbot_auth dibuat, maka prioritas harus oopbot_auth
-        let _ = std::fs::create_dir_all(&oopbot_dir);
-        std::fs::write(&oopbot_auth, r#"{"test_provider":{"apiKey":"new-secret-456"}}"#).unwrap();
-        let val_new = read_json_file(&oopbot_auth);
-        assert_eq!(val_new["test_provider"]["apiKey"], "new-secret-456");
+        assert_eq!(val["test_provider"]["apiKey"], "my-secret-456");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
+
 
