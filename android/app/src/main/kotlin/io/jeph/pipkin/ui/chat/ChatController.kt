@@ -213,7 +213,7 @@ internal class ChatController(
   val folderNames: FolderNames get() = graph.folderNames()
 
   fun copy(text: String) {
-    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Pipkin", text))
+    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("OOPBoT", text))
   }
 
   /**

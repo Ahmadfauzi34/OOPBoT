@@ -327,7 +327,7 @@ private fun AboutSection(onOpenLicenses: () -> Unit) {
   }
 }
 
-private const val PRIVACY_POLICY_URL = "https://pipkin.jeph.io/docs/privacy/"
+private const val PRIVACY_POLICY_URL = "https://github.com/Ahmadfauzi34/OOPBoT"
 
 private fun openPrivacyPolicy(context: Context) {
   try {

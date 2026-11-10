@@ -9,25 +9,25 @@
     <string name="host_rejected_without_reason">The Termux helper failed.</string>
 
     <!-- Configuration changes -->
-    <string name="host_config_busy">Pipkin is backing up, restoring or updating the configuration; try again in a moment</string>
+    <string name="host_config_busy">OOPBoT is backing up, restoring or updating the configuration; try again in a moment</string>
     <string name="host_config_lock_busy">Another backup, restore or extension update is running.</string>
     <!-- %1$s: the ids of the running Pi processes, such as "4242, 4343". "pi" is the command the user started in a terminal. -->
-    <string name="host_pi_running">Pi is still running (process <xliff:g id="processes" example="4242">%1$s</xliff:g>). Stop it, for example by quitting <xliff:g id="command">pi</xliff:g> in a terminal, and try again.</string>
+    <string name="host_pi_running">OOPBoT is still running (process <xliff:g id="processes" example="4242">%1$s</xliff:g>). Stop it, for example by quitting <xliff:g id="command">oopbot</xliff:g> in a terminal, and try again.</string>
     <!-- %1$s: the path of the chat's session file in Termux. -->
-    <string name="host_session_not_found">Session not found: <xliff:g id="path" example="/data/data/com.termux/files/home/.pipkin/pi/sessions/a.jsonl">%1$s</xliff:g></string>
+    <string name="host_session_not_found">Session not found: <xliff:g id="path" example="/data/data/com.termux/files/home/.oopbot/sessions/a.jsonl">%1$s</xliff:g></string>
     <string name="host_models_invalid"><xliff:g id="file">models.json</xliff:g> is not valid JSON. Ask the agent to fix it.</string>
     <string name="host_settings_invalid"><xliff:g id="file">settings.json</xliff:g> is not valid. Ask the agent to fix it.</string>
     <!-- %1$s: the folder's path in Termux. -->
     <string name="host_folder_not_found">Folder not found: <xliff:g id="path" example="/sdcard/projects/app">%1$s</xliff:g></string>
 
-    <!-- The agent (Pi) Pipkin installs in Termux -->
+    <!-- The agent (Pi) OOPBoT installs in Termux -->
     <string name="host_agent_not_installed">The agent is not installed</string>
-    <!-- %1$s: the agent version this Pipkin needs, such as 1.3.0. -->
-    <string name="host_agent_not_installed_needs">The agent is not installed; Pipkin needs <xliff:g id="version" example="1.3.0">%1$s</xliff:g></string>
-    <!-- %1$s: the agent version installed in Termux; %2$s: the version this Pipkin needs. -->
-    <string name="host_agent_version_mismatch">Agent <xliff:g id="installed" example="1.2.0">%1$s</xliff:g> is installed; Pipkin needs <xliff:g id="expected" example="1.3.0">%2$s</xliff:g></string>
+    <!-- %1$s: the agent version this OOPBoT needs, such as 1.3.0. -->
+    <string name="host_agent_not_installed_needs">The agent is not installed; OOPBoT needs <xliff:g id="version" example="1.3.0">%1$s</xliff:g></string>
+    <!-- %1$s: the agent version installed in Termux; %2$s: the version this OOPBoT needs. -->
+    <string name="host_agent_version_mismatch">Agent <xliff:g id="installed" example="1.2.0">%1$s</xliff:g> is installed; OOPBoT needs <xliff:g id="expected" example="1.3.0">%2$s</xliff:g></string>
     <string name="host_agent_packages_outdated">The agent\'s packages are out of date</string>
-    <string name="host_agent_install_incomplete">The agent\'s install is incomplete. Reinstall the Pipkin agent in Settings.</string>
+    <string name="host_agent_install_incomplete">The agent\'s install is incomplete. Reinstall the OOPBoT agent in Settings.</string>
     <string name="host_agent_extensions_outdated">The agent\'s bundled extensions are out of date</string>
     <string name="host_agent_download_offline">Couldn\'t download the agent. Check your internet connection, then retry.</string>
     <string name="host_extensions_download_offline">Couldn\'t download the extensions. Check your internet connection, then retry.</string>
@@ -67,8 +67,8 @@
         <item quantity="one">Restored %1$d item</item>
         <item quantity="other">Restored %1$d items</item>
     </plurals>
-    <string name="host_backup_not_pipkin">This file is not a Pipkin configuration backup</string>
-    <string name="host_backup_from_newer_pipkin">This backup is from a newer Pipkin; update Pipkin to restore it</string>
+    <string name="host_backup_not_pipkin">This file is not an OOPBoT configuration backup</string>
+    <string name="host_backup_from_newer_pipkin">This backup is from a newer OOPBoT; update OOPBoT to restore it</string>
     <string name="host_backup_unreadable">This file can\'t be read as a backup</string>
     <string name="host_backup_missing">This backup no longer exists</string>
     <!-- %1$s: a path inside the backup file. -->
@@ -137,7 +137,7 @@
     <string name="host_remote_auth_failed"><xliff:g id="host" example="devbox">%1$s</xliff:g> refused the sign-in.</string>
     <!-- %2$s: what ssh said, in English, such as "Connection timed out". -->
     <string name="host_remote_unreachable">Couldn\'t reach <xliff:g id="host" example="devbox">%1$s</xliff:g>: <xliff:g id="detail" example="Connection timed out">%2$s</xliff:g></string>
-    <string name="host_remote_bash_missing"><xliff:g id="host" example="devbox">%1$s</xliff:g> has no <xliff:g id="command">bash</xliff:g>, which Pipkin needs to work there.</string>
+    <string name="host_remote_bash_missing"><xliff:g id="host" example="devbox">%1$s</xliff:g> has no <xliff:g id="command">bash</xliff:g>, which OOPBoT needs to work there.</string>
     <!-- %1$s: the remote host's name. Its SSH server allows a limited number of sessions at once, and all are in use. -->
     <string name="host_remote_sessions_full"><xliff:g id="host" example="devbox">%1$s</xliff:g> has no free sessions. Close a terminal or stop a background task, then try again.</string>
     <!-- %2$s: what ssh said, in English. -->

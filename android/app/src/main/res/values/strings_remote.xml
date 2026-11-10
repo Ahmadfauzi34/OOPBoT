@@ -37,7 +37,7 @@
     <!-- Connecting: the questions OpenSSH asks, as dialogs -->
     <!-- %1$s: the host's name. -->
     <string name="remote_host_key_title">First connection to <xliff:g id="host" example="devbox">%1$s</xliff:g></string>
-    <string name="remote_host_key_text">Pipkin hasn\'t seen this host before. Check that the fingerprint matches the host\'s key, for example with <xliff:g id="command">ssh-keygen -lf</xliff:g> on it.</string>
+    <string name="remote_host_key_text">OOPBoT hasn\'t seen this host before. Check that the fingerprint matches the host\'s key, for example with <xliff:g id="command">ssh-keygen -lf</xliff:g> on it.</string>
     <string name="remote_host_key_trust">Trust and connect</string>
     <!-- %1$s: the host's name. -->
     <string name="remote_password_title">Password for <xliff:g id="host" example="devbox">%1$s</xliff:g></string>
@@ -45,8 +45,8 @@
     <!-- The checkbox under a password host's password field. -->
     <string name="remote_remember_password">Remember password</string>
     <string name="remote_remember_password_detail">You won\'t have to type it every time you connect.</string>
-    <!-- Shown in the password dialog when Pipkin asks because the server refused the saved password. -->
-    <string name="remote_password_rejected_text">The saved password didn\'t work, so Pipkin stopped trying it. Enter the current one.</string>
+    <!-- Shown in the password dialog when OOPBoT asks because the server refused the saved password. -->
+    <string name="remote_password_rejected_text">The saved password didn\'t work, so OOPBoT stopped trying it. Enter the current one.</string>
     <string name="remote_passphrase_title">Key passphrase</string>
     <string name="remote_passphrase_hint">Passphrase</string>
     <!-- Title over a question OpenSSH asks in its own words, shown under it. %1$s: the host's name. -->
@@ -56,7 +56,7 @@
     <string name="remote_hide_secret">Hide</string>
     <!-- %1$s: the host's name. -->
     <string name="remote_connect_failed_title">Couldn\'t connect to <xliff:g id="host" example="devbox">%1$s</xliff:g></string>
-    <!-- Shown while Pipkin connects. %1$s: the host's name. -->
+    <!-- Shown while OOPBoT connects. %1$s: the host's name. -->
     <string name="remote_connecting">Connecting to <xliff:g id="host" example="devbox">%1$s</xliff:g>…</string>
 
     <!-- The banner over a remote chat whose connection dropped. %1$s: the host's name. -->
@@ -67,8 +67,8 @@
     <string name="remote_banner_password_rejected">The saved password for <xliff:g id="host" example="devbox">%1$s</xliff:g> didn\'t work.</string>
     <!-- The banner's button that asks for the host's password. -->
     <string name="remote_enter_password">Enter password</string>
-    <!-- The banner over a remote chat whose host's key changed, so Pipkin didn't reconnect with the saved password. %1$s: the host's name. -->
-    <string name="remote_banner_key_changed_password"><xliff:g id="host" example="devbox">%1$s</xliff:g>\'s key has changed, so Pipkin didn\'t send the password.</string>
+    <!-- The banner over a remote chat whose host's key changed, so OOPBoT didn't reconnect with the saved password. %1$s: the host's name. -->
+    <string name="remote_banner_key_changed_password"><xliff:g id="host" example="devbox">%1$s</xliff:g>\'s key has changed, so OOPBoT didn\'t send the password.</string>
     <!-- The banner's button that shows what changed about the host's key. -->
     <string name="remote_review">Review</string>
 
@@ -77,14 +77,14 @@
     <string name="remote_settings_section">Other machines</string>
     <string name="remote_hosts_title">Remote hosts</string>
     <string name="remote_hosts_none">None added</string>
-    <!-- Over the reason, when Pipkin couldn't ask Termux for the hosts and whether OpenSSH is installed. -->
+    <!-- Over the reason, when OOPBoT couldn't ask Termux for the hosts and whether OpenSSH is installed. -->
     <string name="remote_hosts_failed">Couldn\'t read the remote hosts</string>
     <!-- %d: how many hosts the user added. -->
     <plurals name="remote_hosts_count">
         <item quantity="one"><xliff:g id="count" example="1">%d</xliff:g> host</item>
         <item quantity="other"><xliff:g id="count" example="3">%d</xliff:g> hosts</item>
     </plurals>
-    <string name="remote_hosts_empty">Add a host to open folders on another machine over SSH. Pi keeps running on this phone; its tools, the files, git and terminals work on the host.</string>
+    <string name="remote_hosts_empty">Add a host to open folders on another machine over SSH. OOPBoT keeps running on this phone; its tools, the files, git and terminals work on the host.</string>
     <!-- A host's line in the list: %1$s its address, such as me@devbox.lan; %2$s whether it is connected. -->
     <string name="remote_host_subtitle"><xliff:g id="address" example="me@devbox.lan">%1$s</xliff:g> · <xliff:g id="status" example="Connected">%2$s</xliff:g></string>
 
@@ -98,7 +98,7 @@
     <string name="remote_alias_hint">devbox</string>
     <string name="remote_port">Port</string>
     <string name="remote_sign_in">Sign in with</string>
-    <string name="remote_auth_key">Pipkin\'s key</string>
+    <string name="remote_auth_key">OOPBoT\'s key</string>
     <string name="remote_auth_key_detail">Add this line to <xliff:g id="file">~/.ssh/authorized_keys</xliff:g> on the host.</string>
     <string name="remote_auth_password">Password</string>
     <string name="remote_auth_password_detail">You type it the first time you connect.</string>
@@ -111,14 +111,14 @@
     <!-- %1$s: the host's name. -->
     <string name="remote_forget_password_title">Forget <xliff:g id="host" example="devbox">%1$s</xliff:g>\'s password?</string>
     <!-- %1$s: the host's name. -->
-    <string name="remote_forget_password_text">Pipkin deletes it from this phone, and the next connect asks for it again. The password on <xliff:g id="host" example="devbox">%1$s</xliff:g> doesn\'t change.</string>
+    <string name="remote_forget_password_text">OOPBoT deletes it from this phone, and the next connect asks for it again. The password on <xliff:g id="host" example="devbox">%1$s</xliff:g> doesn\'t change.</string>
     <!-- Under a host's address when the edit would forget its saved password. %1$s: the address the password was saved for. -->
     <string name="remote_address_forgets_password">Saving forgets the saved password, since it was for <xliff:g id="address" example="me@devbox.lan">%1$s</xliff:g>. The next connect asks for it.</string>
     <string name="remote_auth_config">Use my <xliff:g id="file">~/.ssh/config</xliff:g></string>
     <string name="remote_auth_config_detail">For a host Termux already knows, with your own keys or jump hosts.</string>
     <string name="remote_copy_key">Copy public key</string>
-    <!-- The clipboard label of Pipkin's public key line. -->
-    <string name="remote_key_label">Pipkin public key</string>
+    <!-- The clipboard label of OOPBoT's public key line. -->
+    <string name="remote_key_label">OOPBoT public key</string>
     <string name="remote_save">Save</string>
     <string name="remote_save_failed">Couldn\'t save the host.</string>
     <string name="remote_status">Status</string>
@@ -131,7 +131,7 @@
     <string name="remote_remove">Remove host</string>
     <!-- %1$s: the host's name. -->
     <string name="remote_remove_title">Remove <xliff:g id="host" example="devbox">%1$s</xliff:g>?</string>
-    <string name="remote_remove_text">Pipkin forgets how to reach it. Nothing on the host changes.</string>
+    <string name="remote_remove_text">OOPBoT forgets how to reach it. Nothing on the host changes.</string>
     <!-- Followed by what happens to the chats in those workspaces. %d: how many of the host's workspaces are in the sidebar. -->
     <plurals name="remote_remove_workspaces">
         <item quantity="one">Its workspace leaves the sidebar.</item>
@@ -142,18 +142,18 @@
         <item quantity="one">Its chat is archived, and adding a workspace back won\'t restore it.</item>
         <item quantity="other">Its <xliff:g id="count" example="3">%d</xliff:g> chats are archived, and adding a workspace back won\'t restore them.</item>
     </plurals>
-    <!-- While Pipkin reads the list of chats, to say how many removing the host archives. -->
+    <!-- While OOPBoT reads the list of chats, to say how many removing the host archives. -->
     <string name="remote_remove_counting">Counting the chats in its workspaces…</string>
 
     <!-- Installing OpenSSH, before the first host -->
     <string name="remote_install_title">Install OpenSSH</string>
-    <string name="remote_install_text">Pipkin reaches other machines with OpenSSH from Termux\'s packages. Install it first; nothing is installed on the hosts.</string>
+    <string name="remote_install_text">OOPBoT reaches other machines with OpenSSH from Termux\'s packages. Install it first; nothing is installed on the hosts.</string>
     <string name="remote_install_action">Install OpenSSH</string>
     <string name="remote_installing">Installing OpenSSH…</string>
 
-    <!-- Pipkin's key, at the bottom of Settings › Remote hosts -->
-    <string name="remote_key_section">Pipkin\'s key</string>
-    <!-- %1$d: how many hosts sign in with Pipkin's key; %2$s: their names, as a list such as "devbox, mac and api". -->
+    <!-- OOPBoT's key, at the bottom of Settings › Remote hosts -->
+    <string name="remote_key_section">OOPBoT\'s key</string>
+    <!-- %1$d: how many hosts sign in with OOPBoT's key; %2$s: their names, as a list such as "devbox, mac and api". -->
     <plurals name="remote_key_used_by">
         <item quantity="one">Used by <xliff:g id="names" example="devbox">%2$s</xliff:g></item>
         <item quantity="other">Used by <xliff:g id="count" example="3">%1$d</xliff:g> hosts: <xliff:g id="names" example="devbox, dev-box2 and mac">%2$s</xliff:g></item>
@@ -162,12 +162,12 @@
     <string name="remote_key_new">Make a new key</string>
     <string name="remote_key_new_detail">Replaces the key on this phone. Hosts need the new one in <xliff:g id="file">~/.ssh/authorized_keys</xliff:g>.</string>
     <string name="remote_key_new_title">Make a new key?</string>
-    <string name="remote_key_new_text">Pipkin deletes the key on this phone and makes a new one. Hosts that sign in with the current key refuse Pipkin until you add the new public key to their <xliff:g id="file">~/.ssh/authorized_keys</xliff:g>. Their connections close now, stopping anything running on them.</string>
-    <string name="remote_key_new_text_unused">Pipkin deletes the key on this phone and makes a new one. No host signs in with it yet.</string>
+    <string name="remote_key_new_text">OOPBoT deletes the key on this phone and makes a new one. Hosts that sign in with the current key refuse OOPBoT until you add the new public key to their <xliff:g id="file">~/.ssh/authorized_keys</xliff:g>. Their connections close now, stopping anything running on them.</string>
+    <string name="remote_key_new_text_unused">OOPBoT deletes the key on this phone and makes a new one. No host signs in with it yet.</string>
     <string name="remote_key_new_confirm">Make new key</string>
     <string name="remote_key_made_title">New key made</string>
-    <string name="remote_key_made_text">Hosts that signed in with the old key refuse Pipkin until you add this line to their <xliff:g id="file">~/.ssh/authorized_keys</xliff:g>, in place of the old Pipkin line.</string>
-    <string name="remote_key_made_text_unused">Add this line to <xliff:g id="file">~/.ssh/authorized_keys</xliff:g> on a host to let Pipkin sign in there.</string>
+    <string name="remote_key_made_text">Hosts that signed in with the old key refuse OOPBoT until you add this line to their <xliff:g id="file">~/.ssh/authorized_keys</xliff:g>, in place of the old OOPBoT line.</string>
+    <string name="remote_key_made_text_unused">Add this line to <xliff:g id="file">~/.ssh/authorized_keys</xliff:g> on a host to let OOPBoT sign in there.</string>
     <string name="remote_done">Done</string>
     <string name="remote_key_new_failed">Couldn\'t make a new key.</string>
 </resources>
