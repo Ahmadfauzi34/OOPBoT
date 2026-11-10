@@ -12,9 +12,7 @@ fail() {
 
 # 1. Environment.
 [ -n "${PREFIX:-}" ] && [ -n "${HOME:-}" ] || fail "Run this inside Termux."
-PIPKIN_URL="${OOPBOT_URL:-${PIPKIN_URL:-}}"
-PIPKIN_TOKEN="${OOPBOT_TOKEN:-${PIPKIN_TOKEN:-}}"
-[ -n "$PIPKIN_URL" ] && [ -n "$PIPKIN_TOKEN" ] || fail "Copy the setup command in OOPBoT and paste it here."
+[ -n "${OOPBOT_URL:-}" ] && [ -n "${OOPBOT_TOKEN:-}" ] || fail "Copy the setup command in OOPBoT and paste it here."
 # oopbot for the release, oopbot-dev for the debug build, which keeps its own helper beside the release's.
 name='@PIPKIN_NAME@'
 dir="$HOME/.$name/helper"
@@ -71,7 +69,7 @@ fi
 fetch() { # $1 = name, $2 = sha256, $3 = mode
   local tmp="$dir/$1.$$.tmp"
   [ "$(sha256sum "$dir/$1" 2>/dev/null | cut -d' ' -f1)" = "$2" ] && chmod "$3" "$dir/$1" && return 0
-  curl -fsS -m 60 "$PIPKIN_URL/$1" -o "$tmp" || {
+  curl -fsS -m 60 "$OOPBOT_URL/$1" -o "$tmp" || {
     rm -f "$tmp"
     fail "Couldn't download $1 from OOPBoT. Keep OOPBoT open and paste the command again."
   }
@@ -81,6 +79,7 @@ fetch() { # $1 = name, $2 = sha256, $3 = mode
   fi
   { chmod "$3" "$tmp" && mv -f "$tmp" "$dir/$1"; } || fail "Couldn't install $1."
 }
+
 fetch helper.mjs '@HELPER_SHA256@' 600
 fetch run.sh '@RUN_SHA256@' 700
 fetch start.sh '@START_SHA256@' 700
@@ -114,7 +113,7 @@ put_block() {
 # shellcheck disable=SC2016 # $HOME expands when the shell runs the hook.
 sh_hook='# >>> oopbot >>>
 oopbot_close=
-for oopbot_start in "$HOME/.oopbot/helper/start.sh" "$HOME/.oopbot-dev/helper/start.sh" "$HOME/.pipkin/helper/start.sh" "$HOME/.pipkin-dev/helper/start.sh"; do
+for oopbot_start in "$HOME/.oopbot/helper/start.sh" "$HOME/.oopbot-dev/helper/start.sh"; do
   if [ -x "$oopbot_start" ]; then
     "$oopbot_start" --shell
     # 3: this session started the helper.
@@ -139,7 +138,7 @@ if [ -x "$PREFIX/bin/fish" ] || [ "$login_shell" = fish ]; then
 # Written by OOPBoT's Termux setup, which replaces this file each time it runs.
 if status is-interactive
     set -l oopbot_close false
-    for oopbot_start in "$HOME/.oopbot/helper/start.sh" "$HOME/.oopbot-dev/helper/start.sh" "$HOME/.pipkin/helper/start.sh" "$HOME/.pipkin-dev/helper/start.sh"
+    for oopbot_start in "$HOME/.oopbot/helper/start.sh" "$HOME/.oopbot-dev/helper/start.sh"
         if test -x $oopbot_start
             $oopbot_start --shell
             # 3: this session started the helper.
@@ -159,18 +158,7 @@ fi
 if [ "$(readlink "$PREFIX/bin/$name-start" 2>/dev/null)" != "$dir/start.sh" ]; then
   ln -sfn "$dir/start.sh" "$PREFIX/bin/$name-start" || fail "Couldn't create $name-start."
 fi
-# Dual-symlink: dukungan interoperabilitas pipkin-start <-> oopbot-start
-case $name in
-  oopbot)
-    [ "$(readlink "$PREFIX/bin/pipkin-start" 2>/dev/null)" = "$dir/start.sh" ] || ln -sfn "$dir/start.sh" "$PREFIX/bin/pipkin-start" 2>/dev/null || true
-    ;;
-  oopbot-dev)
-    [ "$(readlink "$PREFIX/bin/pipkin-dev-start" 2>/dev/null)" = "$dir/start.sh" ] || ln -sfn "$dir/start.sh" "$PREFIX/bin/pipkin-dev-start" 2>/dev/null || true
-    ;;
-  pipkin)
-    [ "$(readlink "$PREFIX/bin/oopbot-start" 2>/dev/null)" = "$dir/start.sh" ] || ln -sfn "$dir/start.sh" "$PREFIX/bin/oopbot-start" 2>/dev/null || true
-    ;;
-esac
+
 
 
 # 4. Pairing.

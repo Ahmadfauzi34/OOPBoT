@@ -198,10 +198,10 @@ internal object LocalModelCatalog {
 
   /** The provider OOPBoT lists the catalog's models under, whose model ids are [CatalogModel.id]. */
   const val PROVIDER_ID = "oopbot-local"
-  const val LEGACY_PROVIDER_ID = "pipkin-local"
 
-  fun isLocalProvider(id: String?): Boolean = id == PROVIDER_ID || id == LEGACY_PROVIDER_ID
+  fun isLocalProvider(id: String?): Boolean = id == PROVIDER_ID
 }
+
 
 /**
  * What a model's attention cache takes per token of context at 16 bits: a key and a value for each of its [layers] that

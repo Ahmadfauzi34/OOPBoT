@@ -1,20 +1,19 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Starts Pipkin's helper (run.sh) as a Termux background task unless it is already running.
-# --shell: called by the login shell's hook that pipkin-setup.sh writes (~/.bashrc, ~/.zshrc, fish's conf.d); warns
+# Starts OOPBoT's helper (run.sh) as a Termux background task unless it is already running.
+# --shell: called by the login shell's hook that setup writes (~/.bashrc, ~/.zshrc, fish's conf.d); warns
 # when the helper has a problem, and exits 3 when the calling terminal session should close (see below).
 set -u
-# The folder this script is in, through the pipkin-start or pipkin-dev-start link: ~/.pipkin/helper for the release,
-# ~/.pipkin-dev/helper for the debug build.
+# The folder this script is in, through the oopbot-start or oopbot-dev-start link: ~/.oopbot/helper for the release,
+# ~/.oopbot-dev/helper for the debug build.
 dir=$(dirname "$(readlink -f "$0")")
 # Which app set this helper up, for messages: both builds' hooks may print in the same terminal session.
 case $dir in
-  */.oopbot-dev/helper) pipkin="OOPBoT Dev" ;;
-  */.oopbot/helper) pipkin="OOPBoT" ;;
-  */.pipkin-dev/helper) pipkin="OOPBoT Dev" ;;
-  *) pipkin="OOPBoT" ;;
+  */.oopbot-dev/helper) app_name="OOPBoT Dev" ;;
+  *) app_name="OOPBoT" ;;
 esac
 shell=false
 [ "${1:-}" = --shell ] && shell=true
+
 
 
 alive() { # $1 = pid file, $2 = text the process's command line must contain
@@ -45,10 +44,10 @@ alive "$dir/helper.pid" helper.mjs && alive "$dir/run.pid" run.sh && exit 0
 # Says what the helper's last run reported going wrong, if anything.
 problem() {
   case $(cat "$dir/status" 2>/dev/null) in
-    node-missing) echo "$pipkin: Node.js is missing. Paste $pipkin's setup command again." ;;
-    node-crashed*) echo "$pipkin: The helper keeps stopping. Paste $pipkin's setup command again." ;;
-    no-key) echo "$pipkin: The helper isn't paired. Paste $pipkin's setup command again." ;;
-    ports-taken) echo "$pipkin: Another app is using the helper's ports. Restart your phone." ;;
+    node-missing) echo "$app_name: Node.js is missing. Paste $app_name's setup command again." ;;
+    node-crashed*) echo "$app_name: The helper keeps stopping. Paste $app_name's setup command again." ;;
+    no-key) echo "$app_name: The helper isn't paired. Paste $app_name's setup command again." ;;
+    ports-taken) echo "$app_name: Another app is using the helper's ports. Restart your phone." ;;
   esac
 }
 
@@ -65,7 +64,7 @@ start() {
 }
 
 if $shell; then
-  # Pipkin opens a new Termux session each time it starts the helper, and Termux refuses to open a ninth. A session
+  # OOPBoT opens a new Termux session each time it starts the helper, and Termux refuses to open a ninth. A session
   # that started the helper has done its job once the helper runs, so it closes then, unless it's Termux's only one.
   # Should the helper not come up within 15 s, the session stays open with whatever went wrong, as this start
   # reported it.
@@ -83,8 +82,9 @@ if $shell; then
   disown
   exit 0
 fi
-echo "Starting $pipkin's helper…"
+echo "Starting $app_name's helper…"
 start || {
-  echo "$pipkin: Couldn't start the helper." >&2
+  echo "$app_name: Couldn't start the helper." >&2
   exit 1
 }
+
