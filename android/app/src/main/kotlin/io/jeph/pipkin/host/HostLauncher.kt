@@ -122,7 +122,7 @@ internal object HostLauncher {
   private fun resultIntent(context: Context, id: String): PendingIntent = PendingIntent.getBroadcast(
     context,
     0,
-    Intent(context, HostResultReceiver::class.java).setData("pipkin://termux-result/$id".toUri()),
+    Intent(context, HostResultReceiver::class.java).setData("oopbot://termux-result/$id".toUri()),
     PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_MUTABLE,
   )
 

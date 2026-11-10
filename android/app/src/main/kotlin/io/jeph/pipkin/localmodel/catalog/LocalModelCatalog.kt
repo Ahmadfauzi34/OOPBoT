@@ -196,8 +196,11 @@ internal object LocalModelCatalog {
   /** The name of the model [id], or the id itself for a model the catalog no longer has. */
   fun name(id: String): String = model(id)?.name ?: id
 
-  /** The provider Pi lists the catalog's models under, whose model ids are [CatalogModel.id]. */
-  const val PROVIDER_ID = "pipkin-local"
+  /** The provider OOPBoT lists the catalog's models under, whose model ids are [CatalogModel.id]. */
+  const val PROVIDER_ID = "oopbot-local"
+  const val LEGACY_PROVIDER_ID = "pipkin-local"
+
+  fun isLocalProvider(id: String?): Boolean = id == PROVIDER_ID || id == LEGACY_PROVIDER_ID
 }
 
 /**

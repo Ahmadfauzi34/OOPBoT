@@ -22,7 +22,7 @@ import org.json.JSONObject
  */
 @Composable
 internal fun localModelActivity(process: AgentProcess, model: JSONObject?): String? {
-  if (model?.optString("provider") != LocalModelCatalog.PROVIDER_ID) return null
+  if (!LocalModelCatalog.isLocalProvider(model?.optString("provider"))) return null
   val runtime = LocalContext.current.appGraph.localModels.runtime
   val sessionId by process.sessionId.collectAsStateWithLifecycle()
   val sessions by runtime.sessions.collectAsStateWithLifecycle()
