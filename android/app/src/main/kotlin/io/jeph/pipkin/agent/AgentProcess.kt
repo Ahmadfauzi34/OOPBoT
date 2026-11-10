@@ -657,15 +657,16 @@ internal class AgentProcess(
   }
 
   private fun dispatch(current: Connection, line: JSONObject) {
-    when (line.optString("type")) {
-      "response" -> current.rpc.onResponse(line)
+    val type = line.optString("type")
+    when {
+      type == "response" -> current.rpc.onResponse(line)
 
-      HostProtocol.EXIT -> current.exit = line
+      HostProtocol.isExit(type) -> current.exit = line
 
       // A line from a connection already replaced can't tell what the current Pi runs.
-      HostProtocol.CHANNEL -> if (connection === current) onChannel(line)
+      HostProtocol.isChannel(type) -> if (connection === current) onChannel(line)
 
-      HostProtocol.RESULT -> HostRejected.from(line)?.let { rejection ->
+      HostProtocol.isResult(type) -> HostRejected.from(line)?.let { rejection ->
         current.rejection = rejection
         current.rpc.close(rejection)
       }

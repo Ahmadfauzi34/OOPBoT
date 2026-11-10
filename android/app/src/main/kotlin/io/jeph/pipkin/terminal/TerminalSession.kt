@@ -158,17 +158,18 @@ internal class TerminalSession(
       }
       withContext(Dispatchers.Default) {
         channel.lines.collect { line ->
-          when (line.optString("type")) {
-            "output" -> {
+          val type = line.optString("type")
+          when {
+            type == "output" -> {
               val bytes = Base64.getDecoder().decode(line.getString("data"))
               terminal.feedOutput(bytes)
             }
 
-            HostProtocol.EXIT -> exit = line
+            HostProtocol.isExit(type) -> exit = line
 
-            "busy" -> busyFlow.value = line.optBoolean("busy")
+            type == "busy" -> busyFlow.value = line.optBoolean("busy")
 
-            HostProtocol.RESULT -> HostRejected.from(line)?.let { stateFlow.value = TerminalState.Failed(it.error) }
+            HostProtocol.isResult(type) -> HostRejected.from(line)?.let { stateFlow.value = TerminalState.Failed(it.error) }
           }
         }
       }

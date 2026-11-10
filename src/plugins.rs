@@ -117,9 +117,24 @@ impl PluginRegistry {
         false
     }
 
-    /// Periksa apakah plugin sedang aktif.
+    /// Periksa apakah plugin sedang aktif (cocokkan via ID maupun alias).
     pub fn is_active(&self, id: &str) -> bool {
-        self.active_ids.contains(id)
+        if self.active_ids.contains(id) {
+            return true;
+        }
+        for active_id in &self.active_ids {
+            if let Some(plugin) = self.plugins.get(active_id) {
+                if plugin.id().eq_ignore_ascii_case(id) {
+                    return true;
+                }
+                for alias in plugin.aliases() {
+                    if alias.eq_ignore_ascii_case(id) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Ambil daftar semua plugin yang sedang aktif.
@@ -312,11 +327,11 @@ impl Plugin for TodoPlugin {
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["todo", "rpiv-todo"]
+        vec!["oopbot-todo", "todo", "rpiv-todo"]
     }
 
     fn name(&self) -> &str {
-        "Pipkin Todo Manager"
+        "OOPBoT Todo Manager"
     }
 
     fn description(&self) -> &str {
@@ -609,7 +624,7 @@ impl Plugin for WebAccessPlugin {
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["web-access", "web_access", "web_search", "browser"]
+        vec!["oopbot-web-access", "web-access", "web_access", "web_search", "browser"]
     }
 
     fn name(&self) -> &str {
@@ -818,7 +833,7 @@ impl Plugin for BackgroundPlugin {
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["background", "pipkin_background", "tasks"]
+        vec!["oopbot-background", "oopbot_background", "background", "pipkin_background", "tasks"]
     }
 
     fn name(&self) -> &str {
@@ -1025,7 +1040,7 @@ impl Plugin for SubagentsPlugin {
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["subagents", "subagent", "multi-agent"]
+        vec!["oopbot-subagents", "oopbot_subagents", "subagents", "subagent", "multi-agent"]
     }
 
     fn name(&self) -> &str {
@@ -1186,10 +1201,18 @@ mod tests {
         // Aktivasi via path ekstensi Android
         assert!(registry.activate("/home/user/.pipkin/extensions/pipkin-todo/index.js"));
         assert!(registry.is_active("pipkin-todo"));
+        assert!(registry.is_active("oopbot-todo"));
 
-        // Aktivasi via alias
+        // Aktivasi via alias oopbot
+        assert!(!registry.is_active("oopbot-subagents"));
+        assert!(registry.activate("oopbot-subagents"));
+        assert!(registry.is_active("oopbot-subagents"));
+        assert!(registry.is_active("pipkin-subagents"));
+
+        // Aktivasi via alias legacy
         assert!(registry.activate("web-access"));
         assert!(registry.is_active("pipkin-web-access"));
+        assert!(registry.is_active("oopbot-web-access"));
 
         let mut tools = ToolRegistry::new();
         registry.register_active_tools(&mut tools);

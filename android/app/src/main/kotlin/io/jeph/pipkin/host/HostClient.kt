@@ -144,15 +144,16 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   /** Sign-in to a provider Pi ships: OAuth, or Pi prompting for an API key. Cancelling the caller aborts the login. */
   suspend fun login(providerId: String, ui: LoginUi) {
     call("login", JSONObject().put("providerId", providerId), LOGIN_TIMEOUT_MILLIS) { channel, line ->
-      when (line.optString("type")) {
-        HostProtocol.AUTH_EVENT -> line.optJSONObject("event")?.let(ui::onEvent)
+      val type = line.optString("type")
+      when {
+        HostProtocol.isAuthEvent(type) -> line.optJSONObject("event")?.let(ui::onEvent)
 
-        HostProtocol.AUTH_PROMPT -> ui.onPrompt(
+        HostProtocol.isAuthPrompt(type) -> ui.onPrompt(
           line.optJSONObject("prompt") ?: JSONObject(),
           AuthReply(channel, line.optLong("id")),
         )
 
-        HostProtocol.AUTH_PROMPT_DISMISS -> ui.onPromptDismiss(line.optLong("id"))
+        HostProtocol.isAuthDismiss(type) -> ui.onPromptDismiss(line.optLong("id"))
       }
     }
   }
@@ -420,13 +421,16 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   private suspend fun openRequestHost(mode: String, readyType: String): HostChannel {
     val channel = connect(mode)
     var started = false
+    val altReadyType = "oopbot_" + readyType.removePrefix("pipkin_")
     try {
       sendRequest(channel, JSONObject())
       val line = withTimeoutOrNull(REQUEST_HOST_START_TIMEOUT_MILLIS) {
-        channel.lines.firstOrNull { it.optString("type") == readyType || it.optString("type") == HostProtocol.RESULT }
-          ?: throw HostFailure.Disconnected()
+        channel.lines.firstOrNull {
+          val type = it.optString("type")
+          type == readyType || type == altReadyType || HostProtocol.isResult(type)
+        } ?: throw HostFailure.Disconnected()
       } ?: throw HostFailure.Timeout()
-      if (line.optString("type") == HostProtocol.RESULT) throw HostRejected.from(line) ?: HostFailure.Disconnected()
+      if (HostProtocol.isResult(line.optString("type"))) throw HostRejected.from(line) ?: HostFailure.Disconnected()
       started = true
       return channel
     } finally {
@@ -477,7 +481,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
       val result = withTimeoutOrNull(timeoutMillis) {
         sendRequest(channel, params)
         channel.lines.firstOrNull { line ->
-          val isResult = line.optString("type") == HostProtocol.RESULT
+          val isResult = HostProtocol.isResult(line.optString("type"))
           if (!isResult) onLine(channel, line)
           isResult
         } ?: throw HostFailure.Disconnected()

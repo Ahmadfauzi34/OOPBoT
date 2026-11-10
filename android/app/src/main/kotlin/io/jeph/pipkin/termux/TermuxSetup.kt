@@ -22,7 +22,7 @@ internal object TermuxSetup {
    * `yes` answers dpkg's conffile prompts. Storage access is its own setup step.
    */
   fun fdroidCommand(packageName: String): String = inBash(
-    "{ { command -v oopbot >/dev/null 2>&1 && [ \"${'$'}(oopbot --version 2>/dev/null)\" = \"oopbot 0.5.3\" ]; } || { dpkg --configure -a; yes | pkg upgrade -y && pkg install -y curl && " +
+    "{ { command -v oopbot >/dev/null 2>&1 && case \"${'$'}(oopbot --version 2>/dev/null)\" in \"oopbot 0.5.\"*|\"oopbot \"[1-9]*) true;; *) false;; esac; } || { dpkg --configure -a; yes | pkg upgrade -y && pkg install -y curl && " +
       "curl -fsSL -m 60 \"https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android\" " +
       "-o \"${'$'}PREFIX/bin/oopbot\" && chmod 755 \"${'$'}PREFIX/bin/oopbot\"; }; } && " +
       "mkdir -p ~/.termux && { grep -qx allow-external-apps=true ~/.termux/termux.properties 2>/dev/null " +
