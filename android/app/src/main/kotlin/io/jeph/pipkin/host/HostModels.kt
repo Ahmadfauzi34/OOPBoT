@@ -16,7 +16,7 @@ internal data class HostHello(
 ) {
   companion object {
     fun from(hello: JSONObject) = HostHello(
-      piVersion = hello.opt("piVersion") as? String,
+      piVersion = (hello.opt("oopbotVersion") ?: hello.opt("piVersion")) as? String,
       nodeVersion = hello.optString("nodeVersion"),
       configDir = hello.optString("configDir"),
       home = hello.optString("home"),
