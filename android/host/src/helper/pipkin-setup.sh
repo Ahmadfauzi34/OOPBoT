@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Pipkin's Termux setup for the Google Play build of Termux. Pipkin fills in the @…@ values and serves this
-# from its setup command, with PIPKIN_URL and PIPKIN_TOKEN in the environment. Every step checks before it
+# OOPBoT's Termux setup for the Google Play build of Termux. OOPBoT fills in the @…@ values and serves this
+# from its setup command, with OOPBOT_URL/PIPKIN_URL and OOPBOT_TOKEN/PIPKIN_TOKEN in the environment. Every step checks before it
 # acts, so running the command again after a failure finishes the setup.
 set -u
 
-say() { printf 'Pipkin: %s\n' "$*"; }
+say() { printf 'OOPBoT: %s\n' "$*"; }
 fail() {
   say "$*" >&2
   exit 1
@@ -12,14 +12,16 @@ fail() {
 
 # 1. Environment.
 [ -n "${PREFIX:-}" ] && [ -n "${HOME:-}" ] || fail "Run this inside Termux."
-[ -n "${PIPKIN_URL:-}" ] && [ -n "${PIPKIN_TOKEN:-}" ] || fail "Copy the setup command in Pipkin and paste it here."
-# pipkin for the release, pipkin-dev for the debug build, which keeps its own helper beside the release's.
+PIPKIN_URL="${OOPBOT_URL:-${PIPKIN_URL:-}}"
+PIPKIN_TOKEN="${OOPBOT_TOKEN:-${PIPKIN_TOKEN:-}}"
+[ -n "$PIPKIN_URL" ] && [ -n "$PIPKIN_TOKEN" ] || fail "Copy the setup command in OOPBoT and paste it here."
+# oopbot for the release, oopbot-dev for the debug build, which keeps its own helper beside the release's.
 name='@PIPKIN_NAME@'
 dir="$HOME/.$name/helper"
 package='@PIPKIN_PACKAGE@'
 
 # Termux sessions run the shell that ~/.termux/shell links to (chsh sets it), or bash without a usable one; this picks
-# it the way $PREFIX/bin/login does. Pipkin starts its helper by opening a session, so that shell must run one of the
+# it the way $PREFIX/bin/login does. OOPBoT starts its helper by opening a session, so that shell must run one of the
 # hooks written in step 3.
 login_shell=bash
 if [ -L "$HOME/.termux/shell" ]; then
@@ -30,8 +32,9 @@ if [ -L "$HOME/.termux/shell" ]; then
 fi
 case $login_shell in
   bash | zsh | fish) ;;
-  *) fail "Pipkin needs bash, zsh or fish as Termux's shell. Run chsh -s bash, then paste the command again." ;;
+  *) fail "OOPBoT needs bash, zsh or fish as Termux's shell. Run chsh -s bash, then paste the command again." ;;
 esac
+
 
 alive() { # $1 = pid file, $2 = text the process's command line must contain
   local pid
@@ -70,11 +73,11 @@ fetch() { # $1 = name, $2 = sha256, $3 = mode
   [ "$(sha256sum "$dir/$1" 2>/dev/null | cut -d' ' -f1)" = "$2" ] && chmod "$3" "$dir/$1" && return 0
   curl -fsS -m 60 "$PIPKIN_URL/$1" -o "$tmp" || {
     rm -f "$tmp"
-    fail "Couldn't download $1 from Pipkin. Keep Pipkin open and paste the command again."
+    fail "Couldn't download $1 from OOPBoT. Keep OOPBoT open and paste the command again."
   }
   if [ "$(sha256sum "$tmp" | cut -d' ' -f1)" != "$2" ]; then
     rm -f "$tmp"
-    fail "$1 from Pipkin was damaged. Paste the command again."
+    fail "$1 from OOPBoT was damaged. Paste the command again."
   fi
   { chmod "$3" "$tmp" && mv -f "$tmp" "$dir/$1"; } || fail "Couldn't install $1."
 }
@@ -91,42 +94,38 @@ printf '#!%s/bin/sh\nexec "$HOME/.%s/helper/run.sh"\n' "$PREFIX" "$name" | write
   fail "Couldn't write the boot script."
 chmod 700 "$boot" || fail "Couldn't write the boot script."
 
-# Puts $2 in the file $1 between Pipkin's markers: in place of the first complete marked block, dropping any later
+# Puts $2 in the file $1 between OOPBoT's markers: in place of the first complete marked block, dropping any later
 # ones, or at the end when there is none. A start marker without an end marker is left alone.
 put_block() {
   local rc=$1
   [ -L "$rc" ] && rc=$(readlink -f "$rc")
   [ -e "$rc" ] || : >"$rc" || return 1
-  PIPKIN_BLOCK=$2 awk '
+  OOPBOT_BLOCK=$2 awk '
     function flush() { for (i = 0; i < n; i++) print held[i]; n = 0 }
-    $0 == "# >>> pipkin >>>" { flush(); inside = 1; held[n++] = $0; next }
-    inside && $0 == "# <<< pipkin <<<" { n = 0; inside = 0; if (!done) print ENVIRON["PIPKIN_BLOCK"]; done = 1; next }
+    $0 == "# >>> oopbot >>>" || $0 == "# >>> pipkin >>>" { flush(); inside = 1; held[n++] = $0; next }
+    inside && ($0 == "# <<< oopbot <<<" || $0 == "# <<< pipkin <<<") { n = 0; inside = 0; if (!done) print ENVIRON["OOPBOT_BLOCK"]; done = 1; next }
     inside { held[n++] = $0; next }
     { print }
-    END { flush(); if (!done) print ENVIRON["PIPKIN_BLOCK"] }
+    END { flush(); if (!done) print ENVIRON["OOPBOT_BLOCK"] }
   ' "$rc" | write_file "$rc"
 }
 
-# The session Pipkin opens to start the helper runs these hooks; start.sh does the rest. A shell gets its hook when
-# it's installed, so switching to it later with chsh keeps working; bash is always installed. A session that stays
-# open starts with status 0, so prompts that show a failed status don't flag it. Both builds write the same hook,
-# which starts the release's helper and Pipkin Dev's, whichever are set up: a session either build opens runs all of
-# them, so the hook must not close it before the helper that build waits for has started.
+# The session OOPBoT opens to start the helper runs these hooks; start.sh does the rest.
 # shellcheck disable=SC2016 # $HOME expands when the shell runs the hook.
-sh_hook='# >>> pipkin >>>
-pipkin_close=
-for pipkin_start in "$HOME/.pipkin/helper/start.sh" "$HOME/.pipkin-dev/helper/start.sh"; do
-  if [ -x "$pipkin_start" ]; then
-    "$pipkin_start" --shell
+sh_hook='# >>> oopbot >>>
+oopbot_close=
+for oopbot_start in "$HOME/.oopbot/helper/start.sh" "$HOME/.oopbot-dev/helper/start.sh" "$HOME/.pipkin/helper/start.sh" "$HOME/.pipkin-dev/helper/start.sh"; do
+  if [ -x "$oopbot_start" ]; then
+    "$oopbot_start" --shell
     # 3: this session started the helper.
-    if [ $? = 3 ]; then pipkin_close=1; fi
+    if [ $? = 3 ]; then oopbot_close=1; fi
   fi
 done
-unset pipkin_start
+unset oopbot_start
 # A session that only started helpers closes, which keeps Termux under its limit of 8 sessions.
-if [ -n "$pipkin_close" ]; then exit 0; fi
-unset pipkin_close
-# <<< pipkin <<<'
+if [ -n "$oopbot_close" ]; then exit 0; fi
+unset oopbot_close
+# <<< oopbot <<<'
 put_block "$HOME/.bashrc" "$sh_hook" || fail "Couldn't update ~/.bashrc."
 if [ -x "$PREFIX/bin/zsh" ] || [ "$login_shell" = zsh ]; then
   put_block "${ZDOTDIR:-$HOME}/.zshrc" "$sh_hook" || fail "Couldn't update ~/.zshrc."
@@ -134,23 +133,23 @@ fi
 if [ -x "$PREFIX/bin/fish" ] || [ "$login_shell" = fish ]; then
   # A file of its own, since fish sources conf.d in every fish process, scripts and fish -c included. exit there would
   # only end the file, so the shell gives way to a command that exits 0 instead.
-  fish_hook="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/pipkin.fish"
+  fish_hook="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/oopbot.fish"
   mkdir -p "${fish_hook%/*}" || fail "Couldn't create ${fish_hook%/*}."
   write_file "$fish_hook" <<'EOF' || fail "Couldn't write $fish_hook."
-# Written by Pipkin's Termux setup, which replaces this file each time it runs.
+# Written by OOPBoT's Termux setup, which replaces this file each time it runs.
 if status is-interactive
-    set -l pipkin_close false
-    for pipkin_start in "$HOME/.pipkin/helper/start.sh" "$HOME/.pipkin-dev/helper/start.sh"
-        if test -x $pipkin_start
-            $pipkin_start --shell
+    set -l oopbot_close false
+    for oopbot_start in "$HOME/.oopbot/helper/start.sh" "$HOME/.oopbot-dev/helper/start.sh" "$HOME/.pipkin/helper/start.sh" "$HOME/.pipkin-dev/helper/start.sh"
+        if test -x $oopbot_start
+            $oopbot_start --shell
             # 3: this session started the helper.
             if test $status = 3
-                set pipkin_close true
+                set oopbot_close true
             end
         end
     end
     # A session that only started helpers closes, which keeps Termux under its limit of 8 sessions.
-    if test $pipkin_close = true
+    if test $oopbot_close = true
         exec true
     end
 end
@@ -160,6 +159,19 @@ fi
 if [ "$(readlink "$PREFIX/bin/$name-start" 2>/dev/null)" != "$dir/start.sh" ]; then
   ln -sfn "$dir/start.sh" "$PREFIX/bin/$name-start" || fail "Couldn't create $name-start."
 fi
+# Dual-symlink: dukungan interoperabilitas pipkin-start <-> oopbot-start
+case $name in
+  oopbot)
+    [ "$(readlink "$PREFIX/bin/pipkin-start" 2>/dev/null)" = "$dir/start.sh" ] || ln -sfn "$dir/start.sh" "$PREFIX/bin/pipkin-start" 2>/dev/null || true
+    ;;
+  oopbot-dev)
+    [ "$(readlink "$PREFIX/bin/pipkin-dev-start" 2>/dev/null)" = "$dir/start.sh" ] || ln -sfn "$dir/start.sh" "$PREFIX/bin/pipkin-dev-start" 2>/dev/null || true
+    ;;
+  pipkin)
+    [ "$(readlink "$PREFIX/bin/oopbot-start" 2>/dev/null)" = "$dir/start.sh" ] || ln -sfn "$dir/start.sh" "$PREFIX/bin/oopbot-start" 2>/dev/null || true
+    ;;
+esac
+
 
 # 4. Pairing.
 node "$dir/helper.mjs" pair
@@ -167,7 +179,7 @@ case $? in
   0) ;;
   10)
     grep -qxE '[0-9a-f]{64}' "$dir/key" 2>/dev/null ||
-      fail "This setup command has expired. In Pipkin, tap Copy setup command again."
+      fail "This setup command has expired. In OOPBoT, tap Copy setup command again."
     ;;
   *) exit 1 ;;
 esac
@@ -195,7 +207,8 @@ for ((i = 1; i <= 40; i++)); do
 done
 $ready || fail "The helper didn't start. Paste the command again."
 
-# 6. Done; back to Pipkin. Android blocks the switch when Termux isn't on screen, so say how to get there too.
-echo "Pipkin setup done. Switch back to Pipkin if it doesn't open on its own."
+# 6. Done; back to OOPBoT. Android blocks the switch when Termux isn't on screen, so say how to get there too.
+echo "OOPBoT setup done. Switch back to OOPBoT if it doesn't open on its own."
 am start --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
   -n "$package/io.jeph.pipkin.MainActivity" >/dev/null 2>&1 || true
+

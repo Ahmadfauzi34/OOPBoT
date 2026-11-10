@@ -23,10 +23,12 @@ class PlaySetupTest {
   @Test
   fun installerIsRenderedWithTheFilesHashesPackageAndThisBuildsTermuxNames() {
     val session = open()
-    val installer = String(PlaySetup.respond("/pipkin/${session.sid}/setup.sh", NOW).body)
-    // Pipkin Dev shares Termux with the release, so the two builds' helpers need ports of their own.
+    val installer = String(PlaySetup.respond("/oopbot/${session.sid}/setup.sh", NOW).body)
+    val legacyInstaller = String(PlaySetup.respond("/pipkin/${session.sid}/setup.sh", NOW).body)
+    assertEquals(installer, legacyInstaller)
+    // OOPBoT / Pipkin Dev shares Termux with the release, so the two builds' helpers need ports of their own.
     val ports = when (TermuxBuild.NAME) {
-      "pipkin-dev" -> "47320,47321,47322,47323,47324"
+      "pipkin-dev", "oopbot-dev" -> "47320,47321,47322,47323,47324"
       else -> "47310,47311,47312,47313,47314"
     }
     assertEquals(
@@ -36,6 +38,7 @@ class PlaySetupTest {
     )
     assertEquals(sha256(installer), session.installerSha256)
   }
+
 
   @Test
   fun servesEachFileOfAnOpenSession() {
@@ -70,10 +73,12 @@ class PlaySetupTest {
   fun otherPathsAreNotFound() {
     val session = open()
     assertEquals(404, PlaySetup.respond("/", NOW).status)
+    assertEquals(404, PlaySetup.respond("/oopbot/${session.sid}/host.mjs", NOW).status)
     assertEquals(404, PlaySetup.respond("/pipkin/${session.sid}/host.mjs", NOW).status)
-    assertEquals(404, PlaySetup.respond("/pipkin/${session.sid}/key?again", NOW).status)
-    assertEquals(404, PlaySetup.respond("/pipkin/${session.sid}/../key", NOW).status)
+    assertEquals(404, PlaySetup.respond("/oopbot/${session.sid}/key?again", NOW).status)
+    assertEquals(404, PlaySetup.respond("/oopbot/${session.sid}/../key", NOW).status)
   }
+
 
   @Test
   fun unknownSessionsAreGone() {

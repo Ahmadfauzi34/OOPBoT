@@ -5,7 +5,8 @@ package io.jeph.pipkin.host
  * and the helper under `~/.pipkin`, the host under `~/.local/share/pipkin`, `pipkin-start`.
  */
 internal object TermuxBuild {
-  const val NAME = "pipkin"
+  const val NAME = "oopbot"
+  const val LEGACY_NAME = "pipkin"
 
   /** The first of the five loopback ports the Play-Termux helper may listen on. */
   const val HELPER_FIRST_PORT = 47310
@@ -13,3 +14,4 @@ internal object TermuxBuild {
   /** The loopback port Pi reaches Pipkin's local models on, just past the helper's. */
   const val LOCAL_MODEL_PORT = 47315
 }
+

@@ -8,11 +8,14 @@ set -u
 dir=$(dirname "$(readlink -f "$0")")
 # Which app set this helper up, for messages: both builds' hooks may print in the same terminal session.
 case $dir in
-  */.pipkin-dev/helper) pipkin="Pipkin Dev" ;;
-  *) pipkin=Pipkin ;;
+  */.oopbot-dev/helper) pipkin="OOPBoT Dev" ;;
+  */.oopbot/helper) pipkin="OOPBoT" ;;
+  */.pipkin-dev/helper) pipkin="OOPBoT Dev" ;;
+  *) pipkin="OOPBoT" ;;
 esac
 shell=false
 [ "${1:-}" = --shell ] && shell=true
+
 
 alive() { # $1 = pid file, $2 = text the process's command line must contain
   local pid

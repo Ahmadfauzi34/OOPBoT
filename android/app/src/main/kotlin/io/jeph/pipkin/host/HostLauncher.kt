@@ -201,13 +201,18 @@ internal object HostLauncher {
     export OOPBOT_TOKEN="$PIPKIN_TOKEN"
     exec </dev/null
     export PIPKIN_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
+    export OOPBOT_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
     export PI_CODING_AGENT_DIR="$HOME/.$$${TermuxBuild.NAME}/pi"
+    if [ ! -d "$$PIPKIN_ROOT" ] && [ -d "$HOME/.local/share/pipkin" ]; then
+      ln -s "$HOME/.local/share/pipkin" "$$PIPKIN_ROOT" 2>/dev/null || true
+    fi
     if [ -d "$HOME/.oopbot" ]; then
       export OOPBOT_CONFIG_DIR="$HOME/.oopbot"
     else
       export OOPBOT_CONFIG_DIR="$PI_CODING_AGENT_DIR"
     fi
-    mkdir -p "$PIPKIN_ROOT" "$PI_CODING_AGENT_DIR" "$OOPBOT_CONFIG_DIR"
+    mkdir -p "$$PIPKIN_ROOT" "$$PI_CODING_AGENT_DIR" "$$OOPBOT_CONFIG_DIR"
+
     mode=$1
     port=$2
     shift 2
