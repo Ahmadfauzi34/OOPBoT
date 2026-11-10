@@ -8,6 +8,8 @@
 //! - `ensure`         : Verifikasi kesiapan engine native OOPBoT (tanpa npm / node).
 //! - `hello`          : Handshake info lingkungan Termux (direktori, storage, dll).
 //! - `login`          : Handshake autentikasi interaktif (input API key via prompt Android).
+//! - `browse`         : Penjelajahan direktori workspace (pipkin_places, pipkin_list, pipkin_search).
+//! - `files`          : File Explorer workspace (pipkin_files_list, pipkin_files_read, pipkin_files_mkdir).
 //! - `utility`        : Penanganan one-off request (daftar sesi, model default, auth status, attachments, dll).
 //! - `package_install`: Penanganan instalasi paket ekstensi runtime.
 //! - `backup_create`  : Pembuatan snapshot backup konfigurasi.
@@ -152,6 +154,12 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         }
         "utility" => {
             handle_utility_mode(&config_dir, &home, reader, writer).await
+        }
+        "browse" => {
+            handle_browse_mode(params, &home, reader, writer).await
+        }
+        "files" => {
+            handle_files_mode(params, reader, writer).await
         }
         "package_install" => {
             let progress = json!({
@@ -444,6 +452,386 @@ async fn handle_utility_mode(
 
     Ok(())
 }
+
+/// Menangani mode `browse`: penjelajahan direktori untuk pemilih folder workspace di UI Android
+async fn handle_browse_mode(
+    _params: Value,
+    home: &str,
+    reader: BufReader<TcpStream>,
+    writer: BufWriter<TcpStream>,
+) -> Result<(), BoxError> {
+    run_browse_loop(home, reader, writer)
+}
+
+fn run_browse_loop<R: BufRead, W: Write>(
+    home: &str,
+    mut reader: R,
+    mut writer: W,
+) -> Result<(), BoxError> {
+    // 1. Kumpulkan places (home, shared storage, dsb)
+    let mut places = vec![json!({ "kind": "home", "path": home })];
+    if Path::new("/sdcard").exists() {
+        places.push(json!({ "kind": "shared", "path": "/sdcard" }));
+    }
+    if let Ok(entries) = std::fs::read_dir("/storage") {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name != "emulated" && name != "self" && p.is_dir() {
+                places.push(json!({ "kind": "volume", "path": p.to_string_lossy(), "name": name }));
+            }
+        }
+    }
+
+    let places_msg = json!({
+        "type": "pipkin_places",
+        "places": places
+    });
+    writeln!(writer, "{}", serde_json::to_string(&places_msg)?)?;
+    writer.flush()?;
+
+    // 2. Loop menerima permintaan dari Android
+    let mut line = String::new();
+    while let Ok(bytes) = reader.read_line(&mut line) {
+        if bytes == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            line.clear();
+            continue;
+        }
+
+        let Ok(req) = serde_json::from_str::<Value>(trimmed) else {
+            line.clear();
+            continue;
+        };
+
+        let id = req["id"].as_i64().unwrap_or(0);
+        match req["type"].as_str() {
+            Some("pipkin_list") => {
+                let raw_path = req["path"].as_str().unwrap_or(home);
+                let resolved = resolve_browse_path(raw_path, home);
+                let parent = if resolved == Path::new("/") {
+                    None
+                } else {
+                    resolved.parent().and_then(|p| {
+                        let s = p.to_string_lossy().to_string();
+                        if s.is_empty() { None } else { Some(s) }
+                    })
+                };
+
+                let mut dirs = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(&resolved) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_dir() {
+                            dirs.push(entry.file_name().to_string_lossy().to_string());
+                        }
+                    }
+                }
+                // Urutkan: non-dot folder dulu, lalu dot folder di akhir, alfabetis case-insensitive
+                dirs.sort_by(|a, b| {
+                    let a_dot = a.starts_with('.');
+                    let b_dot = b.starts_with('.');
+                    match (a_dot, b_dot) {
+                        (true, false) => std::cmp::Ordering::Greater,
+                        (false, true) => std::cmp::Ordering::Less,
+                        _ => a.to_lowercase().cmp(&b.to_lowercase()),
+                    }
+                });
+
+                let reply = json!({
+                    "type": "pipkin_listing",
+                    "id": id,
+                    "path": resolved.to_string_lossy(),
+                    "parent": parent,
+                    "dirs": dirs
+                });
+                writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
+                writer.flush()?;
+            }
+            Some("pipkin_search") => {
+                let query = req["query"].as_str().unwrap_or("").trim();
+                let mut matched_paths = Vec::new();
+                if !query.is_empty() {
+                    let query_lower = query.to_lowercase();
+                    for place in &places {
+                        if let Some(p_str) = place["path"].as_str() {
+                            search_folders_recursive(Path::new(p_str), &query_lower, 0, 4, 300, &mut matched_paths);
+                        }
+                    }
+                }
+                let reply = json!({
+                    "type": "pipkin_search_results",
+                    "id": id,
+                    "paths": matched_paths
+                });
+                writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
+                writer.flush()?;
+            }
+            _ => {}
+        }
+
+        line.clear();
+    }
+
+    Ok(())
+}
+
+/// Menangani mode `files`: backend File Explorer workspace di UI Android
+async fn handle_files_mode(
+    _params: Value,
+    reader: BufReader<TcpStream>,
+    writer: BufWriter<TcpStream>,
+) -> Result<(), BoxError> {
+    run_files_loop(reader, writer)
+}
+
+fn run_files_loop<R: BufRead, W: Write>(
+    mut reader: R,
+    mut writer: W,
+) -> Result<(), BoxError> {
+    // 1. Kirim sinyal siap
+    let ready = json!({ "type": "pipkin_files_ready" });
+    writeln!(writer, "{}", serde_json::to_string(&ready)?)?;
+    writer.flush()?;
+
+    // 2. Loop menerima permintaan operasi berkas dari Android
+    let mut line = String::new();
+    while let Ok(bytes) = reader.read_line(&mut line) {
+        if bytes == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            line.clear();
+            continue;
+        }
+
+        let Ok(req) = serde_json::from_str::<Value>(trimmed) else {
+            line.clear();
+            continue;
+        };
+
+        let id = req["id"].as_i64().unwrap_or(0);
+        let root = req["root"].as_str().unwrap_or(".");
+        let path = req["path"].as_str().unwrap_or(".");
+
+        match req["type"].as_str() {
+            Some("pipkin_files_list") => {
+                let root_path = PathBuf::from(root);
+                let target_dir = if path == "." || path.is_empty() {
+                    root_path.clone()
+                } else {
+                    root_path.join(path)
+                };
+
+                let mut entries = Vec::new();
+                if let Ok(dir_entries) = std::fs::read_dir(&target_dir) {
+                    for entry in dir_entries.flatten() {
+                        let p = entry.path();
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let is_dir = p.is_dir();
+                        let meta = std::fs::metadata(&p).ok();
+                        let size = if is_dir { 0 } else { meta.as_ref().map(|m| m.len()).unwrap_or(0) };
+                        let modified = meta
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+
+                        let rel_path = if path == "." || path.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{}/{}", path, name)
+                        };
+
+                        entries.push(json!({
+                            "name": name,
+                            "path": rel_path,
+                            "kind": if is_dir { "directory" } else { "file" },
+                            "size": size,
+                            "modified": modified
+                        }));
+                    }
+                }
+
+                // Urutkan: direktori dulu, lalu file, alfabetis case-insensitive
+                entries.sort_by(|a, b| {
+                    let a_is_dir = a["kind"] == "directory";
+                    let b_is_dir = b["kind"] == "directory";
+                    match (a_is_dir, b_is_dir) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()),
+                    }
+                });
+
+                let reply = json!({
+                    "type": "pipkin_files_listing",
+                    "id": id,
+                    "path": path,
+                    "entries": entries
+                });
+                writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
+                writer.flush()?;
+            }
+            Some("pipkin_files_read") => {
+                let root_path = PathBuf::from(root);
+                let file_path = if path == "." || path.is_empty() {
+                    root_path
+                } else {
+                    root_path.join(path)
+                };
+
+                const TEXT_LIMIT: u64 = 2 * 1024 * 1024; // 2 MiB
+                const IMAGE_LIMIT: u64 = 8 * 1024 * 1024; // 8 MiB
+
+                let is_image = {
+                    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                    matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico")
+                };
+
+                let meta = std::fs::metadata(&file_path);
+                let reply = match meta {
+                    Ok(m) if m.is_dir() => {
+                        json!({
+                            "type": "pipkin_files_file",
+                            "id": id,
+                            "path": path,
+                            "error": "This is a folder.",
+                            "errorCode": "files_is_folder"
+                        })
+                    }
+                    Ok(m) => {
+                        let size = m.len();
+                        if is_image {
+                            if size > IMAGE_LIMIT {
+                                json!({
+                                    "type": "pipkin_files_file",
+                                    "id": id,
+                                    "path": path,
+                                    "size": size,
+                                    "kind": "too_large"
+                                })
+                            } else if let Ok(bytes) = std::fs::read(&file_path) {
+                                let b64 = encode_base64(&bytes);
+                                json!({
+                                    "type": "pipkin_files_file",
+                                    "id": id,
+                                    "path": path,
+                                    "size": size,
+                                    "kind": "image",
+                                    "content": b64
+                                })
+                            } else {
+                                json!({
+                                    "type": "pipkin_files_file",
+                                    "id": id,
+                                    "path": path,
+                                    "size": size,
+                                    "kind": "binary"
+                                })
+                            }
+                        } else if size > TEXT_LIMIT {
+                            let mut file = std::fs::File::open(&file_path).ok();
+                            let mut sniff_buf = vec![0u8; 8192];
+                            let read_bytes = file.as_mut().and_then(|f| std::io::Read::read(f, &mut sniff_buf).ok()).unwrap_or(0);
+                            sniff_buf.truncate(read_bytes);
+                            let is_text = is_probably_text(&sniff_buf);
+                            json!({
+                                "type": "pipkin_files_file",
+                                "id": id,
+                                "path": path,
+                                "size": size,
+                                "kind": if is_text { "too_large" } else { "binary" }
+                            })
+                        } else if let Ok(bytes) = std::fs::read(&file_path) {
+                            if let Ok(text) = String::from_utf8(bytes.clone()) {
+                                json!({
+                                    "type": "pipkin_files_file",
+                                    "id": id,
+                                    "path": path,
+                                    "size": size,
+                                    "kind": "text",
+                                    "content": text
+                                })
+                            } else {
+                                json!({
+                                    "type": "pipkin_files_file",
+                                    "id": id,
+                                    "path": path,
+                                    "size": size,
+                                    "kind": "binary"
+                                })
+                            }
+                        } else {
+                            json!({
+                                "type": "pipkin_files_file",
+                                "id": id,
+                                "path": path,
+                                "size": 0,
+                                "kind": "binary"
+                            })
+                        }
+                    }
+                    Err(_) => {
+                        json!({
+                            "type": "pipkin_files_file",
+                            "id": id,
+                            "path": path,
+                            "error": "This file or folder no longer exists.",
+                            "errorCode": "files_gone"
+                        })
+                    }
+                };
+                writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
+                writer.flush()?;
+            }
+            Some("pipkin_files_mkdir") => {
+                let name = req["name"].as_str().unwrap_or("").trim();
+                if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0') {
+                    let err = json!({
+                        "type": "pipkin_files_made",
+                        "id": id,
+                        "error": "Folder names cannot be empty, contain / or be . or ..",
+                        "errorCode": "files_folder_name_invalid"
+                    });
+                    writeln!(writer, "{}", serde_json::to_string(&err)?)?;
+                    writer.flush()?;
+                } else {
+                    let root_path = PathBuf::from(root);
+                    let target_parent = if path == "." || path.is_empty() {
+                        root_path
+                    } else {
+                        root_path.join(path)
+                    };
+                    let new_folder = target_parent.join(name);
+                    let created_rel = if path == "." || path.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{}/{}", path, name)
+                    };
+                    let _ = std::fs::create_dir_all(&new_folder);
+                    let reply = json!({
+                        "type": "pipkin_files_made",
+                        "id": id,
+                        "path": created_rel
+                    });
+                    writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
+                    writer.flush()?;
+                }
+            }
+            _ => {}
+        }
+
+        line.clear();
+    }
+
+    Ok(())
+}
+
 
 /// Pindai sesi percakapan secara rekursif di `sessions/**/*.jsonl`
 fn handle_list_sessions(config_dir: &Path, home: &str) -> Value {
@@ -1051,6 +1439,88 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+fn resolve_browse_path(raw: &str, home: &str) -> PathBuf {
+    if raw == "~" {
+        PathBuf::from(home)
+    } else if let Some(stripped) = raw.strip_prefix("~/") {
+        PathBuf::from(home).join(stripped)
+    } else {
+        PathBuf::from(raw)
+    }
+}
+
+fn is_probably_text(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+    let mut control = 0;
+    for &b in bytes {
+        if b == 0 {
+            return false;
+        }
+        if (b < 32 && b != 9 && b != 10 && b != 13) || b == 127 {
+            control += 1;
+        }
+    }
+    (control as f64 / bytes.len() as f64) < 0.3
+}
+
+fn search_folders_recursive(
+    dir: &Path,
+    query_lower: &str,
+    current_depth: usize,
+    max_depth: usize,
+    max_results: usize,
+    out: &mut Vec<String>,
+) {
+    if current_depth > max_depth || out.len() >= max_results {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || name == "target" || name == "node_modules" || name == ".git" {
+                    continue;
+                }
+                if name.to_lowercase().contains(query_lower) {
+                    out.push(p.to_string_lossy().to_string());
+                    if out.len() >= max_results {
+                        return;
+                    }
+                }
+                search_folders_recursive(&p, query_lower, current_depth + 1, max_depth, max_results, out);
+            }
+        }
+    }
+}
+
+
 fn handle_delete_sessions(params: &Value) -> Value {
     if let Some(paths) = params["paths"].as_array() {
         for p in paths {
@@ -1308,5 +1778,103 @@ mod tests {
         let written = String::from_utf8_lossy(&bytes);
         assert!(written.contains("test_1"));
         assert!(written.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn test_encode_base64_and_roundtrip() {
+        let original = "Hello World! OOPBoT Native FileHost 2026";
+        let encoded = encode_base64(original.as_bytes());
+        let decoded = decode_base64(&encoded).expect("decode failed");
+        assert_eq!(String::from_utf8_lossy(&decoded), original);
+    }
+
+    #[test]
+    fn test_is_probably_text() {
+        let text = b"This is plain text with \n and \t.";
+        assert!(is_probably_text(text));
+
+        let binary = [0u8, 1, 2, 255, 0, 15];
+        assert!(!is_probably_text(&binary));
+    }
+
+    #[test]
+    fn test_resolve_browse_path() {
+        let home = "/data/data/com.termux/files/home";
+        assert_eq!(resolve_browse_path("~", home), PathBuf::from(home));
+        assert_eq!(resolve_browse_path("~/projects", home), PathBuf::from(home).join("projects"));
+        assert_eq!(resolve_browse_path("/sdcard/Download", home), PathBuf::from("/sdcard/Download"));
+    }
+
+    #[test]
+    fn test_search_folders_recursive() {
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_search_{}", epoch_ms()));
+        let sub1 = temp_dir.join("my_awesome_project");
+        let sub2 = temp_dir.join("other_folder").join("my_nested_project");
+        let _ = std::fs::create_dir_all(&sub1);
+        let _ = std::fs::create_dir_all(&sub2);
+
+        let mut results = Vec::new();
+        search_folders_recursive(&temp_dir, "project", 0, 4, 10, &mut results);
+        assert_eq!(results.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_run_browse_loop() {
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_browse_{}", epoch_ms()));
+        let sub = temp_dir.join("workspace_folder");
+        let _ = std::fs::create_dir_all(&sub);
+
+        let input = format!(
+            "{{\"type\":\"pipkin_list\",\"id\":1,\"path\":\"{}\"}}\n",
+            temp_dir.to_string_lossy()
+        );
+        let cursor = Cursor::new(input.into_bytes());
+        let mut output = Vec::new();
+
+        let res = run_browse_loop(&temp_dir.to_string_lossy(), cursor, &mut output);
+        assert!(res.is_ok());
+
+        let out_str = String::from_utf8_lossy(&output);
+        assert!(out_str.contains("pipkin_places"));
+        assert!(out_str.contains("pipkin_listing"));
+        assert!(out_str.contains("workspace_folder"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_run_files_loop_list_and_read() {
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_files_{}", epoch_ms()));
+        let file_path = temp_dir.join("hello.txt");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let _ = std::fs::write(&file_path, "Hello Native Files!");
+
+        let input = format!(
+            "{{\"type\":\"pipkin_files_list\",\"id\":10,\"root\":\"{}\",\"path\":\".\"}}\n\
+             {{\"type\":\"pipkin_files_read\",\"id\":11,\"root\":\"{}\",\"path\":\"hello.txt\"}}\n\
+             {{\"type\":\"pipkin_files_mkdir\",\"id\":12,\"root\":\"{}\",\"path\":\".\",\"name\":\"new_dir\"}}\n",
+            temp_dir.to_string_lossy(),
+            temp_dir.to_string_lossy(),
+            temp_dir.to_string_lossy(),
+        );
+        let cursor = Cursor::new(input.into_bytes());
+        let mut output = Vec::new();
+
+        let res = run_files_loop(cursor, &mut output);
+        assert!(res.is_ok());
+
+        let out_str = String::from_utf8_lossy(&output);
+        assert!(out_str.contains("pipkin_files_ready"));
+        assert!(out_str.contains("pipkin_files_listing"));
+        assert!(out_str.contains("hello.txt"));
+        assert!(out_str.contains("pipkin_files_file"));
+        assert!(out_str.contains("Hello Native Files!"));
+        assert!(out_str.contains("pipkin_files_made"));
+        assert!(out_str.contains("new_dir"));
+        assert!(temp_dir.join("new_dir").is_dir());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
