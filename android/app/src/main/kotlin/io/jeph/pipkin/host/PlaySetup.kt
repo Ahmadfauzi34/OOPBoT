@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
  */
 internal object PlaySetup {
   private const val SESSION_MILLIS = 30 * 60_000L
-  private val route = Regex("""^/pipkin/([^/]+)/(setup\.sh|helper\.mjs|run\.sh|start\.sh|key)$""")
+  private val route = Regex("""^/(?:oopbot|pipkin)/([^/]+)/(setup\.sh|helper\.mjs|run\.sh|start\.sh|key)$""")
   private val timers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
   @Volatile
@@ -139,15 +139,17 @@ internal class SetupSession(
 
   /** The line the user pastes into Termux; [TermuxSetup.inBash] runs it in bash whatever Termux's shell is. */
   fun command(port: Int): String {
-    val base = "http://127.0.0.1:$port/pipkin/$sid"
+    val base = "http://127.0.0.1:$port/oopbot/$sid"
+    val legacyBase = "http://127.0.0.1:$port/pipkin/$sid"
     return TermuxSetup.inBash(
       "f=\$(mktemp) && curl -fsS -m 60 \"$base/$INSTALLER\" -o \"\$f\" && " +
         "echo \"$installerSha256  \$f\" | sha256sum -c --status && " +
-        "PIPKIN_URL=\"$base\" PIPKIN_TOKEN=${token.toHexString()} bash \"\$f\"; s=\$?; rm -f \"\$f\"; " +
+        "OOPBOT_URL=\"$base\" PIPKIN_URL=\"$legacyBase\" OOPBOT_TOKEN=${token.toHexString()} PIPKIN_TOKEN=${token.toHexString()} bash \"\$f\"; s=\$?; rm -f \"\$f\"; " +
         "[ \$s = 0 ] || echo \"OOPBoT setup did not finish. " +
         "Open OOPBoT, copy the setup command again and paste it here.\"",
     )
   }
+
 
   companion object {
     const val INSTALLER = "setup.sh"
