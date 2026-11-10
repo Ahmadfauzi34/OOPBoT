@@ -58,7 +58,7 @@ internal fun SignInChoices(authStatus: AuthStatus?, enabled: Boolean, onAction: 
     }
     SignInRow(
       label = stringResource(R.string.onboarding_signin_api),
-      signedIn = authStatus?.custom.orEmpty().any { it.id != LocalModelCatalog.PROVIDER_ID },
+      signedIn = authStatus?.custom.orEmpty().any { !LocalModelCatalog.isLocalProvider(it.id) },
       enabled = enabled,
       onClick = { onAction(SetupAction.AddProvider) },
     ) { LucideIcon(icon = R.drawable.ic_lucide_key_round, contentDescription = null) }
