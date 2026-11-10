@@ -140,7 +140,7 @@ internal object HostLauncher {
       .putExtra("com.termux.RUN_COMMAND_STDIN", stdin)
       .putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
       .putExtra("com.termux.RUN_COMMAND_BACKGROUND_CUSTOM_LOG_LEVEL", "0")
-      .putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "Pipkin: $mode")
+      .putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "OOPBoT: $mode")
       .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", resultIntent),
   )
 
@@ -154,7 +154,7 @@ internal object HostLauncher {
       .putExtra("com.termux.RUN_COMMAND_PATH", BASH)
       .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-c", command))
       .putExtra("com.termux.RUN_COMMAND_BACKGROUND", false)
-      .putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "Pipkin: $label"),
+      .putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "OOPBoT: $label"),
   )
 
   private fun send(context: Context, intent: Intent) {

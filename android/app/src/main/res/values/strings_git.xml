@@ -8,7 +8,7 @@
     <string name="git_count_millions">%1$sm</string>
 
     <string name="git_trust_title">Trust this repository?</string>
-    <string name="git_trust_text">To show its changes, Pipkin runs git in this repository with the repository\'s own configuration, which can run programs. Trust it only if you trust its files.</string>
+    <string name="git_trust_text">To show its changes, OOPBoT runs git in this repository with the repository\'s own configuration, which can run programs. Trust it only if you trust its files.</string>
     <string name="git_trust">Trust this repository</string>
     <string name="git_not_now">Not now</string>
 

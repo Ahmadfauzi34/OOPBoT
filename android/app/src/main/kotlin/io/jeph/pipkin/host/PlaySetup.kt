@@ -144,8 +144,8 @@ internal class SetupSession(
       "f=\$(mktemp) && curl -fsS -m 60 \"$base/$INSTALLER\" -o \"\$f\" && " +
         "echo \"$installerSha256  \$f\" | sha256sum -c --status && " +
         "PIPKIN_URL=\"$base\" PIPKIN_TOKEN=${token.toHexString()} bash \"\$f\"; s=\$?; rm -f \"\$f\"; " +
-        "[ \$s = 0 ] || echo \"Pipkin setup did not finish. " +
-        "Open Pipkin, copy the setup command again and paste it here.\"",
+        "[ \$s = 0 ] || echo \"OOPBoT setup did not finish. " +
+        "Open OOPBoT, copy the setup command again and paste it here.\"",
     )
   }
 

@@ -41,7 +41,7 @@ internal fun rememberCopyText(): (String) -> Unit {
   val clipboard = LocalClipboard.current
   val scope = rememberCoroutineScope()
   return remember(clipboard, scope) {
-    { text -> scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Pipkin", text))) } }
+    { text -> scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("OOPBoT", text))) } }
   }
 }
 

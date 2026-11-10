@@ -34,7 +34,7 @@
     <string name="settings_sign_out_text">Chats can\'t use its models until you sign in again.</string>
     <!-- %1$s: the provider's name, such as "OpenRouter". -->
     <string name="settings_remove_key_title">Remove your %1$s key?</string>
-    <string name="settings_remove_key_text">Pipkin deletes the key from this phone, and chats can\'t use its models until you add a key again. The key keeps working elsewhere until you revoke it with the provider.</string>
+    <string name="settings_remove_key_text">OOPBoT deletes the key from this phone, and chats can\'t use its models until you add a key again. The key keeps working elsewhere until you revoke it with the provider.</string>
 
     <string name="providers_title">Providers and models</string>
     <string name="settings_providers_none">No providers yet</string>
@@ -70,19 +70,19 @@
     <string name="backups_unreadable">%1$s can\'t be restored: %2$s</string>
     <string name="backups_restore">Restore</string>
     <string name="backups_delete">Delete</string>
-    <string name="backups_caption">A backup holds Pi\'s configuration: settings, sign-ins, models, extensions, skills, prompts and themes. Chats aren\'t part of it, and a restore leaves them as they are. Backups are kept in Termux at %1$s, where the Files app can reach them under Termux. Uninstalling Termux or clearing its data deletes them too.</string>
+    <string name="backups_caption">A backup holds OOPBoT\'s configuration: settings, sign-ins, models, extensions, skills, prompts and themes. Chats aren\'t part of it, and a restore leaves them as they are. Backups are kept in Termux at %1$s, where the Files app can reach them under Termux. Uninstalling Termux or clearing its data deletes them too.</string>
     <string name="backups_restore_title">Restore this backup?</string>
-    <string name="backups_restore_text">Pi\'s configuration will be replaced by the backup from %1$s, and anything changed since is lost. Chats stay. Running chats stop first, so a reply in progress ends. Quit any pi you started yourself in a Termux terminal before restoring.</string>
+    <string name="backups_restore_text">OOPBoT\'s configuration will be replaced by the backup from %1$s, and anything changed since is lost. Chats stay. Running chats stop first, so a reply in progress ends. Quit any oopbot you started yourself in a Termux terminal before restoring.</string>
     <string name="backups_delete_title">Delete this backup?</string>
     <string name="backups_delete_text">The backup from %1$s will be deleted for good.</string>
     <string name="backups_delete_file_text">%1$s will be deleted for good.</string>
-    <string name="settings_extension_todo">Pipkin todo</string>
+    <string name="settings_extension_todo">OOPBoT todo</string>
     <string name="settings_extension_todo_summary">A todo list the agent keeps, shown on the composer</string>
-    <string name="settings_extension_background">Pipkin background</string>
+    <string name="settings_extension_background">OOPBoT background</string>
     <string name="settings_extension_background_summary">Commands that keep running while the agent waits, such as servers and long builds</string>
-    <string name="settings_extension_web_access">Pipkin web access</string>
+    <string name="settings_extension_web_access">OOPBoT web access</string>
     <string name="settings_extension_web_access_summary">Web search and page fetching</string>
-    <string name="settings_extension_subagents">Pipkin subagents</string>
+    <string name="settings_extension_subagents">OOPBoT subagents</string>
     <string name="settings_extension_subagents_summary">Subagents the agent hands tasks to, which you can follow, steer and stop</string>
     <string name="settings_extensions_caption">Idle chats reload to pick up a change. A working chat picks it up the next time its agent starts.</string>
 
@@ -134,7 +134,7 @@
 
     <string name="settings_version">Version</string>
     <string name="settings_licenses">Open-source licenses</string>
-    <string name="settings_licenses_caption">Pipkin is open source under the MIT License. It\'s built with the code, fonts and icons below, each under its own license.</string>
+    <string name="settings_licenses_caption">OOPBoT is open source under the MIT License. It\'s built with the code, fonts and icons below, each under its own license.</string>
     <string name="settings_licenses_components">Code, fonts and icons</string>
     <string name="settings_licenses_syntax">Syntax highlighting</string>
     <string name="settings_privacy_policy">Privacy policy</string>
@@ -159,8 +159,8 @@
     <string name="login_key_saved">Key saved</string>
     <string name="login_failed">Sign-in failed.</string>
     <string name="login_try_again">Try again</string>
-    <string name="claude_plugin_warning">Your Pro or Max plan won\'t cover Pipkin without a plugin. Anthropic bills third-party harnesses as extra usage, at API rates.</string>
-    <string name="claude_plugin_explanation">The pi-anthropic-auth plugin makes Pipkin\'s requests look like Claude Code\'s so that you can use your plan\'s token quotas with Pipkin. Although this practice is common in other harnesses, it does technically break Anthropic\'s terms of service. The option to one-click install this plugin is listed here as a setup convenience.</string>
+    <string name="claude_plugin_warning">Your Pro or Max plan won\'t cover OOPBoT without a plugin. Anthropic bills third-party harnesses as extra usage, at API rates.</string>
+    <string name="claude_plugin_explanation">The pi-anthropic-auth plugin makes OOPBoT\'s requests look like Claude Code\'s so that you can use your plan\'s token quotas with OOPBoT. Although this practice is common in other harnesses, it does technically break Anthropic\'s terms of service. The option to one-click install this plugin is listed here as a setup convenience.</string>
     <string name="claude_plugin_link">github.com/gotgenes/pi-anthropic-auth</string>
     <string name="claude_plugin_skip">Skip</string>
     <string name="claude_plugin_install">Install plugin</string>
@@ -217,7 +217,7 @@
     <string name="provider_error_bad_url_hint">Enter the full base URL, starting with https://, such as https://api.example.com/v1.</string>
     <string name="provider_error_bad_response">Not an OpenAI-compatible API</string>
     <string name="provider_error_bad_response_hint">The server answered, but not with a list of models. Check that the base URL points at the API rather than a website.</string>
-    <string name="provider_error_unknown">Pipkin couldn\'t run the check</string>
+    <string name="provider_error_unknown">OOPBoT couldn\'t run the check</string>
     <string name="provider_check_needed">Check the connection to add models.</string>
     <string name="provider_models">Models</string>
     <string name="provider_add_models">Add models</string>
@@ -254,7 +254,7 @@
     <string name="models_search">Search or enter a model ID</string>
     <string name="models_none">The provider lists no models. Enter a model ID above to add one.</string>
     <!-- %1$s: why the provider's list of models couldn't be read, for example "HTTP 401: Invalid Authentication". -->
-    <string name="models_list_failed">Couldn\'t get the provider\'s list of models, so these are the ones Pi knows: %1$s</string>
+    <string name="models_list_failed">Couldn\'t get the provider\'s list of models, so these are the ones OOPBoT knows: %1$s</string>
     <!-- %1$s: the model ID typed into the search, for example "openai/gpt-4". -->
     <string name="models_add_custom">Add \"%1$s\" as a custom model</string>
     <string name="models_done">Done</string>
@@ -292,7 +292,7 @@
     <string name="provider_save">Save</string>
     <string name="provider_remove">Remove provider</string>
     <string name="provider_remove_title">Remove %1$s?</string>
-    <string name="provider_remove_text">Pipkin forgets this provider, its models and its API key.</string>
+    <string name="provider_remove_text">OOPBoT forgets this provider, its models and its API key.</string>
     <string name="provider_cancel">Cancel</string>
     <string name="provider_failed">The Termux helper failed.</string>
 </resources>

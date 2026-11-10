@@ -40,7 +40,7 @@ internal object TermuxSetup {
    * the host does.
    */
   fun requestFDroidStorage(context: Context) {
-    val command = "echo \"Pipkin: waiting for storage access. Switch back to Pipkin any time.\"; sleep 1; " +
+    val command = "echo \"OOPBoT: waiting for storage access. Switch back to OOPBoT any time.\"; sleep 1; " +
       "termux-setup-storage && " +
       "for i in $(seq 60); do [ -w \"${'$'}{EXTERNAL_STORAGE:-/sdcard}\" ] && break; sleep 1; done; " +
       "am start -n ${context.packageName}/${MainActivity::class.java.name} >/dev/null"

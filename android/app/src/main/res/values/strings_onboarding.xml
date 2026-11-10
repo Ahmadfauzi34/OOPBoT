@@ -14,60 +14,60 @@
     <string name="onboarding_no_activity">No app on this device can open that.</string>
     <string name="onboarding_copy_command">Copy command</string>
 
-    <string name="onboarding_welcome_title">Welcome to Pipkin</string>
+    <string name="onboarding_welcome_title">Welcome to OOPBoT</string>
     <string name="onboarding_welcome_body">A coding agent that runs on your phone. Setup takes a few minutes, and most of it happens on its own.</string>
     <string name="onboarding_get_started">Get started</string>
 
     <string name="onboarding_done_title">You\'re all set</string>
     <string name="onboarding_done_body">Open a folder from the sidebar to start your first chat.</string>
     <string name="onboarding_done_body_no_model">Connect a model in Settings → Providers and models before your first chat.</string>
-    <string name="onboarding_start">Start using Pipkin</string>
+    <string name="onboarding_start">Start using OOPBoT</string>
 
     <string name="onboarding_termux_title">Termux</string>
     <string name="onboarding_termux_install_title">Install Termux</string>
     <string name="onboarding_termux_replace_title">Replace Termux</string>
     <string name="onboarding_termux_update_title">Update Termux</string>
-    <string name="onboarding_termux_missing">Pipkin\'s agent runs inside Termux, a terminal app for Android. Get it from F-Droid or Google Play, then come back. We recommend the F-Droid version for the best user experience.</string>
-    <string name="onboarding_termux_missing_fdroid_only">Pipkin\'s agent runs inside Termux, a terminal app for Android. Get it from F-Droid, then come back.</string>
+    <string name="onboarding_termux_missing">OOPBoT\'s agent runs inside Termux, a terminal app for Android. Get it from F-Droid or Google Play, then come back. We recommend the F-Droid version for the best user experience.</string>
+    <string name="onboarding_termux_missing_fdroid_only">OOPBoT\'s agent runs inside Termux, a terminal app for Android. Get it from F-Droid, then come back.</string>
     <string name="onboarding_termux_get_fdroid">Get it on F-Droid</string>
     <string name="onboarding_termux_get_play">Get it on Google Play</string>
-    <string name="onboarding_termux_unsupported">This copy of Termux isn\'t from F-Droid or Google Play, so Pipkin won\'t use it. Uninstalling it deletes Termux\'s files.</string>
-    <string name="onboarding_termux_security">Pipkin only supports signed F-Droid and Google Play versions of Termux for your safety.</string>
+    <string name="onboarding_termux_unsupported">This copy of Termux isn\'t from F-Droid or Google Play, so OOPBoT won\'t use it. Uninstalling it deletes Termux\'s files.</string>
+    <string name="onboarding_termux_security">OOPBoT only supports signed F-Droid and Google Play versions of Termux for your safety.</string>
     <string name="onboarding_termux_uninstall">Uninstall Termux</string>
-    <string name="onboarding_termux_too_old_fdroid">Pipkin needs Termux 0.118 or newer.</string>
+    <string name="onboarding_termux_too_old_fdroid">OOPBoT needs Termux 0.118 or newer.</string>
     <string name="onboarding_termux_update_fdroid">Update on F-Droid</string>
-    <string name="onboarding_termux_too_old_play">This Termux is older than Pipkin supports.</string>
+    <string name="onboarding_termux_too_old_play">This Termux is older than OOPBoT supports.</string>
     <string name="onboarding_termux_update_play">Update on Google Play</string>
     <string name="onboarding_termux_ready_fdroid">Termux %1$s from F-Droid is installed.</string>
     <string name="onboarding_termux_ready_play">Termux %1$s from Google Play is installed.</string>
 
-    <string name="onboarding_run_command_title">Let Pipkin use Termux</string>
-    <string name="onboarding_run_command_body">Pipkin starts by sending commands to Termux.</string>
+    <string name="onboarding_run_command_title">Let OOPBoT use Termux</string>
+    <string name="onboarding_run_command_body">OOPBoT starts by sending commands to Termux.</string>
     <!-- Settings labels are joined with \u00A0, inside them and before each →, so a path only wraps after an arrow. -->
     <string name="onboarding_run_command_blocked">Android won\'t ask again. In settings:\n\nPermissions\u00A0→ Additional\u00A0permissions\u00A0→ Run\u00A0commands\u00A0in\u00A0Termux\u00A0environment\u00A0→ Allow</string>
-    <string name="onboarding_run_command_done">Pipkin can run commands in Termux.</string>
+    <string name="onboarding_run_command_done">OOPBoT can run commands in Termux.</string>
 
     <string name="onboarding_setup_title">Set up Termux</string>
     <string name="onboarding_setup_body">Paste the setup command into Termux.</string>
     <string name="onboarding_setup_retry_note">Android may sometimes kill large pkg installs during setup. If this happens, please retry the command. It picks up where it left off.</string>
     <string name="onboarding_setup_waiting">Waiting for Termux to finish…</string>
     <string name="onboarding_setup_connecting">Connecting to Termux…</string>
-    <string name="onboarding_setup_changed">Termux was reinstalled, which removed Pipkin\'s setup, the agent and its sign-in. Paste the command again.</string>
+    <string name="onboarding_setup_changed">Termux was reinstalled, which removed OOPBoT\'s setup, the agent and its sign-in. Paste the command again.</string>
     <string name="onboarding_setup_action">Copy command &amp; open Termux</string>
-    <string name="onboarding_setup_done">Termux is ready for Pipkin.</string>
+    <string name="onboarding_setup_done">Termux is ready for OOPBoT.</string>
     <string name="onboarding_demo_paste">Paste</string>
-    <string name="onboarding_demo_installing">Installing Node.js…</string>
-    <string name="onboarding_demo_done">Pipkin setup done</string>
+    <string name="onboarding_demo_installing">Setting up OOPBoT…</string>
+    <string name="onboarding_demo_done">OOPBoT setup done</string>
 
     <string name="onboarding_notifications_title">Notifications</string>
-    <string name="onboarding_notifications_body">Pipkin notifies you when a chat finishes or needs your answer while you\'re away.</string>
-    <string name="onboarding_notifications_blocked">Android won\'t ask again. In settings, turn on All\u00A0Pipkin\u00A0notifications.</string>
+    <string name="onboarding_notifications_body">OOPBoT notifies you when a chat finishes or needs your answer while you\'re away.</string>
+    <string name="onboarding_notifications_blocked">Android won\'t ask again. In settings, turn on All\u00A0OOPBoT\u00A0notifications.</string>
     <string name="onboarding_notifications_blocked_note">Samsung, OnePlus, Oppo: Allow\u00A0notifications\nXiaomi: Show\u00A0notifications</string>
     <string name="onboarding_notifications_done">Notifications are on.</string>
 
     <string name="onboarding_background_title">Run in the background</string>
     <string name="onboarding_background_body">Keeps a chat going while the screen is off or you\'re in another app. Without it, Android can cut the agent off mid-task. When Android asks, tap Allow.</string>
-    <string name="onboarding_background_done">Pipkin can run in the background.</string>
+    <string name="onboarding_background_done">OOPBoT can run in the background.</string>
 
     <string name="onboarding_termux_background_title">Let Termux run in the background</string>
     <string name="onboarding_termux_background_body">The agent runs inside Termux. Without this, Android can stop Termux to save battery and cut a chat off mid-task. When Android asks, tap Allow.</string>
@@ -83,14 +83,14 @@
     <string name="onboarding_storage_done">Termux can use phone storage.</string>
 
     <string name="onboarding_install_title">Install the agent</string>
-    <string name="onboarding_install_body">Pipkin installs its agent, OOPBoT %1$s, in Termux. It takes a few seconds.</string>
+    <string name="onboarding_install_body">OOPBoT installs its agent, version %1$s, in Termux. It takes a few seconds.</string>
     <string name="onboarding_install_checking">Checking the agent…</string>
     <string name="onboarding_install_running">Installing…</string>
     <string name="onboarding_install_done">OOPBoT %1$s is installed.</string>
     <string name="onboarding_install_failed">Installing the agent failed.</string>
     <string name="onboarding_install_action">Install</string>
-    <!-- Shown on the Termux setup step when opening Termux didn't start Pipkin's helper there. -->
-    <string name="onboarding_helper_didnt_start">Pipkin\'s helper didn\'t start in Termux. Paste the setup command again.</string>
+    <!-- Shown on the Termux setup step when opening Termux didn't start OOPBoT's helper there. -->
+    <string name="onboarding_helper_didnt_start">OOPBoT\'s helper didn\'t start in Termux. Paste the setup command again.</string>
 
     <string name="onboarding_signin_title">Connect a model</string>
     <string name="onboarding_signin_body">Sign in with a subscription or add an API key. You can add more in Settings later.</string>
