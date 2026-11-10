@@ -198,9 +198,11 @@ internal object HostLauncher {
     IFS= read -r PIPKIN_TOKEN || exit 80
     [ -n "$PIPKIN_TOKEN" ] || exit 80
     export PIPKIN_TOKEN
+    export OOPBOT_TOKEN="$PIPKIN_TOKEN"
     exec </dev/null
     export PIPKIN_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
     export PI_CODING_AGENT_DIR="$HOME/.$$${TermuxBuild.NAME}/pi"
+    export OOPBOT_CONFIG_DIR="$PI_CODING_AGENT_DIR"
     mkdir -p "$PIPKIN_ROOT" "$PI_CODING_AGENT_DIR"
     mode=$1
     port=$2

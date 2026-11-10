@@ -108,7 +108,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
       val data = call("ensure", params, ENSURE_TIMEOUT_MILLIS, progress(onProgress))
       // The utility host keeps the Pi it imported first, which may be the one this install replaced.
       withContext(Dispatchers.Main.immediate) { utility.retire() }
-      val version = data.getString("piVersion")
+      val version = data.optString("oopbotVersion", data.optString("piVersion"))
       helloState.update { it?.copy(piVersion = version) }
       version
     } finally {
