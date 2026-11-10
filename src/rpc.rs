@@ -185,7 +185,7 @@ impl RpcServer {
         Ok(server)
     }
 
-    /// Pancarkan event widget aktif (misal checklist Todo) ke antarmuka aplikasi Android via RPC JSONL.
+    /// Pancarkan event widget aktif (misal checklist Todo) dan status channel plugin ke antarmuka aplikasi Android via RPC JSONL.
     pub fn emit_active_widgets(&self) {
         for plugin in self.plugins.active_plugins() {
             if plugin.id() == "pipkin-todo" {
@@ -201,6 +201,21 @@ impl RpcServer {
                 }
             }
         }
+        if self.plugins.is_active("pipkin-background") {
+            Self::send_channel("background", json!({ "active": 0 }));
+        }
+        if self.plugins.is_active("pipkin-subagents") {
+            Self::send_channel("subagents", json!({ "runs": [], "standingAside": false }));
+        }
+    }
+
+    /// Kirim pesan dua arah pada Pipkin/OOPBoT channel: `{"type": "pipkin_channel", "topic": ..., "data": ...}`
+    pub fn send_channel(topic: &str, data: Value) {
+        Self::send_line(&json!({
+            "type": "pipkin_channel",
+            "topic": topic,
+            "data": data,
+        }));
     }
 
     pub fn send_line(value: &Value) {
@@ -1226,6 +1241,17 @@ impl RpcServer {
         &mut self,
         reader: &mut dyn BufRead,
     ) -> Result<(), BoxError> {
+        // Handshake awal Pipkin Channel (mengumumkan koneksi host siap ke ekstensi/UI)
+        Self::send_channel("pipkin", Value::Null);
+        Self::send_channel(
+            "pipkin:hello",
+            json!({
+                "version": 1,
+                "engine": "oopbot-native",
+                "oopbotVersion": env!("CARGO_PKG_VERSION")
+            }),
+        );
+
         self.emit_active_widgets();
         let mut line = String::new();
 
@@ -1246,6 +1272,11 @@ impl RpcServer {
             let id = cmd["id"].as_str().unwrap_or_default().to_string();
 
             match cmd_type.as_str() {
+                "pipkin_channel" => {
+                    let topic = cmd["topic"].as_str().unwrap_or_default();
+                    let data = &cmd["data"];
+                    self.handle_channel_message(topic, data).await;
+                }
                 "get_state" => {
                     self.refresh_credentials();
                     self.maybe_auto_scan().await;
@@ -1419,6 +1450,48 @@ impl RpcServer {
             }
         }
         Ok(())
+    }
+
+    /// Tangani pesan event masuk dari Android UI atau ekstensi via Pipkin Channel
+    async fn handle_channel_message(&mut self, topic: &str, data: &Value) {
+        match topic {
+            "background" => {
+                if let Some(action) = data["action"].as_str() {
+                    if action == "stop" {
+                        Self::send_channel("background", json!({ "active": 0 }));
+                    }
+                }
+            }
+            "subagents" => {
+                if let Some(action) = data["action"].as_str() {
+                    match action {
+                        "stop" | "stopAll" => {
+                            Self::send_channel("subagents", json!({
+                                "runs": [],
+                                "standingAside": false
+                            }));
+                        }
+                        "check" => {
+                            Self::send_channel("subagents", json!({
+                                "runs": [],
+                                "standingAside": false
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "remote" => {
+                if let Some(action) = data["action"].as_str() {
+                    if action == "check" {
+                        Self::send_channel("remote", json!({ "connected": true }));
+                    }
+                }
+            }
+            _ => {
+                // Topic channel lainnya ditangani dengan aman tanpa menimbulkan error
+            }
+        }
     }
 }
 
@@ -2331,6 +2404,65 @@ mod tests {
         assert!((server.total_cost - 0.0025).abs() < 1e-6);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_pipkin_channel_handshake_and_incoming_events() {
+        use std::io::Cursor;
+
+        let raw = Arc::new(Mutex::new(Vec::new()));
+        struct TestBuf(Arc<Mutex<Vec<u8>>>);
+        impl io::Write for TestBuf {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.0.lock().unwrap().flush()
+            }
+        }
+
+        let output_buf = Arc::new(Mutex::new(Box::new(TestBuf(raw.clone())) as Box<dyn io::Write + Send + Sync>));
+        set_output_sink(Some(output_buf));
+
+        let extensions = vec![
+            "pipkin-background".to_string(),
+            "pipkin-subagents".to_string(),
+        ];
+        let mut server = RpcServer::new(None, None, extensions).unwrap();
+
+        let input = b"\
+{\"type\":\"pipkin_channel\",\"topic\":\"background\",\"data\":{\"action\":\"stop\"}}\n\
+{\"type\":\"pipkin_channel\",\"topic\":\"subagents\",\"data\":{\"action\":\"stopAll\"}}\n\
+{\"type\":\"pipkin_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
+{\"type\":\"get_state\",\"id\":\"chk_1\"}\n";
+        let mut cursor = Cursor::new(input);
+
+        let res = server.run_loop_with_input(&mut cursor).await;
+        assert!(res.is_ok());
+
+        set_output_sink(None);
+
+        let bytes = raw.lock().unwrap().clone();
+        let written = String::from_utf8_lossy(&bytes);
+
+        // Verifikasi handshake awal pipkin & pipkin:hello
+        assert!(written.contains("\"topic\":\"pipkin\""));
+        assert!(written.contains("\"topic\":\"pipkin:hello\""));
+        assert!(written.contains("\"engine\":\"oopbot-native\""));
+
+        // Verifikasi channel background, subagents, dan remote
+        assert!(written.contains("\"topic\":\"background\""));
+        assert!(written.contains("\"active\":0"));
+        assert!(written.contains("\"topic\":\"subagents\""));
+        assert!(written.contains("\"topic\":\"remote\""));
+        assert!(written.contains("\"connected\":true"));
+
+        // Verifikasi respon rpc reguler
+        assert!(written.contains("chk_1"));
+        assert!(written.contains("\"success\":true"));
+
+        // Pastikan tidak ada error komplain pipkin_channel
+        assert!(!written.contains("tidak dikenal"));
     }
 }
 
