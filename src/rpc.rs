@@ -71,11 +71,17 @@ impl RpcServer {
         extensions: Vec<String>,
     ) -> Result<Self, BoxError> {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let config_dir = std::env::var("PI_CODING_AGENT_DIR")
+        let config_dir = std::env::var("OOPBOT_CONFIG_DIR")
+            .or_else(|_| std::env::var("PI_CODING_AGENT_DIR"))
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                PathBuf::from(home).join(".pipkin/pi")
+                let oopbot_dir = PathBuf::from(&home).join(".oopbot");
+                if oopbot_dir.exists() {
+                    oopbot_dir
+                } else {
+                    PathBuf::from(home).join(".pipkin/pi")
+                }
             });
         let _ = std::fs::create_dir_all(&config_dir);
 
@@ -865,7 +871,7 @@ impl RpcServer {
             .map(|p| p.has_auth)
             .unwrap_or(false);
         if !provider_has_auth && self.client.api_key().trim().is_empty() {
-            let msg = "API key belum diatur. Silakan buka **Settings › Providers & models** di Pipkin untuk menempelkan API key (Google Gemini / OpenRouter / Custom), atau ketik langsung di sini:\n\n`/token <API_KEY>`";
+            let msg = "API key belum diatur. Silakan buka **Settings › Providers & models** di OOPBoT untuk menempelkan API key (Google Gemini / OpenRouter / Custom), atau ketik langsung di sini:\n\n`/token <API_KEY>`";
             self.emit_assistant_reply_with_thoughts(msg, &[], started_ms, None);
             Self::send_line(&json!({ "type": "turn_end" }));
             Self::send_line(&json!({ "type": "agent_end" }));
@@ -1272,7 +1278,7 @@ impl RpcServer {
             let id = cmd["id"].as_str().unwrap_or_default().to_string();
 
             match cmd_type.as_str() {
-                "pipkin_channel" => {
+                "pipkin_channel" | "oopbot_channel" => {
                     let topic = cmd["topic"].as_str().unwrap_or_default();
                     let data = &cmd["data"];
                     self.handle_channel_message(topic, data).await;
@@ -1686,6 +1692,7 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
             let raw_model_key = pval["apiKey"].as_str().unwrap_or("");
             let is_keyless_local = raw_model_key == "no-api-key"
                 || id == "pipkin-local"
+                || id == "oopbot-local"
                 || base_url.contains("127.0.0.1")
                 || base_url.contains("localhost");
             let api_key = if !raw_model_key.is_empty() && raw_model_key != "no-api-key" {
@@ -2434,6 +2441,7 @@ mod tests {
 {\"type\":\"pipkin_channel\",\"topic\":\"background\",\"data\":{\"action\":\"stop\"}}\n\
 {\"type\":\"pipkin_channel\",\"topic\":\"subagents\",\"data\":{\"action\":\"stopAll\"}}\n\
 {\"type\":\"pipkin_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
+{\"type\":\"oopbot_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
 {\"type\":\"get_state\",\"id\":\"chk_1\"}\n";
         let mut cursor = Cursor::new(input);
 

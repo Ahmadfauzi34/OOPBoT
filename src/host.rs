@@ -273,7 +273,7 @@ async fn handle_login_mode(
 
         if let Ok(resp) = serde_json::from_str::<Value>(trimmed) {
             match resp["type"].as_str() {
-                Some("pipkin_auth_response") => {
+                Some("pipkin_auth_response") | Some("oopbot_auth_response") => {
                     if let Some(val) = resp["value"].as_str() {
                         let key = val.trim();
                         if !key.is_empty() {
@@ -289,7 +289,7 @@ async fn handle_login_mode(
                     writer.flush()?;
                     return Ok(());
                 }
-                Some("pipkin_auth_cancel") => {
+                Some("pipkin_auth_cancel") | Some("oopbot_auth_cancel") => {
                     let err = json!({
                         "type": "pipkin_result",
                         "ok": false,
@@ -409,7 +409,8 @@ async fn handle_utility_mode(
             continue;
         };
 
-        if req["type"].as_str() != Some("pipkin_utility_request") {
+        let req_type = req["type"].as_str().unwrap_or_default();
+        if req_type != "pipkin_utility_request" && req_type != "oopbot_utility_request" {
             line.clear();
             continue;
         }
@@ -527,7 +528,7 @@ fn run_browse_loop<R: BufRead, W: Write>(
 
         let id = req["id"].as_i64().unwrap_or(0);
         match req["type"].as_str() {
-            Some("pipkin_list") => {
+            Some("pipkin_list") | Some("oopbot_list") => {
                 let raw_path = req["path"].as_str().unwrap_or(home);
                 let resolved = resolve_browse_path(raw_path, home);
                 let parent = if resolved == Path::new("/") {
@@ -569,7 +570,7 @@ fn run_browse_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_search") => {
+            Some("pipkin_search") | Some("oopbot_search") => {
                 let query = req["query"].as_str().unwrap_or("").trim();
                 let mut matched_paths = Vec::new();
                 if !query.is_empty() {
@@ -637,7 +638,7 @@ fn run_files_loop<R: BufRead, W: Write>(
         let path = req["path"].as_str().unwrap_or(".");
 
         match req["type"].as_str() {
-            Some("pipkin_files_list") => {
+            Some("pipkin_files_list") | Some("oopbot_files_list") => {
                 let root_path = PathBuf::from(root);
                 let target_dir = if path == "." || path.is_empty() {
                     root_path.clone()
@@ -695,7 +696,7 @@ fn run_files_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_files_read") => {
+            Some("pipkin_files_read") | Some("oopbot_files_read") => {
                 let root_path = PathBuf::from(root);
                 let file_path = if path == "." || path.is_empty() {
                     root_path
@@ -807,7 +808,7 @@ fn run_files_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_files_mkdir") => {
+            Some("pipkin_files_mkdir") | Some("oopbot_files_mkdir") => {
                 let name = req["name"].as_str().unwrap_or("").trim();
                 if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\0') {
                     let err = json!({
@@ -1493,7 +1494,7 @@ fn run_git_loop<R: BufRead, W: Write>(
         let root = req["root"].as_str().unwrap_or(".");
 
         match req["type"].as_str() {
-            Some("pipkin_git_detect") => {
+            Some("pipkin_git_detect") | Some("oopbot_git_detect") => {
                 let trusted = req["trusted"].as_bool().unwrap_or(false);
                 let (repo, git) = git_detect(root, trusted);
                 let reply = json!({
@@ -1505,7 +1506,7 @@ fn run_git_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_git_changes") => {
+            Some("pipkin_git_changes") | Some("oopbot_git_changes") => {
                 let mode = req["mode"].as_str().unwrap_or("uncommitted");
                 let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
                 let known = req["known"].as_str();
@@ -1517,7 +1518,7 @@ fn run_git_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&data)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_git_commits") => {
+            Some("pipkin_git_commits") | Some("oopbot_git_commits") => {
                 let known = req["known"].as_str();
                 let mut data = handle_git_commits(root, known);
                 if let Some(obj) = data.as_object_mut() {
@@ -1527,7 +1528,7 @@ fn run_git_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&data)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_git_commit_diff") => {
+            Some("pipkin_git_commit_diff") | Some("oopbot_git_commit_diff") => {
                 let sha = req["sha"].as_str().unwrap_or("");
                 let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
                 let mut data = handle_git_commit_diff(root, sha, ignore_whitespace);
@@ -2851,10 +2852,12 @@ Binary files a/image.png and b/image.png differ
         let repo_root = env!("CARGO_MANIFEST_DIR");
         let input = format!(
             "{{\"type\":\"pipkin_git_detect\",\"id\":100,\"root\":\"{}\",\"trusted\":true}}\n\
-             {{\"type\":\"pipkin_git_changes\",\"id\":101,\"root\":\"{}\",\"mode\":\"uncommitted\",\"ignoreWhitespace\":false}}\n\
-             {{\"type\":\"pipkin_git_commits\",\"id\":102,\"root\":\"{}\"}}\n\
-             {{\"type\":\"pipkin_git_commit_diff\",\"id\":103,\"root\":\"{}\",\"sha\":\"0000000000000000000000000000000000000000\",\"ignoreWhitespace\":false}}\n",
-            repo_root, repo_root, repo_root, repo_root
+             {{\"type\":\"oopbot_git_detect\",\"id\":101,\"root\":\"{}\",\"trusted\":true}}\n\
+             {{\"type\":\"pipkin_git_changes\",\"id\":102,\"root\":\"{}\",\"mode\":\"uncommitted\",\"ignoreWhitespace\":false}}\n\
+             {{\"type\":\"oopbot_git_changes\",\"id\":103,\"root\":\"{}\",\"mode\":\"uncommitted\",\"ignoreWhitespace\":false}}\n\
+             {{\"type\":\"pipkin_git_commits\",\"id\":104,\"root\":\"{}\"}}\n\
+             {{\"type\":\"pipkin_git_commit_diff\",\"id\":105,\"root\":\"{}\",\"sha\":\"0000000000000000000000000000000000000000\",\"ignoreWhitespace\":false}}\n",
+            repo_root, repo_root, repo_root, repo_root, repo_root, repo_root
         );
         let cursor = Cursor::new(input.into_bytes());
         let mut output = Vec::new();

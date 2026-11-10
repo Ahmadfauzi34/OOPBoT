@@ -67,9 +67,12 @@ internal class FolderBrowser(
     } catch (error: IOException) {
       throw HostFailure.Disconnected(error)
     }
+    val altReplyType = "oopbot_" + replyType.removePrefix("pipkin_")
     withTimeoutOrNull(timeoutMillis) {
-      channel.lines.firstOrNull { it.optString("type") == replyType && it.optLong("id") == id }
-        ?: throw HostFailure.Disconnected()
+      channel.lines.firstOrNull {
+        val type = it.optString("type")
+        (type == replyType || type == altReplyType) && it.optLong("id") == id
+      } ?: throw HostFailure.Disconnected()
     } ?: throw HostFailure.Timeout()
   }
 
@@ -93,10 +96,12 @@ internal class FolderBrowser(
     suspend fun start(channel: HostChannel, remote: Boolean): FolderBrowser {
       val timeoutMillis = if (remote) REMOTE_LIST_TIMEOUT_MILLIS else LIST_TIMEOUT_MILLIS
       val line = withTimeoutOrNull(timeoutMillis) {
-        channel.lines.firstOrNull { it.optString("type") == PLACES || it.optString("type") == HostProtocol.RESULT }
-          ?: throw HostFailure.Disconnected()
+        channel.lines.firstOrNull {
+          val type = it.optString("type")
+          type == PLACES || type == "oopbot_places" || HostProtocol.isResult(type)
+        } ?: throw HostFailure.Disconnected()
       } ?: throw HostFailure.Timeout()
-      if (line.optString("type") == HostProtocol.RESULT) throw HostRejected.from(line) ?: HostFailure.Disconnected()
+      if (HostProtocol.isResult(line.optString("type"))) throw HostRejected.from(line) ?: HostFailure.Disconnected()
       val places = line.optJSONArray("places").objects().map {
         FolderPlace(it.optString("kind"), it.optString("path"), it.opt("name") as? String)
       }

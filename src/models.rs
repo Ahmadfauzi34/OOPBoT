@@ -84,6 +84,11 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    /// Alias ramah OOPBoT untuk `to_pipkin_json`.
+    pub fn to_oopbot_json(&self, provider_override: Option<&str>) -> Value {
+        self.to_pipkin_json(provider_override)
+    }
+
     /// Konversi ke objek JSON standar protokol Pipkin (`AgentProcess.kt` & `oopbot-sdk.ts`).
     pub fn to_pipkin_json(&self, provider_override: Option<&str>) -> Value {
         let provider = provider_override.unwrap_or(&self.provider);
@@ -201,6 +206,11 @@ impl ModelInfo {
                     .unwrap_or(prev.cache_write),
             });
         }
+    }
+
+    /// Alias ramah OOPBoT untuk `from_pipkin_json`.
+    pub fn from_oopbot_json(item: &Value, default_provider: &str, default_api: &str) -> Option<Self> {
+        Self::from_pipkin_json(item, default_provider, default_api)
     }
 
     /// Bangun `ModelInfo` dari item `models` di `models.json` (baik string ID maupun objek penuh).
@@ -329,6 +339,11 @@ pub struct ProviderCatalogEntry {
 }
 
 impl ProviderCatalogEntry {
+    /// Alias ramah OOPBoT untuk `to_pipkin_json`.
+    pub fn to_oopbot_json(&self) -> Value {
+        self.to_pipkin_json()
+    }
+
     pub fn to_pipkin_json(&self) -> Value {
         let models: Vec<Value> = self
             .models

@@ -28,4 +28,13 @@ internal object HostProtocol {
   const val AUTH_PROMPT_DISMISS = "pipkin_auth_prompt_dismiss"
   const val REMOTE_PROMPT = "pipkin_remote_prompt"
   const val REMOTE_ANSWER = "pipkin_remote_answer"
+
+  fun isHello(type: String?): Boolean = type == HELLO || type == "oopbot_hello"
+  fun isResult(type: String?): Boolean = type == RESULT || type == "oopbot_result"
+  fun isProgress(type: String?): Boolean = type == PROGRESS || type == "oopbot_progress"
+  fun isExit(type: String?): Boolean = type == EXIT || type == "oopbot_exit"
+  fun isChannel(type: String?): Boolean = type == CHANNEL || type == "oopbot_channel"
+  fun isAuthEvent(type: String?): Boolean = type == AUTH_EVENT || type == "oopbot_auth_event"
+  fun isAuthPrompt(type: String?): Boolean = type == AUTH_PROMPT || type == "oopbot_auth_prompt"
+  fun isAuthDismiss(type: String?): Boolean = type == AUTH_PROMPT_DISMISS || type == "oopbot_auth_prompt_dismiss"
 }

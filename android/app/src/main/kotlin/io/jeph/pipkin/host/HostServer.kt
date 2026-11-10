@@ -75,7 +75,7 @@ internal class HostServer(private val scope: CoroutineScope) : AutoCloseable {
       null
     }
     val deferred = hello?.takeIf {
-      it.optString("type") == HostProtocol.HELLO && it.optInt("protocol", -1) == HostProtocol.VERSION
+      HostProtocol.isHello(it.optString("type")) && it.optInt("protocol", -1) == HostProtocol.VERSION
     }?.let { claim(it.optString("token")) }
     if (hello == null || deferred == null) {
       socket.close()
