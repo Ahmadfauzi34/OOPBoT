@@ -6,6 +6,7 @@
 //!    langsung dari aplikasi Android Kotlin (`OopbotBridge.kt`) lewat `System.loadLibrary("oopbot")`
 //!    tanpa memerlukan dependensi crate tambahan.
 
+use async_trait::async_trait;
 use crate::agent::{Agent, Approver, GeminiAgent};
 use crate::events::{AgentEvent, EventSink};
 use crate::gemini::GeminiClient;
@@ -19,8 +20,9 @@ struct AutoOrDenyApprover {
     allow: bool,
 }
 
+#[async_trait]
 impl Approver for AutoOrDenyApprover {
-    fn approve(&self, _tool_name: &str, _preview: &str) -> bool {
+    async fn approve(&self, _tool_name: &str, _preview: &str) -> bool {
         self.allow
     }
 }

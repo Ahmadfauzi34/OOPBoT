@@ -320,7 +320,7 @@ async fn handle_login_mode(
 async fn handle_rpc_mode(
     params: Value,
     _config_dir: &Path,
-    mut reader: BufReader<TcpStream>,
+    reader: BufReader<TcpStream>,
     writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
     let cwd = params["cwd"].as_str().map(PathBuf::from);
@@ -361,7 +361,7 @@ async fn handle_rpc_mode(
     let mut server = RpcServer::new(session_path, None, extensions)?;
 
     // Jalankan RPC loop membaca dari socket Android
-    let result = server.run_loop_with_input(&mut reader).await;
+    let result = server.run_loop_with_input(reader).await;
 
     // Bersihkan output sink
     set_output_sink(None);
@@ -2670,9 +2670,9 @@ mod tests {
 
         let mut server = RpcServer::new(None, None, vec![]).unwrap();
         let input = b"{\"type\":\"get_state\",\"id\":\"test_1\"}\n";
-        let mut cursor = Cursor::new(input);
+        let cursor = Cursor::new(input);
 
-        let res = server.run_loop_with_input(&mut cursor).await;
+        let res = server.run_loop_with_input(cursor).await;
         assert!(res.is_ok());
 
         set_output_sink(None);

@@ -4,6 +4,7 @@
 //! Menggantikan `@earendil-works/pi-coding-agent` (`pi --mode rpc`) di Termux
 //! dengan binary native Rust `oopbot`.
 
+use crate::agent::Approver;
 use crate::events::{AgentEvent, EventSink, ToolStatus};
 use crate::gemini::{
     function_response_part, user_message_with_images, BoxError, FunctionCall, GeminiClient,
@@ -15,10 +16,12 @@ use crate::models::{
 };
 use crate::plugins::PluginRegistry;
 use crate::tools::ToolRegistry;
+use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,6 +31,84 @@ static OUTPUT_SINK: RwLock<Option<OutputSink>> = RwLock::new(None);
 pub fn set_output_sink(sink: Option<OutputSink>) {
     if let Ok(mut lock) = OUTPUT_SINK.write() {
         *lock = sink;
+    }
+}
+
+pub type PendingApprovals = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
+
+/// Approver berbasis RPC yang berinteraksi secara asinkron dengan UI Pipkin Android
+/// melalui protokol channel `tool_approval`.
+#[derive(Clone)]
+pub struct RpcApprover {
+    pending: PendingApprovals,
+    counter: Arc<AtomicU64>,
+    timeout: std::time::Duration,
+    emitter: Option<Arc<dyn Fn(&str, Value) + Send + Sync>>,
+}
+
+impl RpcApprover {
+    pub fn new(pending: PendingApprovals) -> Self {
+        Self {
+            pending,
+            counter: Arc::new(AtomicU64::new(1)),
+            timeout: std::time::Duration::from_secs(300), // Default fail-closed setelah 5 menit
+            emitter: None,
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_emitter<F>(mut self, emitter: F) -> Self
+    where
+        F: Fn(&str, Value) + Send + Sync + 'static,
+    {
+        self.emitter = Some(Arc::new(emitter));
+        self
+    }
+}
+
+#[async_trait]
+impl Approver for RpcApprover {
+    async fn approve(&self, tool_name: &str, preview: &str) -> bool {
+        let id_num = self.counter.fetch_add(1, Ordering::SeqCst);
+        let req_id = format!("appr-{}", id_num);
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+
+        {
+            let mut pending = self.pending.lock().unwrap();
+            pending.insert(req_id.clone(), tx);
+        }
+
+        let payload = json!({
+            "kind": "request",
+            "request_id": req_id,
+            "call_id": Value::Null,
+            "tool_name": tool_name,
+            "preview": preview,
+        });
+
+        if let Some(ref em) = self.emitter {
+            em("tool_approval", payload);
+        } else {
+            RpcServer::send_channel("tool_approval", payload);
+        }
+
+        match tokio::time::timeout(self.timeout, rx).await {
+            Ok(Ok(approved)) => approved,
+            Ok(Err(_)) => {
+                // Sender dropped / disconnected -> fail-closed
+                self.pending.lock().unwrap().remove(&req_id);
+                false
+            }
+            Err(_) => {
+                // Timeout -> fail-closed
+                self.pending.lock().unwrap().remove(&req_id);
+                false
+            }
+        }
     }
 }
 
@@ -63,6 +144,7 @@ pub struct RpcServer {
     entry_seq: usize,
     total_tokens: u64,
     total_cost: f64,
+    pub pending_approvals: PendingApprovals,
 }
 
 impl RpcServer {
@@ -165,6 +247,8 @@ impl RpcServer {
         let (session_file, session_id, session_name, ui_messages, llm_history, entry_seq, total_tokens, total_cost) =
             init_or_load_session(&config_dir, &cwd, session_path.as_deref());
 
+        let pending_approvals: PendingApprovals = Arc::new(Mutex::new(HashMap::new()));
+
         let mut server = Self {
             cwd,
             config_dir,
@@ -185,11 +269,28 @@ impl RpcServer {
             entry_seq,
             total_tokens,
             total_cost,
+            pending_approvals,
         };
         server.thinking_level = server
             .active_model_info()
             .clamp_thinking_level(&requested_thinking);
         Ok(server)
+    }
+
+    /// Akses thread-safe ke map approval yang sedang menunggu konfirmasi UI.
+    pub fn pending_approvals(&self) -> PendingApprovals {
+        Arc::clone(&self.pending_approvals)
+    }
+
+    /// Selesaikan permintaan approval tool dengan id tertentu.
+    /// Mengembalikan `true` bila request id ditemukan dan notifikasi terkirim, `false` jika tidak.
+    pub fn resolve_tool_approval(&self, req_id: &str, approved: bool) -> bool {
+        if let Some(sender) = self.pending_approvals.lock().unwrap().remove(req_id) {
+            let _ = sender.send(approved);
+            true
+        } else {
+            false
+        }
     }
 
     /// Pancarkan event widget aktif (misal checklist Todo) dan status channel plugin ke antarmuka aplikasi Android via RPC JSONL.
@@ -1240,13 +1341,13 @@ impl RpcServer {
 
     pub async fn run_loop(&mut self) -> Result<(), BoxError> {
         let stdin = io::stdin();
-        let mut reader = stdin.lock();
-        self.run_loop_with_input(&mut reader).await
+        let reader = io::BufReader::new(stdin);
+        self.run_loop_with_input(reader).await
     }
 
-    pub async fn run_loop_with_input(
+    pub async fn run_loop_with_input<R: BufRead + Send + 'static>(
         &mut self,
-        reader: &mut dyn BufRead,
+        mut reader: R,
     ) -> Result<(), BoxError> {
         // Handshake awal Pipkin Channel (mengumumkan koneksi host siap ke ekstensi/UI)
         Self::send_channel("pipkin", Value::Null);
@@ -1260,14 +1361,50 @@ impl RpcServer {
         );
 
         self.emit_active_widgets();
-        let mut line = String::new();
 
-        loop {
-            line.clear();
-            let bytes = reader.read_line(&mut line)?;
-            if bytes == 0 {
-                break;
+        let pending = Arc::clone(&self.pending_approvals);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+        let _reader_thread = std::thread::spawn(move || {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        // Rutekan pesan tool_approval langsung ke waiter oneshot untuk mencegah deadlock
+                        // jika dispatch loop sedang menantikan completion dari prompt / tool execution.
+                        if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+                            let is_channel =
+                                val["type"] == "pipkin_channel" || val["type"] == "oopbot_channel";
+                            if is_channel && val["topic"] == "tool_approval" {
+                                let data = &val["data"];
+                                let req_id = data["request_id"]
+                                    .as_str()
+                                    .or_else(|| data["requestId"].as_str())
+                                    .unwrap_or_default();
+                                let approved = data["approved"].as_bool().unwrap_or(false);
+                                if !req_id.is_empty() {
+                                    if let Some(sender) = pending.lock().unwrap().remove(req_id) {
+                                        let _ = sender.send(approved);
+                                    }
+                                }
+                            }
+                        }
+                        if tx.send(line.clone()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
             }
+        });
+
+        while let Some(line) = rx.recv().await {
             let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
             if trimmed.is_empty() {
                 continue;
@@ -1462,6 +1599,16 @@ impl RpcServer {
     /// Tangani pesan event masuk dari Android UI atau ekstensi via Pipkin Channel
     async fn handle_channel_message(&mut self, topic: &str, data: &Value) {
         match topic {
+            "tool_approval" => {
+                let req_id = data["request_id"]
+                    .as_str()
+                    .or_else(|| data["requestId"].as_str())
+                    .unwrap_or_default();
+                let approved = data["approved"].as_bool().unwrap_or(false);
+                if !req_id.is_empty() {
+                    self.resolve_tool_approval(req_id, approved);
+                }
+            }
             "background" => {
                 if let Some(action) = data["action"].as_str() {
                     if action == "stop" {
@@ -2602,6 +2749,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn maps_tools_for_pipkin_timeline() {
@@ -2835,9 +2983,9 @@ mod tests {
 {\"type\":\"pipkin_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
 {\"type\":\"oopbot_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
 {\"type\":\"get_state\",\"id\":\"chk_1\"}\n";
-        let mut cursor = Cursor::new(input);
+        let cursor = Cursor::new(input);
 
-        let res = server.run_loop_with_input(&mut cursor).await;
+        let res = server.run_loop_with_input(cursor).await;
         assert!(res.is_ok());
 
         set_output_sink(None);
@@ -3000,6 +3148,161 @@ mod tests {
         assert!(content.contains("\"isError\":true"));
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_rpc_approver_approved() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let emitted = Arc::new(Mutex::new(Vec::new()));
+        let emitted_clone = Arc::clone(&emitted);
+
+        let approver = RpcApprover::new(Arc::clone(&pending))
+            .with_emitter(move |topic, val| {
+                emitted_clone.lock().unwrap().push((topic.to_string(), val));
+            });
+
+        let handle = tokio::spawn(async move {
+            approver.approve("run_shell", "$ rm -rf /tmp/danger").await
+        });
+
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            if !pending.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+
+        let req_id = {
+            let map = pending.lock().unwrap();
+            assert_eq!(map.len(), 1);
+            map.keys().next().unwrap().clone()
+        };
+
+        // Verifikasi event request yang dipancarkan
+        {
+            let events = emitted.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].0, "tool_approval");
+            assert_eq!(events[0].1["kind"], "request");
+            assert_eq!(events[0].1["request_id"], req_id);
+            assert_eq!(events[0].1["tool_name"], "run_shell");
+            assert_eq!(events[0].1["preview"], "$ rm -rf /tmp/danger");
+        }
+
+        // Simulasikan persetujuan dari UI
+        if let Some(tx) = pending.lock().unwrap().remove(&req_id) {
+            let _ = tx.send(true);
+        }
+
+        let approved = handle.await.unwrap();
+        assert!(approved);
+    }
+
+    #[tokio::test]
+    async fn test_rpc_approver_denied() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let approver = RpcApprover::new(Arc::clone(&pending))
+            .with_emitter(|_, _| {});
+
+        let handle = tokio::spawn(async move {
+            approver.approve("run_shell", "$ sudo rm -rf /").await
+        });
+
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            if !pending.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+
+        let req_id = {
+            let map = pending.lock().unwrap();
+            map.keys().next().unwrap().clone()
+        };
+
+        // Simulasikan penolakan dari UI
+        if let Some(tx) = pending.lock().unwrap().remove(&req_id) {
+            let _ = tx.send(false);
+        }
+
+        let approved = handle.await.unwrap();
+        assert!(!approved);
+    }
+
+    #[tokio::test]
+    async fn test_rpc_approver_timeout_fails_closed() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let approver = RpcApprover::new(Arc::clone(&pending))
+            .with_timeout(std::time::Duration::from_millis(50))
+            .with_emitter(|_, _| {});
+
+        // Panggil approve tanpa ada yang menyelesaikan respons -> harus timeout dan return false
+        let approved = approver.approve("run_shell", "reboot").await;
+        assert!(!approved);
+
+        // Pastikan request dibersihkan dari pending map
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_rpc_approver_channel_dropped_fails_closed() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let approver = RpcApprover::new(Arc::clone(&pending))
+            .with_emitter(|_, _| {});
+
+        let handle = tokio::spawn(async move {
+            approver.approve("run_shell", "ls").await
+        });
+
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            if !pending.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+
+        // Ambil sender dan drop tanpa send -> simulasikan channel putus
+        {
+            let mut map = pending.lock().unwrap();
+            let _sender = map.drain().next();
+        }
+
+        let approved = handle.await.unwrap();
+        assert!(!approved);
+    }
+
+    #[tokio::test]
+    async fn test_rpc_server_resolve_tool_approval() {
+        let server = RpcServer::new(None, None, vec![]).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+
+        server.pending_approvals().lock().unwrap().insert("appr-99".to_string(), tx);
+
+        // Sukses me-resolve approval yang ada
+        assert!(server.resolve_tool_approval("appr-99", true));
+        assert_eq!(rx.await.unwrap(), true);
+
+        // Memanggil lagi untuk ID yang sama atau id fiktif mengembalikan false
+        assert!(!server.resolve_tool_approval("appr-99", true));
+        assert!(!server.resolve_tool_approval("unknown-id", false));
+    }
+
+    #[tokio::test]
+    async fn test_rpc_loop_tool_approval_pipkin_channel_roundtrip() {
+        let mut server = RpcServer::new(None, None, vec![]).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        server.pending_approvals().lock().unwrap().insert("appr-42".to_string(), tx);
+
+        let input = b"\
+{\"type\":\"pipkin_channel\",\"topic\":\"tool_approval\",\"data\":{\"kind\":\"response\",\"request_id\":\"appr-42\",\"approved\":true}}\n\
+{\"type\":\"get_state\",\"id\":\"chk_approval\"}\n";
+        let cursor = Cursor::new(input);
+
+        let res = server.run_loop_with_input(cursor).await;
+        assert!(res.is_ok());
+
+        // Verifikasi bahwa waiter oneshot menerima approval = true dari stream JSONL
+        assert_eq!(rx.await.unwrap(), true);
     }
 }
 
