@@ -66,8 +66,9 @@ pub trait Agent {
 }
 
 /// Kebijakan persetujuan sebelum tool "berbahaya" dijalankan.
+#[async_trait]
 pub trait Approver: Send + Sync {
-    fn approve(&self, tool_name: &str, preview: &str) -> bool;
+    async fn approve(&self, tool_name: &str, preview: &str) -> bool;
 }
 
 /// Approver interaktif via terminal. Jawaban:
@@ -84,8 +85,9 @@ impl CliApprover {
     }
 }
 
+#[async_trait]
 impl Approver for CliApprover {
-    fn approve(&self, tool_name: &str, preview: &str) -> bool {
+    async fn approve(&self, tool_name: &str, preview: &str) -> bool {
         if self.always.load(Ordering::Relaxed) {
             return true;
         }
@@ -381,7 +383,7 @@ impl GeminiAgent {
             collector,
         );
 
-        if requires_confirmation && !self.approver.approve(tool.name(), &preview) {
+        if requires_confirmation && !self.approver.approve(tool.name(), &preview).await {
             let rejected =
                 json!({ "error": "User menolak eksekusi tool ini. Tanyakan alternatif ke user." });
             self.emit(
@@ -711,11 +713,11 @@ mod tests {
         assert_eq!(input.images[0].1, "base64data");
     }
 
-    #[test]
-    fn cli_approver_auto_approve() {
+    #[tokio::test]
+    async fn cli_approver_auto_approve() {
         let approver = CliApprover::new(true);
-        assert!(approver.approve("run_shell", "$ ls -la"));
-        assert!(approver.approve("run_shell", "$ rm -rf /"));
+        assert!(approver.approve("run_shell", "$ ls -la").await);
+        assert!(approver.approve("run_shell", "$ rm -rf /").await);
     }
 
     #[test]
