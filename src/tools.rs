@@ -22,6 +22,11 @@ pub trait Tool: Send + Sync {
     fn requires_confirmation(&self) -> bool {
         false
     }
+    /// Apakah pemanggilan dengan argumen spesifik ini membutuhkan konfirmasi user.
+    /// Default mendelegasikan ke `requires_confirmation()`.
+    fn requires_confirmation_for_args(&self, _args: &Value) -> bool {
+        self.requires_confirmation()
+    }
     /// Ringkasan singkat yang ditampilkan ke user sebelum/saat eksekusi.
     fn preview(&self, args: &Value) -> String {
         args.to_string()
@@ -131,7 +136,11 @@ impl Tool for RunShell {
         })
     }
     fn requires_confirmation(&self) -> bool {
-        true
+        false
+    }
+    fn requires_confirmation_for_args(&self, args: &Value) -> bool {
+        let cmd = args["command"].as_str().unwrap_or("").trim();
+        is_dangerous_shell_command(cmd)
     }
     fn preview(&self, args: &Value) -> String {
         format!("$ {}", args["command"].as_str().unwrap_or("<kosong>"))
@@ -162,6 +171,190 @@ impl Tool for RunShell {
             })),
         }
     }
+}
+
+/// Deteksi apakah suatu perintah shell berpotensi destruktif/berbahaya terhadap sistem
+/// atau repositori (misalnya `rm -rf`, format disk, shutdown, git reset --hard, dsb.).
+///
+/// Perintah aman seperti `ls`, `cat`, `cargo test`, `git status`, `git diff`, `mkdir`
+/// akan mengembalikan `false` agar agen dapat bekerja otonom tanpa mengganggu user.
+pub fn is_dangerous_shell_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Deteksi fork-bomb klasik
+    let compact = trimmed.replace(' ', "");
+    if compact.contains(":(){:|:&};:") || compact.contains(":(){:|:&}") {
+        return true;
+    }
+
+    // Pisahkan multi-command pipeline / chaining: ;, &&, ||, |, \n, &
+    let normalized = trimmed
+        .replace("&&", "\n")
+        .replace("||", "\n")
+        .replace([';', '|', '&'], "\n");
+
+    for raw_sub in normalized.lines() {
+        let sub = raw_sub.trim();
+        if sub.is_empty() {
+            continue;
+        }
+
+        // Cek redirection berbahaya ke block device atau filesystem (/dev/sd*, /dev/block/*, dsb.)
+        // Mengecualikan device aman umum: /dev/null, /dev/zero, /dev/full, /dev/random, /dev/urandom, /dev/tty*, /dev/pts/*, /dev/stdout, /dev/stderr
+        if let Some(dev_idx) = sub.find("> /dev/") {
+            let target = &sub[dev_idx + "> /dev/".len()..];
+            let dev_target = target.split_whitespace().next().unwrap_or("");
+            let safe_devs = ["null", "zero", "full", "random", "urandom", "stdout", "stderr"];
+            let is_safe_dev = safe_devs.contains(&dev_target)
+                || dev_target.starts_with("pts/")
+                || dev_target.starts_with("tty");
+            if !is_safe_dev {
+                return true;
+            }
+        }
+
+        let words: Vec<&str> = sub.split_whitespace().collect();
+        if words.is_empty() {
+            continue;
+        }
+
+        // Lewati env variable bindings di awal (misal FOO=bar BAZ=1 cmd ...)
+        let mut idx = 0;
+        while idx < words.len() && words[idx].contains('=') && !words[idx].starts_with('-') {
+            idx += 1;
+        }
+        if idx >= words.len() {
+            continue;
+        }
+
+        // Lewati command wrapper seperti sudo, doas, busybox, toybox, exec, command
+        let mut base_cmd = words[idx];
+        if ["sudo", "doas", "busybox", "toybox", "exec", "command", "builtin"].contains(&base_cmd) {
+            idx += 1;
+            if idx < words.len() {
+                base_cmd = words[idx];
+            } else {
+                continue;
+            }
+        }
+
+        let base_cmd_name = std::path::Path::new(base_cmd)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(base_cmd);
+
+        let args = &words[idx + 1..];
+
+        match base_cmd_name {
+            "rm" => {
+                // Berbahaya jika ada flag rekursif: -r, -R, --recursive, -rf, -fr, dsb.
+                let has_recursive = args.iter().any(|arg| {
+                    if *arg == "--recursive" {
+                        return true;
+                    }
+                    if arg.starts_with('-') && !arg.starts_with("--") {
+                        let flags = &arg[1..];
+                        return flags.contains('r') || flags.contains('R');
+                    }
+                    false
+                });
+                if has_recursive {
+                    return true;
+                }
+                // Berbahaya jika target adalah root, home, atau wildcard berisiko
+                let targets_root_or_all = args.iter().any(|arg| {
+                    let a = arg.trim_matches(|c| c == '\'' || c == '"');
+                    matches!(a, "/" | "/*" | "~" | "~/*" | "*" | ".*")
+                });
+                if targets_root_or_all {
+                    return true;
+                }
+            }
+            "rmdir" => return true,
+            "mkfs" | "fdisk" | "parted" | "gdisk" | "sfdisk" | "wipefs" | "shred" => return true,
+            cmd if cmd.starts_with("mkfs.") => return true,
+            "dd" => {
+                // Cek apakah menulis ke block device
+                for arg in args {
+                    if let Some(target) = arg.strip_prefix("of=/dev/") {
+                        let safe_devs = ["null", "zero", "full", "random", "urandom", "stdout", "stderr"];
+                        let is_safe = safe_devs.contains(&target)
+                            || target.starts_with("pts/")
+                            || target.starts_with("tty");
+                        if !is_safe {
+                            return true;
+                        }
+                    }
+                }
+            }
+            "reboot" | "shutdown" | "poweroff" | "halt" => return true,
+            "init" => {
+                if args.iter().any(|&a| a == "0" || a == "6") {
+                    return true;
+                }
+            }
+            "git" => {
+                // Periksa subcommand git
+                if !args.is_empty() {
+                    match args[0] {
+                        "reset" if args.contains(&"--hard") => return true,
+                        "clean" => {
+                            let has_force = args.iter().any(|arg| {
+                                if *arg == "--force" {
+                                    return true;
+                                }
+                                if arg.starts_with('-') && !arg.starts_with("--") {
+                                    return arg[1..].contains('f');
+                                }
+                                false
+                            });
+                            if has_force {
+                                return true;
+                            }
+                        }
+                        "push" => {
+                            let has_force = args.iter().any(|arg| {
+                                *arg == "--force"
+                                    || *arg == "-f"
+                                    || *arg == "--force-with-lease"
+                                    || arg.starts_with('+')
+                            });
+                            if has_force {
+                                return true;
+                            }
+                        }
+                        "branch" if args.contains(&"-D") => return true,
+                        "checkout" if args.iter().any(|&a| a == "-f" || a == "--force") => {
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "chmod" | "chown" => {
+                let has_recursive = args.iter().any(|arg| *arg == "-R" || *arg == "--recursive");
+                if has_recursive {
+                    let targets_system = args.iter().any(|arg| {
+                        let a = arg.trim_matches(|c| c == '\'' || c == '"');
+                        matches!(
+                            a,
+                            "/" | "/system" | "/data" | "/vendor" | "/etc" | "/bin" | "/usr" | "~" | "$HOME"
+                        )
+                    });
+                    if targets_system {
+                        return true;
+                    }
+                }
+            }
+            "fastboot" | "flash_image" => return true,
+            _ => {}
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -355,5 +548,96 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("timeout"));
+    }
+
+    #[test]
+    fn test_is_dangerous_shell_command_safe_cases() {
+        let safe_cmds = [
+            "ls -la",
+            "cat src/main.rs",
+            "cargo test --locked",
+            "cargo check",
+            "git status",
+            "git diff",
+            "git log -n 5",
+            "git branch",
+            "git checkout main",
+            "git add .",
+            "git commit -m 'feat: something'",
+            "git push origin main",
+            "mkdir -p src/new_dir",
+            "echo 'hello world' > file.txt",
+            "echo 'log' > /dev/null 2>&1",
+            "python3 script.py",
+            "npm run build",
+            "chmod 755 run.sh",
+            "dd if=/dev/zero of=test.img bs=1M count=10",
+        ];
+
+        let shell_tool = RunShell;
+        for cmd in safe_cmds {
+            assert!(
+                !is_dangerous_shell_command(cmd),
+                "Perintah seharusnya aman (otonom): {}",
+                cmd
+            );
+            assert!(
+                !shell_tool.requires_confirmation_for_args(&json!({ "command": cmd })),
+                "Tool RunShell seharusnya tidak meminta konfirmasi: {}",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_dangerous_shell_command_dangerous_cases() {
+        let dangerous_cmds = [
+            "rm -rf /tmp/test",
+            "rm -r target",
+            "rm -rf /",
+            "rm -f /",
+            "rm *",
+            "rmdir old_dir",
+            "git reset --hard HEAD~1",
+            "git clean -fd",
+            "git clean -f",
+            "git push --force origin main",
+            "git push -f",
+            "git push origin +feature",
+            "git branch -D old_branch",
+            "reboot",
+            "shutdown -h now",
+            "poweroff",
+            "halt",
+            "init 0",
+            "init 6",
+            "mkfs.ext4 /dev/sdb1",
+            "fdisk /dev/sda",
+            "parted /dev/sda",
+            "wipefs -a /dev/sda",
+            "shred -u secret.txt",
+            "dd if=/dev/zero of=/dev/sda",
+            ":(){ :|:& };:",
+            "chmod -R 777 /",
+            "chmod -R 777 /system",
+            "chown -R root /",
+            "fastboot flash boot boot.img",
+            "echo test > /dev/sda",
+            "cargo build && rm -rf /tmp/build",
+        ];
+
+        let shell_tool = RunShell;
+        for cmd in dangerous_cmds {
+            assert!(
+                is_dangerous_shell_command(cmd),
+                "Perintah seharusnya berbahaya (minta izin): {}",
+                cmd
+            );
+            assert!(
+                shell_tool.requires_confirmation_for_args(&json!({ "command": cmd })),
+                "Tool RunShell seharusnya meminta konfirmasi: {}",
+                cmd
+            );
+        }
     }
 }

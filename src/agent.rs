@@ -9,7 +9,8 @@ use crate::events::{
     ToolStatus,
 };
 use crate::gemini::{
-    function_response_part, user_text, BoxError, FunctionCall, GeminiClient, GenerationOptions,
+    function_response_part, user_message_with_images, user_text, BoxError, FunctionCall,
+    GeminiClient, GenerationOptions, TokenUsage,
 };
 use crate::models::{ModelCatalog, ModelInfo};
 use crate::session::{ChatSession, WorkspaceTabs};
@@ -21,11 +22,46 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// Input satu giliran obrolan: prompt teks dan daftar gambar inline opsional.
+#[derive(Debug, Clone, Default)]
+pub struct ChatInput {
+    pub text: String,
+    pub images: Vec<(String, String)>, // (mime, base64) — kosong di CLI/FFI
+}
+
+impl ChatInput {
+    pub fn text_only(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            images: Vec::new(),
+        }
+    }
+
+    pub fn with_images(text: impl Into<String>, images: Vec<(String, String)>) -> Self {
+        Self {
+            text: text.into(),
+            images,
+        }
+    }
+}
+
+/// Hasil satu giliran obrolan agen: teks jawaban asisten, rekaman event,
+/// jumlah langkah tool, status penyelesaian, dan akumulasi penggunaan token.
+#[derive(Debug, Clone)]
+pub struct TurnOutcome {
+    pub text: String,
+    pub events: Vec<AgentEvent>,
+    pub steps: usize,
+    pub outcome: StepsOutcome,
+    pub usage: Option<TokenUsage>,
+}
+
 /// Interface agen (OOP).
 #[async_trait]
 pub trait Agent {
     fn get_name(&self) -> &str;
     async fn chat(&self, prompt: &str) -> Result<String, BoxError>;
+    async fn chat_turn(&self, input: &ChatInput) -> Result<TurnOutcome, BoxError>;
     fn clear_memory(&self);
 }
 
@@ -331,7 +367,7 @@ impl GeminiAgent {
         };
 
         let preview = tool.preview(&call.args);
-        let requires_confirmation = tool.requires_confirmation();
+        let requires_confirmation = tool.requires_confirmation_for_args(&call.args);
 
         self.emit(
             AgentEvent::ToolCallStart {
@@ -404,17 +440,36 @@ impl Agent for GeminiAgent {
     }
 
     async fn chat(&self, prompt: &str) -> Result<String, BoxError> {
+        let outcome = self.chat_turn(&ChatInput::text_only(prompt)).await?;
+        match outcome.outcome {
+            StepsOutcome::Done => Ok(outcome.text),
+            StepsOutcome::Stopped | StepsOutcome::Working => Err(format!(
+                "Batas {} langkah tool tercapai. Ketik 'lanjut' untuk meneruskan.",
+                self.max_steps
+            )
+            .into()),
+        }
+    }
+
+    async fn chat_turn(&self, input: &ChatInput) -> Result<TurnOutcome, BoxError> {
         let (session_id, active_model, mut history) = {
             let tabs = self.tabs.lock().unwrap();
             let s = tabs.active();
             (s.id.clone(), s.model.clone(), s.history.clone())
         };
 
-        history.push(user_text(prompt));
+        let user_msg = if input.images.is_empty() {
+            user_text(&input.text)
+        } else {
+            user_message_with_images(&input.text, &input.images)
+        };
+        history.push(user_msg);
+
         let decls = self.tools.declarations();
         let collector = MemoryEventCollector::new();
         let turn_started = Instant::now();
         let mut tool_steps = 0usize;
+        let mut total_usage: Option<TokenUsage> = None;
 
         let model_info = self.active_model_info();
         let gen_options = GenerationOptions {
@@ -447,6 +502,12 @@ impl Agent for GeminiAgent {
                 .await?;
             history.push(turn.raw_content.clone());
 
+            if let Some(u) = turn.usage {
+                let cur = total_usage.get_or_insert(TokenUsage::default());
+                cur.input_tokens += u.input_tokens;
+                cur.output_tokens += u.output_tokens;
+            }
+
             for thought in &turn.thoughts {
                 self.emit(
                     AgentEvent::Thinking {
@@ -473,15 +534,22 @@ impl Agent for GeminiAgent {
                     &collector,
                 );
 
-                let folded = MemoryEventCollector::fold_turn(prompt, &collector.take_events());
+                let events = collector.take_events();
+                let folded = MemoryEventCollector::fold_turn(&input.text, &events);
                 let mut tabs = self.tabs.lock().unwrap();
                 let active = tabs.active_mut();
-                active.update_title_from_prompt(prompt);
+                active.update_title_from_prompt(&input.text);
                 active.history = history;
                 active.timeline.extend(folded);
                 self.persist_tabs(&tabs);
 
-                return Ok(turn.text);
+                return Ok(TurnOutcome {
+                    text: turn.text,
+                    events,
+                    steps: tool_steps,
+                    outcome: StepsOutcome::Done,
+                    usage: total_usage,
+                });
             }
 
             if !turn.text.is_empty() {
@@ -511,19 +579,22 @@ impl Agent for GeminiAgent {
             },
             &collector,
         );
-        let folded = MemoryEventCollector::fold_turn(prompt, &collector.take_events());
+        let events = collector.take_events();
+        let folded = MemoryEventCollector::fold_turn(&input.text, &events);
         let mut tabs = self.tabs.lock().unwrap();
         let active = tabs.active_mut();
-        active.update_title_from_prompt(prompt);
+        active.update_title_from_prompt(&input.text);
         active.history = history;
         active.timeline.extend(folded);
         self.persist_tabs(&tabs);
 
-        Err(format!(
-            "Batas {} langkah tool tercapai. Ketik 'lanjut' untuk meneruskan.",
-            self.max_steps
-        )
-        .into())
+        Ok(TurnOutcome {
+            text: String::new(),
+            events,
+            steps: tool_steps,
+            outcome: StepsOutcome::Stopped,
+            usage: total_usage,
+        })
     }
 
     fn clear_memory(&self) {
@@ -617,5 +688,53 @@ fn save_token_to_user_env(api_key: &str, base_url: Option<&str>, model: &str) {
         content.push_str(&format!("OOPBOT_MODEL={}\n", model));
     }
     let _ = std::fs::write(&env_path, content);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_input_text_only_constructs_correctly() {
+        let input = ChatInput::text_only("halo dunia");
+        assert_eq!(input.text, "halo dunia");
+        assert!(input.images.is_empty());
+    }
+
+    #[test]
+    fn chat_input_with_images_constructs_correctly() {
+        let images = vec![("image/png".to_string(), "base64data".to_string())];
+        let input = ChatInput::with_images("analisis gambar ini", images.clone());
+        assert_eq!(input.text, "analisis gambar ini");
+        assert_eq!(input.images.len(), 1);
+        assert_eq!(input.images[0].0, "image/png");
+        assert_eq!(input.images[0].1, "base64data");
+    }
+
+    #[test]
+    fn cli_approver_auto_approve() {
+        let approver = CliApprover::new(true);
+        assert!(approver.approve("run_shell", "$ ls -la"));
+        assert!(approver.approve("run_shell", "$ rm -rf /"));
+    }
+
+    #[test]
+    fn turn_outcome_aggregates_usage_and_steps() {
+        let outcome = TurnOutcome {
+            text: "Jawaban asisten".to_string(),
+            events: vec![],
+            steps: 2,
+            outcome: StepsOutcome::Done,
+            usage: Some(TokenUsage {
+                input_tokens: 150,
+                output_tokens: 80,
+            }),
+        };
+
+        assert_eq!(outcome.steps, 2);
+        assert_eq!(outcome.outcome, StepsOutcome::Done);
+        assert_eq!(outcome.usage.unwrap().input_tokens, 150);
+        assert_eq!(outcome.usage.unwrap().output_tokens, 80);
+    }
 }
 
