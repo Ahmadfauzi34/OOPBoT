@@ -202,9 +202,9 @@ internal object HostLauncher {
     exec </dev/null
     export OOPBOT_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
     export OOPBOT_CONFIG_DIR="$HOME/.oopbot"
-    export PIPKIN_ROOT="$$OOPBOT_ROOT"
-    export PI_CODING_AGENT_DIR="$$OOPBOT_CONFIG_DIR"
-    mkdir -p "$$OOPBOT_ROOT" "$$OOPBOT_CONFIG_DIR"
+    export PIPKIN_ROOT="$OOPBOT_ROOT"
+    export PI_CODING_AGENT_DIR="$OOPBOT_CONFIG_DIR"
+    mkdir -p "$OOPBOT_ROOT" "$OOPBOT_CONFIG_DIR"
 
     mode=$1
     port=$2
@@ -220,7 +220,7 @@ internal object HostLauncher {
           ;;
       esac
     elif command -v node >/dev/null 2>&1; then
-      host="$$OOPBOT_ROOT/host.mjs"
+      host="$OOPBOT_ROOT/host.mjs"
       if [ ! -f "$host" ] || ! printf '%s' "$@" 2>/dev/null | cmp -s - "$host"; then
         printf '%s' "$@" > "$host.$$.tmp" && mv -f "$host.$$.tmp" "$host"
       fi
