@@ -4,6 +4,7 @@
 //! Menggantikan `@earendil-works/pi-coding-agent` (`pi --mode rpc`) di Termux
 //! dengan binary native Rust `oopbot`.
 
+use crate::events::{AgentEvent, EventSink, ToolStatus};
 use crate::gemini::{
     function_response_part, user_message_with_images, BoxError, FunctionCall, GeminiClient,
     GenerationOptions, DEFAULT_GEMINI_BASE_URL,
@@ -1633,6 +1634,394 @@ fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool) {
     }
 }
 
+/// Status UI RPC yang dibagikan antara RpcServer dan RpcEventSink.
+#[derive(Debug, Clone, Default)]
+pub struct RpcUiState {
+    pub ui_messages: Vec<Value>,
+    pub session_file: Option<PathBuf>,
+    pub entry_seq: usize,
+    pub total_tokens: u64,
+    pub total_cost: f64,
+}
+
+impl RpcUiState {
+    pub fn new(session_file: Option<PathBuf>, entry_seq: usize) -> Self {
+        Self {
+            ui_messages: Vec::new(),
+            session_file,
+            entry_seq,
+            total_tokens: 0,
+            total_cost: 0.0,
+        }
+    }
+
+    pub fn append_session_entry(&mut self, entry_type: &str, mut payload: Value) {
+        let Some(path) = &self.session_file else {
+            return;
+        };
+        let id = format!("e{}", self.entry_seq);
+        let parent_id = if self.entry_seq == 0 {
+            Value::Null
+        } else {
+            json!(format!("e{}", self.entry_seq - 1))
+        };
+        self.entry_seq += 1;
+
+        payload["type"] = json!(entry_type);
+        payload["id"] = json!(id);
+        payload["parentId"] = parent_id;
+        payload["timestamp"] = json!(iso_now());
+
+        if let Ok(line) = serde_json::to_string(&payload) {
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = writeln!(file, "{}", line);
+            }
+        }
+    }
+}
+
+/// Status internal pelacakan langkah pesan asisten untuk satu giliran obrolan.
+#[derive(Debug, Default)]
+struct RpcEventSinkInternal {
+    step_start_ms: u64,
+    current_content_idx: usize,
+    content_blocks: Vec<Value>,
+    assistant_msg_started: bool,
+    pending_tool_calls: HashMap<String, (String, Value)>,
+}
+
+/// Sink event yang menerjemahkan deretan [`AgentEvent`] dari loop agen menjadi
+/// baris-baris JSONL protokol Pipkin (`agent_start`, `message_start`, `message_update`,
+/// `tool_execution_start/end`, `toolResult`, `turn_end`, dll.).
+pub struct RpcEventSink {
+    ui_state: Arc<Mutex<RpcUiState>>,
+    internal: Mutex<RpcEventSinkInternal>,
+    emitter: Option<Box<dyn Fn(&Value) + Send + Sync>>,
+}
+
+impl RpcEventSink {
+    pub fn new(ui_state: Arc<Mutex<RpcUiState>>) -> Self {
+        Self {
+            ui_state,
+            internal: Mutex::new(RpcEventSinkInternal::default()),
+            emitter: None,
+        }
+    }
+
+    pub fn with_emitter(
+        ui_state: Arc<Mutex<RpcUiState>>,
+        emitter: impl Fn(&Value) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            ui_state,
+            internal: Mutex::new(RpcEventSinkInternal::default()),
+            emitter: Some(Box::new(emitter)),
+        }
+    }
+
+    fn emit(&self, val: &Value) {
+        if let Some(emitter) = &self.emitter {
+            emitter(val);
+        } else {
+            RpcServer::send_line(val);
+        }
+    }
+}
+
+impl EventSink for RpcEventSink {
+    fn on_event(&self, event: &AgentEvent) {
+        match event {
+            AgentEvent::TurnStart {
+                session_id: _,
+                model: _,
+            } => {
+                let mut internal = self.internal.lock().unwrap();
+                internal.step_start_ms = epoch_ms();
+                internal.current_content_idx = 0;
+                internal.content_blocks.clear();
+                internal.assistant_msg_started = false;
+                internal.pending_tool_calls.clear();
+
+                self.emit(&json!({ "type": "agent_start" }));
+            }
+            AgentEvent::Thinking {
+                step_index: _,
+                text,
+            } => {
+                if text.trim().is_empty() {
+                    return;
+                }
+                let mut internal = self.internal.lock().unwrap();
+                if !internal.assistant_msg_started {
+                    self.emit(&json!({
+                        "type": "message_start",
+                        "message": {
+                            "role": "assistant",
+                            "content": [],
+                            "timestamp": internal.step_start_ms
+                        }
+                    }));
+                    internal.assistant_msg_started = true;
+                }
+                let idx = internal.current_content_idx;
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_start",
+                        "contentIndex": idx
+                    }
+                }));
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_end",
+                        "contentIndex": idx,
+                        "content": text
+                    }
+                }));
+                internal.content_blocks.push(json!({
+                    "type": "thinking",
+                    "thinking": text
+                }));
+                internal.current_content_idx += 1;
+            }
+            AgentEvent::ToolCallStart {
+                step_index: _,
+                call_id,
+                tool_name,
+                args,
+                preview: _,
+                requires_confirmation: _,
+            } => {
+                let (ui_tool_name, ui_args) = map_tool_for_pipkin_ui(tool_name, args);
+                let mut internal = self.internal.lock().unwrap();
+                if !internal.assistant_msg_started {
+                    self.emit(&json!({
+                        "type": "message_start",
+                        "message": {
+                            "role": "assistant",
+                            "content": [],
+                            "timestamp": internal.step_start_ms
+                        }
+                    }));
+                    internal.assistant_msg_started = true;
+                }
+                let idx = internal.current_content_idx;
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "toolcall_start",
+                        "contentIndex": idx,
+                        "id": call_id,
+                        "toolName": ui_tool_name
+                    }
+                }));
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "toolcall_end",
+                        "contentIndex": idx,
+                        "toolCall": {
+                            "id": call_id,
+                            "name": ui_tool_name,
+                            "arguments": ui_args
+                        }
+                    }
+                }));
+                internal.content_blocks.push(json!({
+                    "type": "toolCall",
+                    "id": call_id,
+                    "name": ui_tool_name,
+                    "arguments": ui_args
+                }));
+                internal.current_content_idx += 1;
+                internal
+                    .pending_tool_calls
+                    .insert(call_id.clone(), (ui_tool_name.clone(), ui_args.clone()));
+
+                self.emit(&json!({
+                    "type": "tool_execution_start",
+                    "toolCallId": call_id,
+                    "toolName": ui_tool_name,
+                    "args": ui_args
+                }));
+            }
+            AgentEvent::ToolCallEnd {
+                step_index: _,
+                call_id,
+                tool_name,
+                status,
+                output,
+                duration_ms: _,
+            } => {
+                let mut internal = self.internal.lock().unwrap();
+                if internal.assistant_msg_started {
+                    let assistant_msg = json!({
+                        "role": "assistant",
+                        "content": internal.content_blocks.clone(),
+                        "stopReason": "toolUse",
+                        "timestamp": internal.step_start_ms,
+                        "durationMs": epoch_ms().saturating_sub(internal.step_start_ms),
+                    });
+                    self.emit(&json!({
+                        "type": "message_end",
+                        "message": assistant_msg
+                    }));
+                    {
+                        let mut state = self.ui_state.lock().unwrap();
+                        state.ui_messages.push(assistant_msg.clone());
+                        state.append_session_entry("message", json!({ "message": assistant_msg }));
+                    }
+                    internal.assistant_msg_started = false;
+                    internal.content_blocks.clear();
+                    internal.current_content_idx = 0;
+                }
+
+                let (ui_tool_name, _) = internal
+                    .pending_tool_calls
+                    .remove(call_id)
+                    .unwrap_or_else(|| map_tool_for_pipkin_ui(tool_name, &Value::Null));
+
+                let (display_text, is_error) = match status {
+                    ToolStatus::Rejected => {
+                        let msg = output["error"]
+                            .as_str()
+                            .unwrap_or("User menolak eksekusi tool ini. Tanyakan alternatif ke user.")
+                            .to_string();
+                        (msg, true)
+                    }
+                    ToolStatus::Error => {
+                        let msg = output["error"].as_str().unwrap_or("error").to_string();
+                        (msg, true)
+                    }
+                    ToolStatus::Done => {
+                        let (text, is_err) = format_tool_output(tool_name, output);
+                        (text, is_err)
+                    }
+                    _ => {
+                        let (text, is_err) = format_tool_output(tool_name, output);
+                        (text, is_err)
+                    }
+                };
+
+                self.emit(&json!({
+                    "type": "tool_execution_end",
+                    "toolCallId": call_id,
+                    "toolName": ui_tool_name,
+                    "isError": is_error,
+                    "result": {
+                        "content": [{ "type": "text", "text": display_text }]
+                    }
+                }));
+
+                let tool_result_msg = json!({
+                    "role": "toolResult",
+                    "toolCallId": call_id,
+                    "toolName": ui_tool_name,
+                    "isError": is_error,
+                    "content": [{ "type": "text", "text": display_text }],
+                    "timestamp": epoch_ms()
+                });
+
+                self.emit(&json!({
+                    "type": "message_end",
+                    "message": tool_result_msg
+                }));
+
+                {
+                    let mut state = self.ui_state.lock().unwrap();
+                    state.ui_messages.push(tool_result_msg.clone());
+                    state.append_session_entry("message", json!({ "message": tool_result_msg }));
+                }
+            }
+            AgentEvent::AssistantText { text } => {
+                let mut internal = self.internal.lock().unwrap();
+                if !internal.assistant_msg_started {
+                    self.emit(&json!({
+                        "type": "message_start",
+                        "message": {
+                            "role": "assistant",
+                            "content": [],
+                            "timestamp": internal.step_start_ms
+                        }
+                    }));
+                    internal.assistant_msg_started = true;
+                }
+
+                let idx = internal.current_content_idx;
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_start",
+                        "contentIndex": idx
+                    }
+                }));
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_delta",
+                        "contentIndex": idx,
+                        "delta": text
+                    }
+                }));
+                self.emit(&json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_end",
+                        "contentIndex": idx,
+                        "content": text
+                    }
+                }));
+
+                internal.content_blocks.push(json!({
+                    "type": "text",
+                    "text": text
+                }));
+                internal.current_content_idx += 1;
+
+                let assistant_msg = json!({
+                    "role": "assistant",
+                    "content": internal.content_blocks.clone(),
+                    "stopReason": "stop",
+                    "timestamp": internal.step_start_ms,
+                    "durationMs": epoch_ms().saturating_sub(internal.step_start_ms),
+                });
+
+                self.emit(&json!({
+                    "type": "message_end",
+                    "message": assistant_msg
+                }));
+
+                {
+                    let mut state = self.ui_state.lock().unwrap();
+                    state.ui_messages.push(assistant_msg.clone());
+                    state.append_session_entry("message", json!({ "message": assistant_msg }));
+                }
+
+                internal.assistant_msg_started = false;
+                internal.content_blocks.clear();
+                internal.current_content_idx = 0;
+            }
+            AgentEvent::TurnEnd {
+                steps_count: _,
+                duration_ms: _,
+                outcome: _,
+            } => {
+                self.emit(&json!({ "type": "turn_end" }));
+                self.emit(&json!({ "type": "agent_end" }));
+                self.emit(&json!({ "type": "agent_settled", "aborted": false }));
+            }
+        }
+    }
+}
+
 fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, ProviderEndpoint> {
     let mut map = HashMap::new();
     let auth_json = read_json_file(&config_dir.join("auth.json"));
@@ -2474,6 +2863,143 @@ mod tests {
 
         // Pastikan tidak ada error komplain pipkin_channel
         assert!(!written.contains("tidak dikenal"));
+    }
+
+    #[test]
+    fn test_rpc_event_sink_text_turn() {
+        use crate::events::StepsOutcome;
+
+        let ui_state = Arc::new(Mutex::new(RpcUiState::default()));
+        let emitted = Arc::new(Mutex::new(Vec::new()));
+        let emitted_clone = emitted.clone();
+        let sink = RpcEventSink::with_emitter(ui_state.clone(), move |val| {
+            emitted_clone.lock().unwrap().push(val.clone());
+        });
+
+        sink.on_event(&AgentEvent::TurnStart {
+            session_id: "s1".to_string(),
+            model: "gemini-2.5-flash".to_string(),
+        });
+        sink.on_event(&AgentEvent::Thinking {
+            step_index: 1,
+            text: "Sedang menganalisis pertanyaan".to_string(),
+        });
+        sink.on_event(&AgentEvent::AssistantText {
+            text: "Halo! Ada yang bisa saya bantu?".to_string(),
+        });
+        sink.on_event(&AgentEvent::TurnEnd {
+            steps_count: 0,
+            duration_ms: 120,
+            outcome: StepsOutcome::Done,
+        });
+
+        let lines = emitted.lock().unwrap().clone();
+        let types: Vec<&str> = lines.iter().filter_map(|l| l["type"].as_str()).collect();
+
+        assert_eq!(types[0], "agent_start");
+        assert_eq!(types[1], "message_start");
+        assert_eq!(types[2], "message_update"); // thinking_start
+        assert_eq!(types[3], "message_update"); // thinking_end
+        assert_eq!(types[4], "message_update"); // text_start
+        assert_eq!(types[5], "message_update"); // text_delta
+        assert_eq!(types[6], "message_update"); // text_end
+        assert_eq!(types[7], "message_end");
+        assert_eq!(types[8], "turn_end");
+        assert_eq!(types[9], "agent_end");
+        assert_eq!(types[10], "agent_settled");
+
+        let state = ui_state.lock().unwrap();
+        assert_eq!(state.ui_messages.len(), 1);
+        assert_eq!(state.ui_messages[0]["role"], "assistant");
+        assert_eq!(state.ui_messages[0]["stopReason"], "stop");
+    }
+
+    #[test]
+    fn test_rpc_event_sink_tool_turn_and_rejection() {
+        use crate::events::StepsOutcome;
+
+        let tmp = std::env::temp_dir().join(format!("oopbot-sink-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let session_file = tmp.join("test_session.jsonl");
+        let ui_state = Arc::new(Mutex::new(RpcUiState::new(Some(session_file.clone()), 0)));
+
+        let emitted = Arc::new(Mutex::new(Vec::new()));
+        let emitted_clone = emitted.clone();
+        let sink = RpcEventSink::with_emitter(ui_state.clone(), move |val| {
+            emitted_clone.lock().unwrap().push(val.clone());
+        });
+
+        sink.on_event(&AgentEvent::TurnStart {
+            session_id: "s2".to_string(),
+            model: "gemini-2.5-flash".to_string(),
+        });
+
+        // 1. Tool Call biasa (run_shell -> dipetakan ke "bash")
+        sink.on_event(&AgentEvent::ToolCallStart {
+            step_index: 1,
+            call_id: "call_1".to_string(),
+            tool_name: "run_shell".to_string(),
+            args: json!({ "command": "echo test" }),
+            preview: "$ echo test".to_string(),
+            requires_confirmation: false,
+        });
+
+        sink.on_event(&AgentEvent::ToolCallEnd {
+            step_index: 1,
+            call_id: "call_1".to_string(),
+            tool_name: "run_shell".to_string(),
+            status: ToolStatus::Done,
+            output: json!({ "exit_code": 0, "stdout": "test\n", "stderr": "" }),
+            duration_ms: 10,
+        });
+
+        // 2. Tool Call kedua yang ditolak user
+        sink.on_event(&AgentEvent::ToolCallStart {
+            step_index: 2,
+            call_id: "call_2".to_string(),
+            tool_name: "run_shell".to_string(),
+            args: json!({ "command": "rm -rf /" }),
+            preview: "$ rm -rf /".to_string(),
+            requires_confirmation: true,
+        });
+
+        sink.on_event(&AgentEvent::ToolCallEnd {
+            step_index: 2,
+            call_id: "call_2".to_string(),
+            tool_name: "run_shell".to_string(),
+            status: ToolStatus::Rejected,
+            output: json!({ "error": "User menolak eksekusi tool ini." }),
+            duration_ms: 0,
+        });
+
+        sink.on_event(&AgentEvent::AssistantText {
+            text: "Saya memahami penolakan Anda.".to_string(),
+        });
+
+        sink.on_event(&AgentEvent::TurnEnd {
+            steps_count: 2,
+            duration_ms: 50,
+            outcome: StepsOutcome::Done,
+        });
+
+        let lines = emitted.lock().unwrap().clone();
+        // Pastikan mapping tool "run_shell" -> "bash"
+        let tool_start = lines.iter().find(|l| l["type"] == "tool_execution_start").unwrap();
+        assert_eq!(tool_start["toolName"], "bash");
+
+        // Pastikan event rejection memiliki isError: true
+        let tool_ends: Vec<&Value> = lines.iter().filter(|l| l["type"] == "tool_execution_end").collect();
+        assert_eq!(tool_ends.len(), 2);
+        assert_eq!(tool_ends[0]["isError"], false);
+        assert_eq!(tool_ends[1]["isError"], true);
+
+        // Pastikan file sesi ditulis dengan format JSONL valid
+        let content = std::fs::read_to_string(&session_file).unwrap();
+        assert!(content.contains("\"type\":\"message\""));
+        assert!(content.contains("\"role\":\"toolResult\""));
+        assert!(content.contains("\"isError\":true"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
