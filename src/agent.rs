@@ -18,6 +18,7 @@ use crate::tools::ToolRegistry;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -118,6 +119,9 @@ pub struct GeminiAgent {
     max_steps: usize,
     catalog: Mutex<ModelCatalog>,
     tabs: Mutex<WorkspaceTabs>,
+    /// Ke mana tab dipersist (`Some` = path default CLI; `None` = jangan persist,
+    /// dipakai jalur RPC yang store-nya adalah file sesi JSONL, bukan tabs.json).
+    tabs_path: Option<PathBuf>,
     thinking_level: Mutex<String>,
 }
 
@@ -147,6 +151,37 @@ impl GeminiAgent {
         event_sink: Box<dyn EventSink>,
         max_steps: usize,
     ) -> Self {
+        let default_m = client.model();
+        let tabs = WorkspaceTabs::default_storage_path()
+            .and_then(|p| WorkspaceTabs::load_from_file(&p))
+            .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
+        Self::with_event_sink_and_tabs(
+            name,
+            client,
+            tools,
+            approver,
+            event_sink,
+            max_steps,
+            tabs,
+            WorkspaceTabs::default_storage_path(),
+        )
+    }
+
+    /// Varian konstruktor yang tab-nya disuplai pemanggil beserta lokasi
+    /// persistensinya (`None` = tab hanya di memori, tidak ditulis ke disk).
+    /// Dipakai jalur RPC: tab di-seed dari file sesi JSONL dan store-nya tetap
+    /// file sesi itu, bukan `tabs.json` milik CLI.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_event_sink_and_tabs(
+        name: &str,
+        client: GeminiClient,
+        tools: ToolRegistry,
+        approver: Box<dyn Approver>,
+        event_sink: Box<dyn EventSink>,
+        max_steps: usize,
+        tabs: WorkspaceTabs,
+        tabs_path: Option<PathBuf>,
+    ) -> Self {
         let system_instruction = default_system_instruction(&tools);
         let mut catalog = ModelCatalog::all_builtin();
         let default_m = client.model();
@@ -154,10 +189,6 @@ impl GeminiAgent {
             catalog.register_custom(&default_m, &default_m);
         }
         catalog.set_default_model(&default_m);
-        let tabs = WorkspaceTabs::default_storage_path()
-            .and_then(|p| WorkspaceTabs::load_from_file(&p))
-            .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
-
 
         Self {
             name: name.to_string(),
@@ -169,6 +200,7 @@ impl GeminiAgent {
             max_steps,
             catalog: Mutex::new(catalog),
             tabs: Mutex::new(tabs),
+            tabs_path,
             thinking_level: Mutex::new("medium".to_string()),
         }
     }
@@ -206,6 +238,44 @@ impl GeminiAgent {
         let clamped = self.active_model_info().clamp_thinking_level(level.trim());
         *self.thinking_level.lock().unwrap() = clamped.clone();
         clamped
+    }
+
+    /// Ganti system instruction (jalur RPC memakai instruksinya sendiri,
+    /// bukan default CLI yang dibangun di konstruktor).
+    pub fn set_system_instruction(&mut self, instruction: String) {
+        self.system_instruction = instruction;
+    }
+
+    pub fn system_instruction(&self) -> &str {
+        &self.system_instruction
+    }
+
+    /// Teruskan perubahan kredensial ke client (dipakai refresh_credentials RPC).
+    pub fn update_credentials(&self, api_key: String, base_url: Option<String>) {
+        self.client.update_credentials(api_key, base_url);
+    }
+
+    pub fn api_key(&self) -> String {
+        self.client.api_key()
+    }
+
+    pub fn base_url(&self) -> String {
+        self.client.base_url()
+    }
+
+    /// Masukkan satu entri ModelInfo lengkap ke katalog agen (dipakai untuk
+    /// menyelaraskan katalog agen dengan katalog RPC yang membawa override
+    /// models.json dan model hasil scan provider).
+    pub fn upsert_model(&self, info: ModelInfo) {
+        self.catalog.lock().unwrap().upsert_model(info);
+    }
+
+    /// Bersihkan histori + timeline tab aktif tanpa mencetak apa pun.
+    /// Dipakai jalur RPC (stdout adalah aliran JSONL — println akan merusaknya).
+    pub fn clear_memory_silent(&self) {
+        let mut tabs = self.tabs.lock().unwrap();
+        tabs.active_mut().clear();
+        self.persist_tabs(&tabs);
     }
 
     /// Terapkan konfigurasi override ke model di katalog (`maxTokens`, `contextWindow`, `reasoning`, `thinkingLevelMap`, dsb.).
@@ -330,8 +400,8 @@ impl GeminiAgent {
     }
 
     fn persist_tabs(&self, tabs: &WorkspaceTabs) {
-        if let Some(path) = WorkspaceTabs::default_storage_path() {
-            let _ = tabs.save_to_file(&path);
+        if let Some(path) = &self.tabs_path {
+            let _ = tabs.save_to_file(path);
         }
     }
 
@@ -600,10 +670,11 @@ impl Agent for GeminiAgent {
     }
 
     fn clear_memory(&self) {
-        let mut tabs = self.tabs.lock().unwrap();
-        let id = tabs.active().id.clone();
-        tabs.active_mut().clear();
-        self.persist_tabs(&tabs);
+        let id = {
+            let tabs = self.tabs.lock().unwrap();
+            tabs.active().id.clone()
+        };
+        self.clear_memory_silent();
         println!("🧠 Memori Tab #{} ({}) telah dibersihkan.", id, self.name);
     }
 }
