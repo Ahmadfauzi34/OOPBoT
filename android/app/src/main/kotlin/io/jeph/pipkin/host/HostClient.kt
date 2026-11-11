@@ -70,7 +70,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   /** The agent version the bundled `pi/package.json` pins (OOPBoT engine version). */
   val expectedPiVersion: String by lazy {
     val deps = JSONObject(packageJson).getJSONObject("dependencies")
-    deps.optString(OOPBOT_PACKAGE, deps.optString(PI_PACKAGE, "0.5.3"))
+    deps.optString(OOPBOT_PACKAGE, deps.optString(PI_PACKAGE, "0.5.4"))
   }
 
   /** Hello of the most recent host that connected; Pi's version is updated after [ensure]. */
