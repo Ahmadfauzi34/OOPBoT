@@ -68,6 +68,14 @@ impl WorkspaceTabs {
         }
     }
 
+    pub fn from_session(session: ChatSession) -> Self {
+        Self {
+            tabs: vec![session],
+            active_index: 0,
+            next_id: 2,
+        }
+    }
+
     pub fn active(&self) -> &ChatSession {
         &self.tabs[self.active_index]
     }

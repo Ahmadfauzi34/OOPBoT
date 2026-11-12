@@ -4,11 +4,10 @@
 //! Menggantikan `@earendil-works/pi-coding-agent` (`pi --mode rpc`) di Termux
 //! dengan binary native Rust `oopbot`.
 
-use crate::agent::Approver;
+use crate::agent::{Agent, Approver, ChatInput, GeminiAgent};
 use crate::events::{AgentEvent, EventSink, ToolStatus};
 use crate::gemini::{
-    function_response_part, user_message_with_images, BoxError, FunctionCall, GeminiClient,
-    GenerationOptions, DEFAULT_GEMINI_BASE_URL,
+    user_message_with_images, BoxError, GeminiClient, DEFAULT_GEMINI_BASE_URL,
 };
 use crate::models::{
     builtin_providers, infer_api_from_provider, infer_input_from_id, infer_reasoning_from_id,
@@ -134,16 +133,9 @@ pub struct RpcServer {
     system_instruction: String,
     providers: HashMap<String, ProviderEndpoint>,
     catalog: ModelCatalog,
-    client: GeminiClient,
-    tools: ToolRegistry,
     plugins: PluginRegistry,
-    /// Riwayat pesan dalam format Pipkin (`role: "user" | "assistant" | "toolResult"`).
-    ui_messages: Vec<Value>,
-    /// Riwayat pesan dalam format `GeminiClient` (`role: "user" | "model", parts: [...]`).
-    llm_history: Vec<Value>,
-    entry_seq: usize,
-    total_tokens: u64,
-    total_cost: f64,
+    agent: GeminiAgent,
+    ui_state: Arc<Mutex<RpcUiState>>,
     pub pending_approvals: PendingApprovals,
 }
 
@@ -248,8 +240,37 @@ impl RpcServer {
             init_or_load_session(&config_dir, &cwd, session_path.as_deref());
 
         let pending_approvals: PendingApprovals = Arc::new(Mutex::new(HashMap::new()));
+        let ui_state = Arc::new(Mutex::new(RpcUiState::with_details(
+            Some(session_file.clone()),
+            session_id.clone(),
+            cwd.clone(),
+            entry_seq,
+            total_tokens,
+            total_cost,
+            ui_messages,
+        )));
 
-        let mut server = Self {
+        let approver = Box::new(RpcApprover::new(Arc::clone(&pending_approvals)));
+        let event_sink = Box::new(RpcEventSink::new(Arc::clone(&ui_state)));
+        let agent = GeminiAgent::with_event_sink(
+            "rpc",
+            client,
+            tools,
+            approver,
+            event_sink,
+            25,
+        )
+        .with_system_instruction(system_instruction.clone())
+        .with_catalog(catalog.clone())
+        .with_session(&session_id, &active_model, llm_history)
+        .with_tab_persistence(false);
+
+        let clamped_thinking = agent
+            .active_model_info()
+            .clamp_thinking_level(&requested_thinking);
+        agent.set_thinking_level(&clamped_thinking);
+
+        let server = Self {
             cwd,
             config_dir,
             session_file,
@@ -257,24 +278,61 @@ impl RpcServer {
             session_name,
             active_provider,
             active_model,
-            thinking_level: requested_thinking.clone(),
+            thinking_level: clamped_thinking,
             system_instruction,
             providers,
             catalog,
-            client,
-            tools,
             plugins,
-            ui_messages,
-            llm_history,
-            entry_seq,
-            total_tokens,
-            total_cost,
+            agent,
+            ui_state,
             pending_approvals,
         };
-        server.thinking_level = server
-            .active_model_info()
-            .clamp_thinking_level(&requested_thinking);
         Ok(server)
+    }
+
+    /// Akses ke registry tools yang aktif di agen.
+    pub fn tools(&self) -> &ToolRegistry {
+        self.agent.tools()
+    }
+
+    /// System prompt / instruksi dasar yang digunakan pada sesi RPC ini.
+    pub fn system_instruction(&self) -> &str {
+        &self.system_instruction
+    }
+
+    /// Direktori kerja aktif host RPC.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    /// Total penggunaan token kumulatif pada sesi ini.
+    pub fn total_tokens(&self) -> u64 {
+        self.ui_state.lock().unwrap().total_tokens
+    }
+
+    /// Total biaya kumulatif pada sesi ini dalam USD.
+    pub fn total_cost(&self) -> f64 {
+        self.ui_state.lock().unwrap().total_cost
+    }
+
+    /// Riwayat pesan antarmuka pengguna pada sesi ini.
+    pub fn ui_messages(&self) -> Vec<Value> {
+        self.ui_state.lock().unwrap().ui_messages.clone()
+    }
+
+    /// Akses thread-safe ke RpcUiState.
+    pub fn ui_state(&self) -> Arc<Mutex<RpcUiState>> {
+        Arc::clone(&self.ui_state)
+    }
+
+    /// Akses ke instans GeminiAgent internal.
+    pub fn agent(&self) -> &GeminiAgent {
+        &self.agent
+    }
+
+    /// Akses mutable ke instans GeminiAgent internal.
+    pub fn agent_mut(&mut self) -> &mut GeminiAgent {
+        &mut self.agent
     }
 
     /// Akses thread-safe ke map approval yang sedang menunggu konfirmasi UI.
@@ -493,51 +551,18 @@ impl RpcServer {
         })
     }
 
-    fn append_session_entry(&mut self, entry_type: &str, mut payload: Value) {
-        if let Some(parent) = self.session_file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if !self.session_file.exists() {
-            let header = json!({
-                "type": "session",
-                "version": 3,
-                "id": self.session_id,
-                "timestamp": iso_now(),
-                "cwd": self.cwd.to_string_lossy(),
-            });
-            if let Ok(line) = serde_json::to_string(&header) {
-                let _ = std::fs::write(&self.session_file, format!("{}\n", line));
-            }
-        }
-
-        let id = format!("e{}", self.entry_seq);
-        let parent_id = if self.entry_seq == 0 {
-            Value::Null
-        } else {
-            json!(format!("e{}", self.entry_seq - 1))
-        };
-        self.entry_seq += 1;
-
-        payload["type"] = json!(entry_type);
-        payload["id"] = json!(id);
-        payload["parentId"] = parent_id;
-        payload["timestamp"] = json!(iso_now());
-
-        if let Ok(line) = serde_json::to_string(&payload) {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.session_file)
-            {
-                let _ = writeln!(file, "{}", line);
-            }
-        }
+    fn append_session_entry(&self, entry_type: &str, payload: Value) {
+        self.ui_state
+            .lock()
+            .unwrap()
+            .append_session_entry(entry_type, payload);
     }
 
     fn refresh_credentials(&mut self) {
         self.providers = load_providers(&self.config_dir, &self.catalog);
         if let Some(ep) = self.providers.get(&self.active_provider) {
-            self.client
+            self.agent
+                .client()
                 .update_credentials(ep.api_key.clone(), Some(ep.base_url.clone()));
         }
     }
@@ -583,7 +608,7 @@ impl RpcServer {
         }
 
         // Jalankan auto-scan langsung dari token yang ditempel di aplikasi
-        if let Ok(scanned) = self.client.scan_models().await {
+        if let Ok(scanned) = self.agent.client().scan_models().await {
             if !scanned.is_empty() {
                 save_scanned_models_to_config(
                     &self.config_dir,
@@ -607,7 +632,7 @@ impl RpcServer {
                         self.active_model = first.id.clone();
                     }
                 }
-                self.client.set_default_model(&self.active_model);
+                self.agent.set_active_model(&self.active_model);
                 self.refresh_credentials();
                 self.sync_thinking_level_for_active_model();
                 save_settings_fields(
@@ -626,7 +651,7 @@ impl RpcServer {
         match cmd {
             "/scan" => {
                 self.refresh_credentials();
-                match self.client.scan_models().await {
+                match self.agent.client().scan_models().await {
                     Ok(scanned) => {
                         let count = scanned.len();
                         let preview: Vec<String> = scanned
@@ -649,12 +674,12 @@ impl RpcServer {
                             &scanned,
                             cur_key,
                         );
-                        self.client.set_default_model(&self.active_model);
+                        self.agent.set_active_model(&self.active_model);
                         self.refresh_credentials();
                         Some(format!(
                             "Berhasil men-scan **{} model** dari `{}` dan menyimpannya ke `models.json`:\n{}\n\nGunakan pemilih model di atas atau ketik `/model <ID>` untuk mengganti model.",
                             count,
-                            self.client.base_url(),
+                            self.agent.client().base_url(),
                             preview.join("\n")
                         ))
                     }
@@ -670,7 +695,8 @@ impl RpcServer {
                 }
                 let api_key = parts[1].trim();
                 let base_url = parts.get(2).map(|s| s.trim().to_string());
-                self.client
+                self.agent
+                    .client()
                     .update_credentials(api_key.to_string(), base_url.clone());
                 save_auth_key(
                     &self.config_dir,
@@ -678,7 +704,7 @@ impl RpcServer {
                     api_key,
                     base_url.as_deref(),
                 );
-                match self.client.scan_models().await {
+                match self.agent.client().scan_models().await {
                     Ok(scanned) => {
                         let count = scanned.len();
                         if !scanned.iter().any(|m| m.id == self.active_model) {
@@ -687,7 +713,7 @@ impl RpcServer {
                             }
                         }
                         self.catalog.replace_with_scanned(scanned.clone());
-                        self.client.set_default_model(&self.active_model);
+                        self.agent.set_active_model(&self.active_model);
                         save_scanned_models_to_config(
                             &self.config_dir,
                             &self.active_provider,
@@ -800,7 +826,7 @@ impl RpcServer {
                         self.active_model = target.to_string();
                     }
                 }
-                self.client.set_default_model(&self.active_model);
+                self.agent.set_active_model(&self.active_model);
                 self.refresh_credentials();
                 self.sync_thinking_level_for_active_model();
                 save_settings_fields(
@@ -829,6 +855,7 @@ impl RpcServer {
                 let requested = parts[1].trim().to_ascii_lowercase();
                 let clamped = info.clamp_thinking_level(&requested);
                 self.thinking_level = clamped.clone();
+                self.agent.set_thinking_level(&clamped);
                 save_settings_fields(&self.config_dir, None, None, Some(&clamped));
                 Self::send_line(&json!({
                     "type": "thinking_level_changed",
@@ -870,6 +897,7 @@ impl RpcServer {
                     if let Some(first) = ep.models.first() {
                         self.active_model = first.id.clone();
                     }
+                    self.agent.set_active_model(&self.active_model);
                     self.refresh_credentials();
                     self.sync_thinking_level_for_active_model();
                     save_settings_fields(
@@ -916,8 +944,8 @@ impl RpcServer {
                 ))
             }
             "/clear" => {
-                self.ui_messages.clear();
-                self.llm_history.clear();
+                self.ui_state.lock().unwrap().ui_messages.clear();
+                self.agent.clear_active_tab_history();
                 Some("Memori percakapan sesi ini telah dibersihkan.".to_string())
             }
             _ => None,
@@ -927,9 +955,8 @@ impl RpcServer {
     async fn execute_prompt(&mut self, prompt: &str, images: &[(String, String)]) {
         self.refresh_credentials();
         self.sync_thinking_level_for_active_model();
+        self.agent.set_thinking_level(&self.thinking_level);
         let started_ms = epoch_ms();
-
-        Self::send_line(&json!({ "type": "agent_start" }));
 
         let mut user_content_blocks = Vec::new();
         if !prompt.is_empty() {
@@ -953,8 +980,11 @@ impl RpcServer {
         });
         Self::send_line(&json!({ "type": "message_start", "message": user_msg }));
         Self::send_line(&json!({ "type": "message_end", "message": user_msg }));
-        self.ui_messages.push(user_msg.clone());
-        self.append_session_entry("message", json!({ "message": user_msg }));
+        {
+            let mut state = self.ui_state.lock().unwrap();
+            state.ui_messages.push(user_msg.clone());
+            state.append_session_entry("message", json!({ "message": user_msg }));
+        }
 
         // Cek apakah perintah slash internal (/scan, /token, /models, /model, /thinking, /provider, /max-tokens, /clear)
         if prompt.trim_start().starts_with('/') && images.is_empty() {
@@ -972,7 +1002,7 @@ impl RpcServer {
             .get(&self.active_provider)
             .map(|p| p.has_auth)
             .unwrap_or(false);
-        if !provider_has_auth && self.client.api_key().trim().is_empty() {
+        if !provider_has_auth && self.agent.client().api_key().trim().is_empty() {
             let msg = "API key belum diatur. Silakan buka **Settings › Providers & models** di OOPBoT untuk menempelkan API key (Google Gemini / OpenRouter / Custom), atau ketik langsung di sini:\n\n`/token <API_KEY>`";
             self.emit_assistant_reply_with_thoughts(msg, &[], started_ms, None);
             Self::send_line(&json!({ "type": "turn_end" }));
@@ -981,258 +1011,63 @@ impl RpcServer {
             return;
         }
 
-        let active_info = self.active_model_info();
-        let gen_options = GenerationOptions {
-            api: Some(active_info.api.clone()),
-            max_tokens: active_info.output_token_limit,
-            thinking_level: Some(self.thinking_level.clone()),
-            reasoning: active_info.reasoning,
-            thinking_level_map: active_info.thinking_level_map.clone(),
-            session_id: Some(self.session_id.clone()),
+        let chat_input = ChatInput {
+            text: prompt.to_string(),
+            images: images.to_vec(),
         };
 
-        self.llm_history
-            .push(user_message_with_images(prompt, images));
-        let decls = self.tools.declarations();
-        let max_steps = 25usize;
-
-        for step_idx in 1..=max_steps {
-            let step_start_ms = epoch_ms();
-            let turn_res = self
-                .client
-                .generate_with_options(
-                    &self.active_model,
-                    &self.system_instruction,
-                    &self.llm_history,
-                    &decls,
-                    &gen_options,
-                )
-                .await;
-
-            let turn = match turn_res {
-                Ok(t) => t,
-                Err(err) => {
-                    let err_msg = json!({
-                        "role": "assistant",
-                        "content": [],
-                        "stopReason": "error",
-                        "errorMessage": err.to_string(),
-                        "timestamp": step_start_ms,
-                        "durationMs": epoch_ms().saturating_sub(step_start_ms),
-                    });
-                    Self::send_line(&json!({ "type": "message_start", "message": err_msg }));
-                    Self::send_line(&json!({ "type": "message_end", "message": err_msg }));
-                    self.ui_messages.push(err_msg.clone());
-                    self.append_session_entry("message", json!({ "message": err_msg }));
-                    break;
+        match self.agent.chat_turn(&chat_input).await {
+            Ok(outcome) => {
+                let active_info = self.active_model_info();
+                let mut state = self.ui_state.lock().unwrap();
+                if let Some(usage) = outcome.usage {
+                    let total_turn = usage.input_tokens + usage.output_tokens;
+                    state.total_tokens += total_turn;
+                    if let Some(cost) = &active_info.cost {
+                        state.total_cost += (usage.input_tokens as f64 / 1_000_000.0) * cost.input
+                            + (usage.output_tokens as f64 / 1_000_000.0) * cost.output;
+                    }
+                } else {
+                    let est_in = (prompt.len() as u64 / 4) + 60;
+                    let est_out = (outcome.text.len() as u64 / 4) + 60;
+                    state.total_tokens += est_in + est_out;
+                    if let Some(cost) = &active_info.cost {
+                        state.total_cost += (est_in as f64 / 1_000_000.0) * cost.input
+                            + (est_out as f64 / 1_000_000.0) * cost.output;
+                    }
                 }
-            };
-
-            self.llm_history.push(turn.raw_content.clone());
-            let (turn_in, turn_out) = if let Some(usage) = turn.usage {
-                self.total_tokens = usage.input_tokens + usage.output_tokens;
-                if let Some(cost) = &active_info.cost {
-                    self.total_cost += (usage.input_tokens as f64 / 1_000_000.0) * cost.input
-                        + (usage.output_tokens as f64 / 1_000_000.0) * cost.output;
-                }
-                (usage.input_tokens, usage.output_tokens)
-            } else {
-                let est_in = (prompt.len() as u64 / 4) + 60;
-                let est_out = (turn.text.len() as u64 / 4) + 60;
-                self.total_tokens += est_in + est_out;
-                if let Some(cost) = &active_info.cost {
-                    self.total_cost += (est_in as f64 / 1_000_000.0) * cost.input
-                        + (est_out as f64 / 1_000_000.0) * cost.output;
-                }
-                (est_in, est_out)
-            };
-
-            if turn.function_calls.is_empty() {
-                self.emit_assistant_reply_with_thoughts(
-                    &turn.text,
-                    &turn.thoughts,
-                    step_start_ms,
-                    Some((turn_in, turn_out)),
+                let tot_tok = state.total_tokens;
+                let tot_cost = state.total_cost;
+                state.append_session_entry(
+                    "session_stats",
+                    json!({
+                        "total_tokens": tot_tok,
+                        "total_cost": tot_cost
+                    }),
                 );
-                break;
+                self.emit_active_widgets();
             }
-
-            // Ada pemanggilan tool: pancarkan message_start (assistant) + thinking + toolCall blocks
-            Self::send_line(&json!({
-                "type": "message_start",
-                "message": {
+            Err(err) => {
+                let err_msg = json!({
                     "role": "assistant",
                     "content": [],
-                    "timestamp": step_start_ms
-                }
-            }));
-
-            let mut content_blocks = Vec::new();
-            let mut content_idx = 0usize;
-
-            for thought in &turn.thoughts {
-                Self::send_line(&json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "thinking_start",
-                        "contentIndex": content_idx
-                    }
-                }));
-                Self::send_line(&json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "thinking_end",
-                        "contentIndex": content_idx,
-                        "content": thought
-                    }
-                }));
-                content_blocks.push(json!({
-                    "type": "thinking",
-                    "thinking": thought
-                }));
-                content_idx += 1;
-            }
-
-            if !turn.text.is_empty() {
-                Self::send_line(&json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "thinking_start",
-                        "contentIndex": content_idx
-                    }
-                }));
-                Self::send_line(&json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "thinking_end",
-                        "contentIndex": content_idx,
-                        "content": turn.text
-                    }
-                }));
-                content_blocks.push(json!({
-                    "type": "thinking",
-                    "thinking": turn.text
-                }));
-                content_idx += 1;
-            }
-
-            let mut mapped_calls = Vec::with_capacity(turn.function_calls.len());
-            for (call_i, call) in turn.function_calls.iter().enumerate() {
-                let call_id = call
-                    .id
-                    .clone()
-                    .unwrap_or_else(|| format!("call_{}_{}", step_idx, call_i));
-                let (ui_tool_name, ui_args) = map_tool_for_pipkin_ui(&call.name, &call.args);
-
-                Self::send_line(&json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "toolcall_start",
-                        "contentIndex": content_idx,
-                        "id": call_id,
-                        "toolName": ui_tool_name
-                    }
-                }));
-                Self::send_line(&json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "toolcall_end",
-                        "contentIndex": content_idx,
-                        "toolCall": {
-                            "id": call_id,
-                            "name": ui_tool_name,
-                            "arguments": ui_args
-                        }
-                    }
-                }));
-                content_blocks.push(json!({
-                    "type": "toolCall",
-                    "id": call_id,
-                    "name": ui_tool_name,
-                    "arguments": ui_args
-                }));
-                content_idx += 1;
-                mapped_calls.push((call.clone(), call_id, ui_tool_name, ui_args));
-            }
-
-            let assistant_tool_msg = json!({
-                "role": "assistant",
-                "content": content_blocks,
-                "stopReason": "toolUse",
-                "timestamp": step_start_ms,
-                "durationMs": epoch_ms().saturating_sub(step_start_ms),
-                "usage": {
-                    "input": turn_in,
-                    "output": turn_out,
-                    "totalTokens": turn_in + turn_out
-                }
-            });
-            Self::send_line(&json!({
-                "type": "message_end",
-                "message": assistant_tool_msg
-            }));
-            self.ui_messages.push(assistant_tool_msg.clone());
-            self.append_session_entry("message", json!({ "message": assistant_tool_msg }));
-
-            // Eksekusi setiap tool dan kirimkan event tool_execution_start / end + toolResult
-            let mut llm_response_parts = Vec::with_capacity(mapped_calls.len());
-            for (call, call_id, ui_tool_name, ui_args) in mapped_calls {
-                Self::send_line(&json!({
-                    "type": "tool_execution_start",
-                    "toolCallId": call_id,
-                    "toolName": ui_tool_name,
-                    "args": ui_args
-                }));
-
-                let (llm_val, display_text, is_error) = self.execute_single_tool(&call).await;
-                let result_obj = json!({
-                    "content": [{ "type": "text", "text": display_text }]
+                    "stopReason": "error",
+                    "errorMessage": err.to_string(),
+                    "timestamp": started_ms,
+                    "durationMs": epoch_ms().saturating_sub(started_ms),
                 });
-
-                Self::send_line(&json!({
-                    "type": "tool_execution_end",
-                    "toolCallId": call_id,
-                    "toolName": ui_tool_name,
-                    "isError": is_error,
-                    "result": result_obj
-                }));
-
-                let tool_result_msg = json!({
-                    "role": "toolResult",
-                    "toolCallId": call_id,
-                    "toolName": ui_tool_name,
-                    "isError": is_error,
-                    "content": [{ "type": "text", "text": display_text }],
-                    "timestamp": epoch_ms(),
-                });
-                Self::send_line(&json!({
-                    "type": "message_end",
-                    "message": tool_result_msg
-                }));
-                self.ui_messages.push(tool_result_msg.clone());
-                self.append_session_entry("message", json!({ "message": tool_result_msg }));
-
-                llm_response_parts.push(function_response_part(&call, llm_val));
+                Self::send_line(&json!({ "type": "message_start", "message": err_msg }));
+                Self::send_line(&json!({ "type": "message_end", "message": err_msg }));
+                {
+                    let mut state = self.ui_state.lock().unwrap();
+                    state.ui_messages.push(err_msg.clone());
+                    state.append_session_entry("message", json!({ "message": err_msg }));
+                }
+                Self::send_line(&json!({ "type": "turn_end" }));
+                Self::send_line(&json!({ "type": "agent_end" }));
+                Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
             }
-
-            self.emit_active_widgets();
-
-            self.llm_history
-                .push(json!({ "role": "user", "parts": llm_response_parts }));
         }
-
-        // Simpan total token & cost sesi secara permanen ke file sesi JSONL
-        self.append_session_entry(
-            "session_stats",
-            json!({
-                "total_tokens": self.total_tokens,
-                "total_cost": self.total_cost
-            }),
-        );
-
-        Self::send_line(&json!({ "type": "turn_end" }));
-        Self::send_line(&json!({ "type": "agent_end" }));
-        Self::send_line(&json!({ "type": "agent_settled", "aborted": false }));
     }
 
     fn emit_assistant_reply_with_thoughts(
@@ -1321,21 +1156,10 @@ impl RpcServer {
             });
         }
         Self::send_line(&json!({ "type": "message_end", "message": msg }));
-        self.ui_messages.push(msg.clone());
-        self.append_session_entry("message", json!({ "message": msg }));
-    }
-
-    async fn execute_single_tool(&self, call: &FunctionCall) -> (Value, String, bool) {
-        let Some(tool) = self.tools.get(&call.name) else {
-            let msg = format!("Tool '{}' tidak ditemukan", call.name);
-            return (json!({ "error": msg }), msg, true);
-        };
-        match tool.execute(&call.args).await {
-            Ok(val) => {
-                let (text, is_err) = format_tool_output(&call.name, &val);
-                (val, text, is_err)
-            }
-            Err(err) => (json!({ "error": err }), err, true),
+        {
+            let mut state = self.ui_state.lock().unwrap();
+            state.ui_messages.push(msg.clone());
+            state.append_session_entry("message", json!({ "message": msg }));
         }
     }
 
@@ -1427,10 +1251,11 @@ impl RpcServer {
                     Self::send_response(&id, "get_state", self.state_json());
                 }
                 "get_messages" => {
+                    let msgs = self.ui_state.lock().unwrap().ui_messages.clone();
                     Self::send_response(
                         &id,
                         "get_messages",
-                        json!({ "messages": self.ui_messages }),
+                        json!({ "messages": msgs }),
                     );
                 }
                 "get_session_stats" => {
@@ -1439,17 +1264,21 @@ impl RpcServer {
                         .input_token_limit
                         .unwrap_or(1_048_576)
                         .max(1);
-                    let pct = (self.total_tokens as f64 / window as f64) * 100.0;
+                    let (tokens, cost) = {
+                        let state = self.ui_state.lock().unwrap();
+                        (state.total_tokens, state.total_cost)
+                    };
+                    let pct = (tokens as f64 / window as f64) * 100.0;
                     Self::send_response(
                         &id,
                         "get_session_stats",
                         json!({
                             "contextUsage": {
-                                "tokens": self.total_tokens,
+                                "tokens": tokens,
                                 "contextWindow": window,
                                 "percent": pct
                             },
-                            "cost": self.total_cost
+                            "cost": cost
                         }),
                     );
                 }
@@ -1477,8 +1306,9 @@ impl RpcServer {
                     if provider_changed {
                         self.maybe_auto_scan().await;
                     }
-                    self.client.set_default_model(&self.active_model);
+                    self.agent.set_active_model(&self.active_model);
                     self.sync_thinking_level_for_active_model();
+                    self.agent.set_thinking_level(&self.thinking_level);
                     save_settings_fields(
                         &self.config_dir,
                         Some(&self.active_provider),
@@ -1500,6 +1330,7 @@ impl RpcServer {
                     if let Some(l) = cmd["level"].as_str().filter(|s| !s.trim().is_empty()) {
                         let clamped = self.active_model_info().clamp_thinking_level(l);
                         self.thinking_level = clamped.clone();
+                        self.agent.set_thinking_level(&clamped);
                         save_settings_fields(&self.config_dir, None, None, Some(&clamped));
                         Self::send_line(&json!({
                             "type": "thinking_level_changed",
@@ -1547,7 +1378,8 @@ impl RpcServer {
                     );
                 }
                 "get_last_assistant_text" => {
-                    let last_text = self
+                    let state = self.ui_state.lock().unwrap();
+                    let last_text = state
                         .ui_messages
                         .iter()
                         .rev()
@@ -1786,6 +1618,8 @@ fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool) {
 pub struct RpcUiState {
     pub ui_messages: Vec<Value>,
     pub session_file: Option<PathBuf>,
+    pub session_id: String,
+    pub cwd: PathBuf,
     pub entry_seq: usize,
     pub total_tokens: u64,
     pub total_cost: f64,
@@ -1796,9 +1630,31 @@ impl RpcUiState {
         Self {
             ui_messages: Vec::new(),
             session_file,
+            session_id: String::new(),
+            cwd: PathBuf::new(),
             entry_seq,
             total_tokens: 0,
             total_cost: 0.0,
+        }
+    }
+
+    pub fn with_details(
+        session_file: Option<PathBuf>,
+        session_id: String,
+        cwd: PathBuf,
+        entry_seq: usize,
+        total_tokens: u64,
+        total_cost: f64,
+        ui_messages: Vec<Value>,
+    ) -> Self {
+        Self {
+            ui_messages,
+            session_file,
+            session_id,
+            cwd,
+            entry_seq,
+            total_tokens,
+            total_cost,
         }
     }
 
@@ -1806,6 +1662,23 @@ impl RpcUiState {
         let Some(path) = &self.session_file else {
             return;
         };
+
+        if !path.exists() {
+            let header = json!({
+                "type": "session",
+                "version": 3,
+                "id": self.session_id,
+                "timestamp": iso_now(),
+                "cwd": self.cwd.to_string_lossy(),
+            });
+            if let Ok(line) = serde_json::to_string(&header) {
+                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(path, format!("{}\n", line));
+            }
+        }
+
         let id = format!("e{}", self.entry_seq);
         let parent_id = if self.entry_seq == 0 {
             Value::Null
@@ -2885,10 +2758,10 @@ mod tests {
         assert!(server.plugins.is_active("pipkin-web-access"));
         assert!(!server.plugins.is_active("pipkin-background"));
 
-        assert!(server.tools.get("todo").is_some());
-        assert!(server.tools.get("web_search").is_some());
-        assert!(server.tools.get("fetch_page").is_some());
-        assert!(server.tools.get("background").is_none());
+        assert!(server.tools().get("todo").is_some());
+        assert!(server.tools().get("web_search").is_some());
+        assert!(server.tools().get("fetch_page").is_some());
+        assert!(server.tools().get("background").is_none());
         assert!(server.system_instruction.contains("Todo & Task Management Guidelines"));
         assert!(server.system_instruction.contains("Web Access Guidelines"));
     }
@@ -2947,8 +2820,8 @@ mod tests {
             vec![],
         )
         .unwrap();
-        assert_eq!(server.total_tokens, 1600);
-        assert!((server.total_cost - 0.0025).abs() < 1e-6);
+        assert_eq!(server.total_tokens(), 1600);
+        assert!((server.total_cost() - 0.0025).abs() < 1e-6);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

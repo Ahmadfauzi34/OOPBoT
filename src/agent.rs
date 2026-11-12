@@ -119,6 +119,7 @@ pub struct GeminiAgent {
     catalog: Mutex<ModelCatalog>,
     tabs: Mutex<WorkspaceTabs>,
     thinking_level: Mutex<String>,
+    persist_tabs: bool,
 }
 
 impl GeminiAgent {
@@ -158,7 +159,6 @@ impl GeminiAgent {
             .and_then(|p| WorkspaceTabs::load_from_file(&p))
             .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
 
-
         Self {
             name: name.to_string(),
             client,
@@ -170,6 +170,7 @@ impl GeminiAgent {
             catalog: Mutex::new(catalog),
             tabs: Mutex::new(tabs),
             thinking_level: Mutex::new("medium".to_string()),
+            persist_tabs: true,
         }
     }
 
@@ -329,7 +330,55 @@ impl GeminiAgent {
         self.tools.names()
     }
 
+    pub fn tools(&self) -> &ToolRegistry {
+        &self.tools
+    }
+
+    pub fn client(&self) -> &GeminiClient {
+        &self.client
+    }
+
+    pub fn with_system_instruction(mut self, instruction: impl Into<String>) -> Self {
+        self.system_instruction = instruction.into();
+        self
+    }
+
+    pub fn set_system_instruction(&mut self, instruction: impl Into<String>) {
+        self.system_instruction = instruction.into();
+    }
+
+    pub fn with_catalog(self, catalog: ModelCatalog) -> Self {
+        *self.catalog.lock().unwrap() = catalog;
+        self
+    }
+
+    pub fn with_session(self, session_id: &str, model: &str, history: Vec<Value>) -> Self {
+        let mut chat = ChatSession::new(session_id, model);
+        chat.history = history;
+        let tabs = WorkspaceTabs::from_session(chat);
+        *self.tabs.lock().unwrap() = tabs;
+        self
+    }
+
+    pub fn with_tab_persistence(mut self, persist: bool) -> Self {
+        self.persist_tabs = persist;
+        self
+    }
+
+    pub fn set_active_tab_history(&self, history: Vec<Value>) {
+        let mut tabs = self.tabs.lock().unwrap();
+        tabs.active_mut().history = history;
+    }
+
+    pub fn clear_active_tab_history(&self) {
+        let mut tabs = self.tabs.lock().unwrap();
+        tabs.active_mut().clear();
+    }
+
     fn persist_tabs(&self, tabs: &WorkspaceTabs) {
+        if !self.persist_tabs {
+            return;
+        }
         if let Some(path) = WorkspaceTabs::default_storage_path() {
             let _ = tabs.save_to_file(&path);
         }
