@@ -248,16 +248,58 @@ fn parse_oopbot_version_output(stdout: &str) -> Option<String> {
     }
 }
 
-fn read_oopbot_binary_version(path: &Path) -> Option<String> {
-    let meta = std::fs::metadata(path).ok()?;
+fn is_executable_file_busy(err: &std::io::Error) -> bool {
+    if err.kind() == std::io::ErrorKind::ExecutableFileBusy {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        return err.raw_os_error() == Some(26);
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn read_oopbot_binary_version_detail(path: &Path) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("metadata failed: {}", e))?;
     if !meta.is_file() || meta.len() == 0 {
-        return None;
+        return Err("binary is missing or empty".to_string());
     }
-    let output = std::process::Command::new(path).arg("--version").output().ok()?;
+
+    // Di Linux multi-threaded (termasuk test paralel atau child spawn bersamaan),
+    // fork() pada thread lain sesaat saat File::create masih terbuka bisa menyebabkan
+    // execve() mengembalikan ETXTBSY sampai child selesai execve().
+    const ETXTBSY_RETRY_DELAYS_MS: &[u64] = &[2, 5, 10, 20, 40, 80, 100, 150];
+    let mut attempt = 0usize;
+    let output = loop {
+        match std::process::Command::new(path).arg("--version").output() {
+            Ok(out) => break out,
+            Err(err) if is_executable_file_busy(&err) && attempt < ETXTBSY_RETRY_DELAYS_MS.len() => {
+                std::thread::sleep(std::time::Duration::from_millis(ETXTBSY_RETRY_DELAYS_MS[attempt]));
+                attempt += 1;
+            }
+            Err(err) => return Err(format!("exec failed: {}", err)),
+        }
+    };
+
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("exited with {}", output.status)
+        } else {
+            format!("exited with {}: {}", output.status, stderr)
+        });
     }
-    parse_oopbot_version_output(&String::from_utf8_lossy(&output.stdout))
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_oopbot_version_output(&stdout)
+        .ok_or_else(|| format!("unexpected --version output: {:?}", stdout.trim()))
+}
+
+fn read_oopbot_binary_version(path: &Path) -> Option<String> {
+    read_oopbot_binary_version_detail(path).ok()
 }
 
 #[cfg(unix)]
@@ -429,11 +471,11 @@ where
             });
         }
 
-        let candidate_ver = match read_oopbot_binary_version(&tmp_path) {
-            Some(v) => v,
-            None => {
+        let candidate_ver = match read_oopbot_binary_version_detail(&tmp_path) {
+            Ok(v) => v,
+            Err(detail) => {
                 let _ = std::fs::remove_file(&tmp_path);
-                mismatch_msg = Some("Downloaded oopbot binary failed --version check".to_string());
+                mismatch_msg = Some(format!("Downloaded oopbot binary failed --version check ({})", detail));
                 continue;
             }
         };
@@ -3458,6 +3500,63 @@ Binary files a/image.png and b/image.png differ
         assert_eq!(refusal["code"], "pi_version");
         assert_eq!(refusal["i18n"]["key"], "agent_version_mismatch");
     }
+
+    #[test]
+    fn test_read_oopbot_binary_version_detail_diagnostics() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ver_diag_{}_{}", epoch_ms(), seq));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let missing = temp_dir.join("missing");
+        assert!(read_oopbot_binary_version_detail(&missing).unwrap_err().contains("metadata failed"));
+
+        let empty = temp_dir.join("empty");
+        std::fs::write(&empty, b"").unwrap();
+        assert_eq!(
+            read_oopbot_binary_version_detail(&empty).unwrap_err(),
+            "binary is missing or empty"
+        );
+
+        let fail_script = temp_dir.join("fail");
+        atomic_write_binary(&fail_script, b"#!/bin/sh\necho boom >&2\nexit 2\n").unwrap();
+        let fail_err = read_oopbot_binary_version_detail(&fail_script).unwrap_err();
+        assert!(fail_err.contains("exited with"));
+        assert!(fail_err.contains("boom"));
+
+        let bad_out = temp_dir.join("bad_out");
+        atomic_write_binary(&bad_out, b"#!/bin/sh\necho not-oopbot\n").unwrap();
+        let bad_err = read_oopbot_binary_version_detail(&bad_out).unwrap_err();
+        assert!(bad_err.contains("unexpected --version output"));
+
+        let busy_err = std::io::Error::from(std::io::ErrorKind::ExecutableFileBusy);
+        assert!(is_executable_file_busy(&busy_err));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ver_fork_{}_{}", epoch_ms(), seq));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_bg = Arc::clone(&stop);
+        let forker = std::thread::spawn(move || {
+            while !stop_bg.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = std::process::Command::new("sh").arg("-c").arg(":").status();
+            }
+        });
+
+        for i in 0..25 {
+            let bin = temp_dir.join(format!("oopbot_{}", i));
+            write_fake_oopbot(&bin, "0.5.4");
+            let ver = read_oopbot_binary_version_detail(&bin).unwrap();
+            assert_eq!(ver, "0.5.4");
+        }
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        forker.join().unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
-
-
