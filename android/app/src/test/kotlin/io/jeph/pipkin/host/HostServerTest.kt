@@ -86,15 +86,16 @@ class HostServerTest {
     )
     PlaySetup.open(session)
 
-    val ok = get("/pipkin/$SID/run.sh")
+    val ok = get("/oopbot/$SID/run.sh")
     assertTrue(ok.startsWith("HTTP/1.1 200 OK\r\n"))
     assertTrue("Content-Length: 10\r\n" in ok)
     assertTrue("Connection: close\r\n" in ok)
     assertTrue("Cache-Control: no-store\r\n" in ok)
     assertTrue(ok.endsWith("\r\n\r\nrun script"))
-    assertTrue(get("/pipkin/$SID/nothing").startsWith("HTTP/1.1 404 "))
+    assertTrue(get("/oopbot/$SID/nothing").startsWith("HTTP/1.1 404 "))
+    assertTrue(get("/pipkin/$SID/run.sh").startsWith("HTTP/1.1 404 "))
     session.complete()
-    assertTrue(get("/pipkin/$SID/key").startsWith("HTTP/1.1 410 "))
+    assertTrue(get("/oopbot/$SID/key").startsWith("HTTP/1.1 410 "))
   }
 
   /** The whole response; the server closes the connection after it. */
