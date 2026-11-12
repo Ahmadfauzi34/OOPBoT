@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
@@ -9,6 +9,7 @@ import {
   oopbotBinaryPath,
   piInstallComplete,
   piInstallingMarker,
+  readOopbotBinaryVersion,
   resolveOopbotBinary,
 } from "../env.js";
 import type { JsonObject } from "../framing.js";
@@ -95,56 +96,120 @@ export async function npmCi(ctx: ModeContext, cwd: string, lock: InstallLock): P
   throw commandFailed("npm_failed", "npm ci", code);
 }
 
+const OOPBOT_RELEASES_BASE = "https://github.com/Ahmadfauzi34/OOPBoT/releases";
+const OOPBOT_RELEASE_ASSET = "oopbot-aarch64-linux-android";
+
+export function oopbotReleaseUrls(expectedVersion: string): string[] {
+  const trimmed = expectedVersion.trim();
+  return trimmed.length > 0
+    ? [`${OOPBOT_RELEASES_BASE}/download/v${trimmed}/${OOPBOT_RELEASE_ASSET}`, OOPBOT_RELEASE_URL]
+    : [OOPBOT_RELEASE_URL];
+}
+
 /**
- * Installs the native Rust `oopbot` binary in Termux (`$PIPKIN_ROOT/bin/oopbot` and `$PREFIX/bin/oopbot`) instead of
- * downloading `@earendil-works/pi-coding-agent` via `npm ci`.
+ * Installs or upgrades the native Rust `oopbot` binary in Termux (`$PIPKIN_ROOT/bin/oopbot` and
+ * `$PREFIX/bin/oopbot`) instead of downloading `@earendil-works/pi-coding-agent` via `npm ci`.
  */
-async function installOopbotRuntime(ctx: ModeContext, expectedVersion: string): Promise<void> {
+export async function installOopbotRuntime(
+  ctx: ModeContext,
+  expectedVersion: string,
+  releaseUrls: readonly string[] = oopbotReleaseUrls(expectedVersion),
+): Promise<string> {
   const send = (line: string): void => {
     ctx.conn.send({ type: "pipkin_progress", line });
   };
   send("Installing oopbot Rust engine...");
   const binPath = oopbotBinaryPath(ctx.env.root);
-  await mkdir(dirname(binPath), { recursive: true });
   const prefixBin = join(ctx.env.prefix, "bin", "oopbot");
+  await mkdir(dirname(binPath), { recursive: true });
   const hasPrefixBin = await stat(prefixBin).then(
     (s) => s.isFile() && s.size > 0,
     () => false,
   );
-  if (hasPrefixBin && ctx.params.reinstall !== true) {
-    await copyFile(prefixBin, binPath);
-    await chmod(binPath, 0o755);
-  } else {
-    send(`Downloading ${OOPBOT_RELEASE_URL}`);
-    let response: Response;
-    try {
-      response = await fetch(OOPBOT_RELEASE_URL, { signal: ctx.signal });
-    } catch {
-      throw new HostError("npm_offline", "Couldn't download oopbot. Check your internet connection, then retry.", {
-        key: "agent_download_offline",
-      });
-    }
-    if (!response.ok) {
-      throw new HostError("npm_failed", `Failed to download oopbot (HTTP ${response.status})`, {
-        key: "command_failed",
-        args: { command: "download oopbot", exit: response.status },
-      });
-    }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const tmpPath = `${binPath}.tmp`;
-    await writeFile(tmpPath, bytes);
+  const prefixVersion = hasPrefixBin ? readOopbotBinaryVersion(prefixBin) : null;
+  let installedVer: string | null = null;
+  if (
+    ctx.params.reinstall !== true &&
+    prefixVersion !== null &&
+    (expectedVersion === "" || prefixVersion === expectedVersion)
+  ) {
+    const tmpPath = `${binPath}.${process.pid}.tmp`;
+    await copyFile(prefixBin, tmpPath);
     await chmod(tmpPath, 0o755);
-    await copyFile(tmpPath, binPath);
-    await chmod(binPath, 0o755);
-    await rm(tmpPath, { force: true });
-    await copyFile(binPath, prefixBin)
-      .then(() => chmod(prefixBin, 0o755))
-      .catch(() => undefined);
+    await rename(tmpPath, binPath);
+    installedVer = prefixVersion;
+  } else {
+    let lastStatus: number | undefined;
+    let mismatchMsg: string | undefined;
+    let sawNetworkError = false;
+    let downloadedBytes: Uint8Array | null = null;
+    for (const url of releaseUrls) {
+      send(`Downloading ${url}`);
+      let response: Response;
+      try {
+        response = await fetch(url, { signal: ctx.signal });
+      } catch (error) {
+        if (ctx.signal.aborted) throw error;
+        sawNetworkError = true;
+        continue;
+      }
+      if (!response.ok) {
+        lastStatus = response.status;
+        continue;
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength === 0) {
+        mismatchMsg = "Downloaded oopbot binary was empty";
+        continue;
+      }
+      const tmpPath = `${binPath}.${process.pid}.tmp`;
+      await writeFile(tmpPath, bytes);
+      await chmod(tmpPath, 0o755);
+      const candidateVer = readOopbotBinaryVersion(tmpPath);
+      if (candidateVer === null) {
+        await rm(tmpPath, { force: true });
+        mismatchMsg = "Downloaded oopbot binary failed --version check";
+        continue;
+      }
+      if (expectedVersion.length > 0 && candidateVer !== expectedVersion) {
+        await rm(tmpPath, { force: true });
+        mismatchMsg = `Downloaded oopbot ${candidateVer}, expected ${expectedVersion}`;
+        continue;
+      }
+      await rename(tmpPath, binPath);
+      installedVer = candidateVer;
+      downloadedBytes = bytes;
+      break;
+    }
+    if (installedVer === null) {
+      if (sawNetworkError && lastStatus === undefined && mismatchMsg === undefined) {
+        throw new HostError("npm_offline", "Couldn't download oopbot. Check your internet connection, then retry.", {
+          key: "agent_download_offline",
+        });
+      }
+      if (mismatchMsg !== undefined) {
+        throw new HostError("upgrade_failed", mismatchMsg);
+      }
+      const status = lastStatus ?? 1;
+      throw new HostError("npm_failed", `Failed to download oopbot (HTTP ${status})`, {
+        key: "command_failed",
+        args: { command: "download oopbot", exit: status },
+      });
+    }
+    if (downloadedBytes !== null) {
+      const prefixTmp = `${prefixBin}.${process.pid}.tmp`;
+      await mkdir(dirname(prefixBin), { recursive: true }).catch(() => undefined);
+      await writeFile(prefixTmp, downloadedBytes)
+        .then(() => chmod(prefixTmp, 0o755))
+        .then(() => rename(prefixTmp, prefixBin))
+        .catch(() => rm(prefixTmp, { force: true }).catch(() => undefined));
+    }
   }
 
-  // Record oopbot version directly for fast verification without legacy Pi node_modules
+  // Record the verified installed version for diagnostics; installedPiVersion() always verifies `--version` first.
   const versionFile = join(dirname(binPath), "oopbot.version");
-  await writeFile(versionFile, `${expectedVersion}\n`);
+  await writeFile(versionFile, `${installedVer}\n`);
+  return installedVer;
 }
 
 /**
@@ -194,5 +259,6 @@ export async function ensure(ctx: ModeContext): Promise<JsonObject> {
     process.stderr.write(`pipkin-host ensure: couldn't rewrite ssh/config: ${String(error)}\n`);
   });
 
-  return { piVersion: await installedPiVersion(ctx.env.root) };
+  const piVersion = await installedPiVersion(ctx.env.root);
+  return isTermux ? { piVersion, oopbotVersion: piVersion } : { piVersion };
 }

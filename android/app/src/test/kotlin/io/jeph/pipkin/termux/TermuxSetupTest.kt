@@ -9,6 +9,14 @@ class TermuxSetupTest {
   fun fdroidCommandRunsInAnyShell() {
     assertRunsInAnyShell(TermuxSetup.fdroidCommand("io.jeph.pipkin.debug"))
   }
+
+  @Test
+  fun fdroidCommandChecksExactExpectedVersionAndRunsInAnyShell() {
+    val cmd = TermuxSetup.fdroidCommand("io.jeph.pipkin.debug", "0.5.9")
+    assertTrue(cmd.contains("\"oopbot 0.5.9\""))
+    assertTrue(cmd.contains("/releases/download/v0.5.9/oopbot-aarch64-linux-android"))
+    assertRunsInAnyShell(cmd)
+  }
 }
 
 /**

@@ -106,20 +106,22 @@ function exists(path: string): Promise<boolean> {
   );
 }
 
+/** Reads the semantic version printed by `oopbot --version`, or null if missing/unexecutable. */
+export function readOopbotBinaryVersion(binPath: string): string | null {
+  try {
+    const stdout = execFileSync(binPath, ["--version"], { encoding: "utf8", timeout: 2000 });
+    const match = /\boopbot\s+([0-9A-Za-z._+-]+)/.exec(stdout);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** The installed agent/OOPBoT version, or null when Pipkin has not installed the engine yet. */
 export async function installedPiVersion(root: string): Promise<string | null> {
   const oopbotBin = await resolveOopbotBinary(root, process.env.PREFIX ?? "");
   if (oopbotBin !== null) {
-    try {
-      const versionFile = join(dirname(oopbotBin), "oopbot.version");
-      const saved = await readFile(versionFile, "utf8").catch(() => null);
-      if (saved && saved.trim().length > 0) return saved.trim();
-      const stdout = execFileSync(oopbotBin, ["--version"], { encoding: "utf8", timeout: 2000 });
-      const match = /oopbot\s+([0-9a-zA-Z.-]+)/.exec(stdout);
-      if (match && match[1]) return match[1];
-    } catch {
-      return "0.5.1";
-    }
+    return readOopbotBinaryVersion(oopbotBin);
   }
 
   try {

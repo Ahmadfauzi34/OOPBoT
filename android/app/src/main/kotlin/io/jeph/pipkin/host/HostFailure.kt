@@ -109,7 +109,11 @@ internal sealed class HostFailure(
 
   private companion object {
     const val UPGRADE_COMMAND =
-      "curl -fsSL \"https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android\" -o \"\${'$'}PREFIX/bin/oopbot\" && chmod 755 \"\${'$'}PREFIX/bin/oopbot\""
+      "bash -c '{ command -v curl >/dev/null 2>&1 || { dpkg --configure -a; yes | pkg upgrade -y && " +
+        "pkg install -y curl; }; } && mkdir -p \"\$PREFIX/bin\" && t=\"\$PREFIX/bin/oopbot.tmp\" && " +
+        "curl -fsSL \"https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android\" " +
+        "-o \"\$t\" && chmod 755 \"\$t\" && \"\$t\" --version >/dev/null 2>&1 && " +
+        "mv -f \"\$t\" \"\$PREFIX/bin/oopbot\" || { rm -f \"\$PREFIX/bin/oopbot.tmp\"; false; }'"
 
     val SETUP_KINDS = setOf(
       Kind.MissingTermux,

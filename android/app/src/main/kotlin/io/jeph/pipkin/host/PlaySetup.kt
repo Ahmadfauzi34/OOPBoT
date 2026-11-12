@@ -44,6 +44,7 @@ internal object PlaySetup {
       packageName = app.packageName,
       expiresAt = System.currentTimeMillis() + SESSION_MILLIS,
       onKeyServed = { HelperPairing.storePending(app, it) },
+      expectedVersion = TermuxSetup.expectedOopbotVersion(app),
     )
     open(session)
     synchronized(this) {
@@ -114,6 +115,7 @@ internal class SetupSession(
   val expiresAt: Long,
   private val files: Map<String, ByteArray>,
   private val onKeyServed: (ByteArray) -> Unit,
+  val expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION,
 ) {
   private val completed = AtomicBoolean()
 
@@ -141,15 +143,16 @@ internal class SetupSession(
   fun command(port: Int): String {
     val base = "http://127.0.0.1:$port/oopbot/$sid"
     return TermuxSetup.inBash(
-      "f=\$(mktemp) && curl -fsS -m 60 \"$base/$INSTALLER\" -o \"\$f\" && " +
+      "{ command -v curl >/dev/null 2>&1 || " +
+        "{ dpkg --configure -a; yes | pkg upgrade -y && pkg install -y curl; }; } && " +
+        "f=\$(mktemp) && curl -fsS -m 60 \"$base/$INSTALLER\" -o \"\$f\" && " +
         "echo \"$installerSha256  \$f\" | sha256sum -c --status && " +
-        "OOPBOT_URL=\"$base\" OOPBOT_TOKEN=${token.toHexString()} bash \"\$f\"; s=\$?; rm -f \"\$f\"; " +
-        "[ \$s = 0 ] || echo \"OOPBoT setup did not finish. " +
+        "OOPBOT_URL=\"$base\" OOPBOT_TOKEN=${token.toHexString()} " +
+        "OOPBOT_VERSION=\"$expectedVersion\" bash \"\$f\"; " +
+        "s=\$?; rm -f \"\$f\"; [ \$s = 0 ] || echo \"OOPBoT setup did not finish. " +
         "Open OOPBoT, copy the setup command again and paste it here.\"",
     )
   }
-
-
 
   companion object {
     const val INSTALLER = "setup.sh"
@@ -166,6 +169,7 @@ internal class SetupSession(
       packageName: String,
       expiresAt: Long,
       onKeyServed: (ByteArray) -> Unit,
+      expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION,
     ): SetupSession {
       val helper = read(HelperAssets.HELPER)
       val run = read(HelperAssets.RUN)
@@ -177,6 +181,7 @@ internal class SetupSession(
         .replace("@PIPKIN_PACKAGE@", packageName)
         .replace("@PIPKIN_NAME@", TermuxBuild.NAME)
         .replace("@HELPER_PORTS@", HelperProtocol.PORTS.joinToString(","))
+        .replace("@OOPBOT_VERSION@", expectedVersion)
       return SetupSession(
         sid = ByteArray(ID_BYTES).also(random::nextBytes).toHexString(),
         token = ByteArray(TOKEN_BYTES).also(random::nextBytes),
@@ -189,6 +194,7 @@ internal class SetupSession(
           "start.sh" to start,
         ),
         onKeyServed = onKeyServed,
+        expectedVersion = expectedVersion,
       )
     }
 

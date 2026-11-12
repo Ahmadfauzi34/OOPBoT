@@ -107,7 +107,6 @@ class PlaySetupTest {
     assertEquals(200, PlaySetup.respond("/oopbot/${session.sid}/setup.sh", NOW).status)
   }
 
-
   @Test
   fun commandRunsTheInstallerOnlyAfterItsHashChecksInAnyShell() {
     val session = open()
@@ -115,7 +114,29 @@ class PlaySetupTest {
     val check = command.indexOf("echo \"${session.installerSha256}  \$f\" | sha256sum -c --status && ")
     val run = command.indexOf("bash \"\$f\"")
     assertTrue(check in 0 until run)
+    assertTrue(command.contains("pkg install -y curl"))
+    assertTrue(command.contains("OOPBOT_VERSION=\"${session.expectedVersion}\""))
     assertRunsInAnyShell(command)
+  }
+
+  @Test
+  fun installerReplacesOopbotVersionPlaceholder() {
+    val files = mapOf(
+      HelperAssets.HELPER to "helper",
+      HelperAssets.RUN to "run",
+      HelperAssets.START to "start",
+      HelperAssets.INSTALLER to "ver=@OOPBOT_VERSION@\n",
+    )
+    val session = SetupSession.create(
+      read = { files.getValue(it).toByteArray() },
+      packageName = "io.jeph.pipkin.debug",
+      expiresAt = EXPIRES,
+      onKeyServed = { servedKeys += it },
+      expectedVersion = "0.5.9",
+    )
+    PlaySetup.open(session)
+    val installer = String(PlaySetup.respond("/oopbot/${session.sid}/setup.sh", NOW).body)
+    assertEquals("ver=0.5.9\n", installer)
   }
 
   private fun open(): SetupSession {

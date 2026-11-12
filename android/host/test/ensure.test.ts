@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { installedPiVersion, oopbotBinaryPath, readOopbotBinaryVersion } from "../src/env.js";
 import type { JsonObject } from "../src/framing.js";
 import type { ModeContext } from "../src/mode.js";
-import { isNpmNetworkError, npmCi } from "../src/modes/ensure.js";
+import { installOopbotRuntime, isNpmNetworkError, npmCi } from "../src/modes/ensure.js";
 import {
   type Dirs,
   installFakePi,
@@ -265,5 +268,96 @@ describe("ensure mode", () => {
       expect(await install).toMatchObject({ ok: true });
       expect(await npmRuns()).toBe(1);
     });
+  });
+});
+
+async function writeFakeBinary(filePath: string, version: string): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `#!/bin/sh\necho "oopbot ${version}"\n`, { mode: 0o755 });
+}
+
+describe("oopbot native runtime", () => {
+  let dirs: Dirs;
+
+  beforeEach(async () => {
+    dirs = await makeDirs();
+    vi.stubEnv("PREFIX", dirs.prefix);
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await removeDirs(dirs);
+  });
+
+  function makeCtx(params: JsonObject = {}): ModeContext {
+    const controller = new AbortController();
+    return {
+      env: {
+        token: "test",
+        root: dirs.root,
+        configDir: dirs.configDir,
+        home: dirs.home,
+        prefix: dirs.prefix,
+        sharedStorage: dirs.shared,
+      },
+      params,
+      conn: { send: () => undefined },
+      signal: controller.signal,
+    } as unknown as ModeContext;
+  }
+
+  it("reads the real --version output and returns null rather than a fake fallback when missing or corrupt", async () => {
+    expect(await installedPiVersion(dirs.root)).toBeNull();
+
+    const bin = oopbotBinaryPath(dirs.root);
+    await writeFakeBinary(bin, "0.5.4");
+    await writeFile(path.join(path.dirname(bin), "oopbot.version"), "0.5.1\n");
+    expect(readOopbotBinaryVersion(bin)).toBe("0.5.4");
+    expect(await installedPiVersion(dirs.root)).toBe("0.5.4");
+
+    await writeFile(bin, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    expect(readOopbotBinaryVersion(bin)).toBeNull();
+    expect(await installedPiVersion(dirs.root)).toBeNull();
+  });
+
+  it("upgrades stale oopbot binaries from release URLs and rejects version mismatches", async () => {
+    const prefixBin = path.join(dirs.prefix, "bin", "oopbot");
+    await writeFakeBinary(prefixBin, "0.5.2");
+
+    let servedScript = "#!/bin/sh\necho \"oopbot 0.5.4\"\n";
+    const server = createServer((req, res) => {
+      if (req.url === "/v0.5.4/oopbot") {
+        res.writeHead(404);
+        res.end("not yet");
+        return;
+      }
+      if (req.url === "/latest/oopbot" || req.url === "/v0.5.5/oopbot") {
+        res.writeHead(200, { "content-type": "application/octet-stream" });
+        res.end(servedScript);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    onTestFinished(async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    const { port } = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${port}`;
+    const installed = await installOopbotRuntime(makeCtx(), "0.5.4", [`${base}/v0.5.4/oopbot`, `${base}/latest/oopbot`]);
+
+    expect(installed).toBe("0.5.4");
+    const rootBin = oopbotBinaryPath(dirs.root);
+    expect(readOopbotBinaryVersion(rootBin)).toBe("0.5.4");
+    expect(readOopbotBinaryVersion(prefixBin)).toBe("0.5.4");
+    expect(await readFile(path.join(path.dirname(rootBin), "oopbot.version"), "utf8")).toBe("0.5.4\n");
+
+    servedScript = "#!/bin/sh\necho \"oopbot 0.5.3\"\n";
+    await expect(installOopbotRuntime(makeCtx(), "0.5.5", [`${base}/v0.5.5/oopbot`])).rejects.toMatchObject({
+      code: "upgrade_failed",
+    });
+    expect(readOopbotBinaryVersion(rootBin)).toBe("0.5.4");
   });
 });
