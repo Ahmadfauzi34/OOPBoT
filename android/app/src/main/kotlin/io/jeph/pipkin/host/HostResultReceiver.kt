@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import io.jeph.pipkin.termux.TermuxSetup
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -35,13 +36,18 @@ class HostResultReceiver : BroadcastReceiver() {
     private val callbacks = ConcurrentHashMap<String, (Bundle?) -> Unit>()
 
     /** Until the host connects, its exit means the launch failed: [onFailure] hears why. */
-    fun register(id: String, onFailure: (HostFailure) -> Unit) {
+    fun register(
+      id: String,
+      expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION,
+      onFailure: (HostFailure) -> Unit,
+    ) {
       check(
         callbacks.putIfAbsent(id) { result ->
           // Termux results may contain the full command (and so the host script); never log them.
           val exitCode = result?.getInt("exitCode", -1) ?: -1
           val err = result?.getInt("err", ERRNO_SUCCESS) ?: ERRNO_SUCCESS
-          val failure = failureFor(exitCode, err, result?.getString("errmsg").orEmpty().take(ERRMSG_LIMIT))
+          val errmsg = result?.getString("errmsg").orEmpty().take(ERRMSG_LIMIT)
+          val failure = failureFor(exitCode, err, errmsg, expectedVersion)
           Log.w(TAG, "Termux host launch failed: exitCode=$exitCode err=$err -> ${failure.kind}")
           onFailure(failure)
         } == null,
@@ -69,18 +75,26 @@ class HostResultReceiver : BroadcastReceiver() {
      * command exits with no terminal open, so a host launched in that instant is cancelled or killed;
      * that is [HostFailure.Interrupted], not a setup problem.
      */
-    fun failureFor(exitCode: Int, err: Int, errmsg: String): HostFailure = when {
+    fun failureFor(
+      exitCode: Int,
+      err: Int,
+      errmsg: String,
+      expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION,
+    ): HostFailure = when {
       errmsg.contains("allow-external-apps", ignoreCase = true) -> HostFailure.ExternalApps()
       err == ERRNO_CANCELLED || exitCode == EXIT_SIGKILL -> HostFailure.Interrupted()
       err != ERRNO_SUCCESS -> HostFailure.TermuxError()
       exitCode == 70 -> HostFailure.TermuxNotInitialized()
       exitCode == 72 || exitCode == 74 -> HostFailure.NodeMissing()
-      exitCode == 73 -> HostFailure.NodeTooOld()
+      exitCode == 73 -> HostFailure.NodeTooOld(expectedVersion)
       exitCode == 80 -> HostFailure.Internal()
       else -> HostFailure.Crashed(exitCode)
     }
 
     /** A host that exited before connecting with no Termux-side error, as Pipkin's helper reports it. */
-    fun exitFailure(exitCode: Int): HostFailure = failureFor(exitCode, ERRNO_SUCCESS, "")
+    fun exitFailure(
+      exitCode: Int,
+      expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION,
+    ): HostFailure = failureFor(exitCode, ERRNO_SUCCESS, "", expectedVersion)
   }
 }

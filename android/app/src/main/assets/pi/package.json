@@ -7,7 +7,7 @@
     "node": ">=22.19.0"
   },
   "dependencies": {
-    "oopbot": "0.5.4",
+    "oopbot": "0.5.5",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@mozilla/readability": "0.6.0",
     "defuddle": "0.19.6",
