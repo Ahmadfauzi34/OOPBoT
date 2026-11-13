@@ -85,7 +85,7 @@ elif [ -n "$expected_ver" ] && [ "$installed_ver" != "$expected_ver" ]; then
   need_oopbot=true
 elif [ -z "$expected_ver" ]; then
   case "$installed_ver" in
-    0.0.* | 0.1.* | 0.2.* | 0.3.* | 0.4.* | 0.5.[0-3] | 0.5.[0-3][-+]*) need_oopbot=true ;;
+    0.0.* | 0.1.* | 0.2.* | 0.3.* | 0.4.* | 0.5.[0-4] | 0.5.[0-4][-+]*) need_oopbot=true ;;
   esac
 fi
 

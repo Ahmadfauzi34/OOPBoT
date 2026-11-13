@@ -2,6 +2,7 @@ package io.jeph.pipkin.host
 
 import android.content.Context
 import android.util.Log
+import io.jeph.pipkin.termux.TermuxSetup
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -76,6 +77,7 @@ internal object HelperBridge {
     stdin: String,
     onFailure: (HostFailure) -> Unit,
   ): StartedHost {
+    val expectedVersion = TermuxSetup.expectedOopbotVersion(context)
     val connection = open(context)
     val request = JSONObject().put("type", "launch").put("args", JSONArray(arguments)).put("stdin", stdin)
     try {
@@ -84,7 +86,7 @@ internal object HelperBridge {
       connection.close()
       throw HostFailure.Disconnected(error)
     }
-    scope.launch { watch(connection, mode, onFailure) }
+    scope.launch { watch(connection, mode, expectedVersion, onFailure) }
     // Once connected, the helper's connection stays open only to log the host's exit.
     return StartedHost { connected -> if (!connected) connection.close() }
   }
@@ -206,7 +208,12 @@ internal object HelperBridge {
    * Reads the helper's reports for one launch until the child exits or the connection ends. Spawn errors and exits
    * fail the launch through [onFailure], which does nothing once the host has connected.
    */
-  private fun watch(connection: HelperConnection, mode: String, onFailure: (HostFailure) -> Unit) = connection.use {
+  private fun watch(
+    connection: HelperConnection,
+    mode: String,
+    expectedVersion: String,
+    onFailure: (HostFailure) -> Unit,
+  ) = connection.use {
     while (true) {
       val message = try {
         connection.receive()
@@ -226,7 +233,7 @@ internal object HelperBridge {
           val exitCode = exitCode(message)
           val stderr = message.optString("stderr").takeLast(STDERR_LOG_LIMIT).trimEnd()
           Log.i(TAG, "Termux host $mode exited: exitCode=$exitCode stderr:\n$stderr")
-          onFailure(HostResultReceiver.exitFailure(exitCode))
+          onFailure(HostResultReceiver.exitFailure(exitCode, expectedVersion))
           return@use
         }
       }

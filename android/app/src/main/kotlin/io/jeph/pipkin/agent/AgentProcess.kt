@@ -9,6 +9,7 @@ import io.jeph.pipkin.data.SessionRepository
 import io.jeph.pipkin.host.HostChannel
 import io.jeph.pipkin.host.HostClient
 import io.jeph.pipkin.host.HostFailure
+import io.jeph.pipkin.host.HostHello
 import io.jeph.pipkin.host.HostProtocol
 import io.jeph.pipkin.host.HostRejected
 import io.jeph.pipkin.host.RemoteFailure
@@ -539,7 +540,17 @@ internal class AgentProcess(
       }
       if (rejection.code != PI_VERSION || installed) {
         val remote = remoteOutages.refused(rejection)
-        stateFlow.value = AgentProcessState.Failed(rejection.error, code = rejection.code, remote = remote)
+        val failure = if (rejection.code == PI_VERSION) {
+          HostFailure.NodeTooOld(hostClient.expectedPiVersion).also(hostClient::reportFailure)
+        } else {
+          null
+        }
+        stateFlow.value = AgentProcessState.Failed(
+          rejection.error,
+          failure = failure,
+          code = rejection.code,
+          remote = remote,
+        )
         return
       }
       installed = true
@@ -571,6 +582,11 @@ internal class AgentProcess(
     } catch (failure: HostFailure) {
       stateFlow.value = AgentProcessState.Failed(failure.message, failure)
       return null
+    }
+    val mismatch = helloVersionMismatch(channel.hello, hostClient.expectedPiVersion)
+    if (mismatch != null) {
+      channel.close()
+      return mismatch
     }
     val current = Connection(channel)
     connection = current
@@ -895,10 +911,17 @@ internal class AgentProcess(
     /** How long [holdsPi] stays true once nothing holds Pi; Pipkin's channel and Pi's output arrive milliseconds apart. */
     const val HOLD_GRACE_MILLIS = 2_000L
 
-    const val PI_VERSION = "pi_version"
     const val RESYNC_TIMEOUT_MILLIS = 15_000L
     const val AUTO_RECONNECT_INTERVAL_MILLIS = 60_000L
   }
+}
+
+private const val PI_VERSION = "pi_version"
+
+internal fun helloVersionMismatch(hello: JSONObject, expectedVersion: String): HostRejected? {
+  val reported = HostHello.from(hello).piVersion?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+  if (reported == expectedVersion) return null
+  return HostRejected(PI_VERSION, "OOPBoT engine $reported does not match required $expectedVersion.")
 }
 
 /** The `message` and `images` of Pi's `prompt` and `steer`. */

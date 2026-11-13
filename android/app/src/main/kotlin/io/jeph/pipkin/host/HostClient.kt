@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import io.jeph.pipkin.data.BundledExtension
 import io.jeph.pipkin.termux.TermuxIdentity
+import io.jeph.pipkin.termux.TermuxSetup
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.Base64
@@ -70,7 +71,8 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   /** The agent version the bundled `pi/package.json` pins (OOPBoT engine version). */
   val expectedPiVersion: String by lazy {
     val deps = JSONObject(packageJson).getJSONObject("dependencies")
-    deps.optString(OOPBOT_PACKAGE, deps.optString(PI_PACKAGE, "0.5.4"))
+    deps.optString(OOPBOT_PACKAGE, deps.optString(PI_PACKAGE, TermuxSetup.DEFAULT_OOPBOT_VERSION))
+      .ifBlank { TermuxSetup.DEFAULT_OOPBOT_VERSION }
   }
 
   /** Hello of the most recent host that connected; Pi's version is updated after [ensure]. */
@@ -81,6 +83,11 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
 
   /** True while [ensure] runs. */
   val installing: StateFlow<Boolean> = installingState.asStateFlow()
+
+  /** Records a Termux-side failure discovered after the initial socket handshake succeeded. */
+  internal fun reportFailure(failure: HostFailure) {
+    failureState.value = failure
+  }
 
   /**
    * Installs the pinned Pi runtime if it isn't installed in full, or always when [reinstall] is true, and every bundled
@@ -108,7 +115,14 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
       val data = call("ensure", params, ENSURE_TIMEOUT_MILLIS, progress(onProgress))
       // The utility host keeps the Pi it imported first, which may be the one this install replaced.
       withContext(Dispatchers.Main.immediate) { utility.retire() }
-      val version = data.optString("oopbotVersion", data.optString("piVersion"))
+      val version = try {
+        verifiedEnsureVersion(data, expectedPiVersion)
+      } catch (failure: HostFailure.NodeTooOld) {
+        val reported = extractEnsureVersion(data)
+        helloState.update { it?.copy(piVersion = reported) }
+        failureState.value = failure
+        throw failure
+      }
       helloState.update { it?.copy(piVersion = version) }
       version
     } finally {
@@ -524,4 +538,16 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     /** Long enough that a visit to the chat list or Settings reuses one host, as the file browser's does. */
     const val UTILITY_IDLE_MILLIS = 120_000L
   }
+}
+
+internal fun extractEnsureVersion(data: JSONObject): String? {
+  val oopbot = (data.opt("oopbotVersion") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+  if (oopbot != null) return oopbot
+  return (data.opt("piVersion") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+internal fun verifiedEnsureVersion(data: JSONObject, expectedVersion: String): String {
+  val reported = extractEnsureVersion(data)
+  if (reported != expectedVersion) throw HostFailure.NodeTooOld(expectedVersion)
+  return reported
 }

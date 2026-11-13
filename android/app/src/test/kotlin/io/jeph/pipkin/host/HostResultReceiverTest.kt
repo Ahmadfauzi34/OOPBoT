@@ -37,4 +37,14 @@ class HostResultReceiverTest {
     assertEquals(HostFailure.Kind.Crashed, failure.kind)
     assertEquals(1, (failure as HostFailure.Crashed).exitCode)
   }
+
+  @Test
+  fun exit73UsesProvidedExpectedVersionForUpgradeCommand() {
+    val fromResult = HostResultReceiver.failureFor(73, -1, "", "0.5.9")
+    val fromHelper = HostResultReceiver.exitFailure(73, "0.5.9")
+    assertEquals(HostFailure.Kind.NodeTooOld, fromResult.kind)
+    assertEquals(HostFailure.Kind.NodeTooOld, fromHelper.kind)
+    assertEquals(true, fromResult.command?.contains("/releases/download/v0.5.9/"))
+    assertEquals(true, fromHelper.command?.contains("/releases/download/v0.5.9/"))
+  }
 }

@@ -3,6 +3,7 @@ package io.jeph.pipkin.host
 import androidx.annotation.StringRes
 import io.jeph.pipkin.AppStrings
 import io.jeph.pipkin.R
+import io.jeph.pipkin.termux.TermuxSetup
 import java.io.IOException
 
 /**
@@ -68,8 +69,12 @@ internal sealed class HostFailure(
 
   class NodeMissing : HostFailure(Kind.NodeMissing, R.string.host_failure_node_missing)
 
-  class NodeTooOld : HostFailure(Kind.NodeTooOld, R.string.host_failure_node_too_old, UPGRADE_COMMAND) {
-    override val message: String get() = AppStrings.get(messageRes, UPGRADE_COMMAND)
+  class NodeTooOld(expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION) : HostFailure(
+    Kind.NodeTooOld,
+    R.string.host_failure_node_too_old,
+    upgradeCommand(expectedVersion),
+  ) {
+    override val message: String get() = AppStrings.get(messageRes, checkNotNull(command))
   }
 
   class Internal : HostFailure(Kind.Internal, R.string.host_failure_internal)
@@ -107,15 +112,32 @@ internal sealed class HostFailure(
   /** Play build: every helper port is held by something other than Pipkin's helper. */
   class HelperPortTaken : HostFailure(Kind.HelperPortTaken, R.string.host_failure_helper_port_taken)
 
-  private companion object {
-    const val UPGRADE_COMMAND =
-      "bash -c '{ command -v curl >/dev/null 2>&1 || { dpkg --configure -a; yes | pkg upgrade -y && " +
-        "pkg install -y curl; }; } && mkdir -p \"\$PREFIX/bin\" && t=\"\$PREFIX/bin/oopbot.tmp\" && " +
-        "curl -fsSL \"https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android\" " +
-        "-o \"\$t\" && chmod 755 \"\$t\" && \"\$t\" --version >/dev/null 2>&1 && " +
-        "mv -f \"\$t\" \"\$PREFIX/bin/oopbot\" || { rm -f \"\$PREFIX/bin/oopbot.tmp\"; false; }'"
+  internal companion object {
+    private const val RELEASES_BASE = "https://github.com/Ahmadfauzi34/OOPBoT/releases"
+    private const val RELEASE_ASSET = "oopbot-aarch64-linux-android"
 
-    val SETUP_KINDS = setOf(
+    internal fun upgradeCommand(expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION): String {
+      val version = expectedVersion.trim()
+        .filter { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' || it == '.' || it == '-' || it == '+' }
+        .ifEmpty { TermuxSetup.DEFAULT_OOPBOT_VERSION }
+      val tagUrl = "$RELEASES_BASE/download/v$version/$RELEASE_ASSET"
+      val latestUrl = "$RELEASES_BASE/latest/download/$RELEASE_ASSET"
+      val rootBin = "\$HOME/.local/share/${TermuxBuild.NAME}/bin/oopbot"
+      val rootVer = "\$HOME/.local/share/${TermuxBuild.NAME}/bin/oopbot.version"
+      return TermuxSetup.inBash(
+        "{ command -v curl >/dev/null 2>&1 || { dpkg --configure -a; yes | pkg upgrade -y && " +
+          "pkg install -y curl; }; } && mkdir -p \"\$PREFIX/bin\" && t=\"\$PREFIX/bin/oopbot.\$\$.tmp\" && " +
+          "{ { curl -fsSL -m 120 \"$tagUrl\" -o \"\$t\" || curl -fsSL -m 120 \"$latestUrl\" -o \"\$t\"; } && " +
+          "chmod 755 \"\$t\" && case \"\$(\"\$t\" --version 2>/dev/null)\" in " +
+          "\"oopbot $version\"|\"oopbot $version \"*) true;; *) false;; esac && " +
+          "mv -f \"\$t\" \"\$PREFIX/bin/oopbot\" || { rm -f \"\$t\"; false; }; } && " +
+          "{ [ ! -e \"$rootBin\" ] || { cp -f \"\$PREFIX/bin/oopbot\" \"$rootBin.tmp\" && " +
+          "chmod 755 \"$rootBin.tmp\" && mv -f \"$rootBin.tmp\" \"$rootBin\"; } || rm -f \"$rootBin.tmp\"; } && " +
+          "{ [ ! -f \"$rootVer\" ] || echo \"$version\" > \"$rootVer\" || true; }",
+      )
+    }
+
+    private val SETUP_KINDS = setOf(
       Kind.MissingTermux,
       Kind.UntrustedTermux,
       Kind.ExternalApps,

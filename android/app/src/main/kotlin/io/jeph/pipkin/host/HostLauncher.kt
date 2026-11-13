@@ -7,6 +7,7 @@ import android.content.Intent
 import androidx.core.net.toUri
 import io.jeph.pipkin.termux.TermuxIdentity
 import io.jeph.pipkin.termux.TermuxInstall
+import io.jeph.pipkin.termux.TermuxSetup
 import java.security.SecureRandom
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -106,7 +107,7 @@ internal object HostLauncher {
     onFailure: (HostFailure) -> Unit,
   ): StartedHost {
     val id = UUID.randomUUID().toString()
-    HostResultReceiver.register(id, onFailure)
+    HostResultReceiver.register(id, TermuxSetup.expectedOopbotVersion(context), onFailure)
     var sent = false
     try {
       start(context, mode, arguments, stdin, resultIntent(context, id))
@@ -190,9 +191,9 @@ internal object HostLauncher {
 
   /**
    * `<mode> <port>` for native `oopbot host` or fallback `host.mjs`; the token is the one stdin line.
-   * Exit codes: 70 Termux env, 72 engine missing, 80 token missing.
+   * Exit codes: 70 Termux env, 72 engine missing, 73 engine too old, 80 token missing.
    */
-  private val BOOTSTRAP = $$$"""
+  internal val BOOTSTRAP = $$$"""
     set -eu
     [ -n "${PREFIX:-}" ] && [ -n "${HOME:-}" ] || exit 70
     IFS= read -r OOPBOT_TOKEN || exit 80
@@ -212,7 +213,10 @@ internal object HostLauncher {
     if command -v oopbot >/dev/null 2>&1; then
       oopbot_ver=$(oopbot --version 2>/dev/null || echo "")
       case "$oopbot_ver" in
-        "oopbot 0.5."[2-9]*|"oopbot "[1-9]*)
+        "oopbot 0.5."[5-9] | "oopbot 0.5."[5-9][-+.]* | "oopbot 0.5."[5-9]" "* | "oopbot 0.5."[1-9][0-9]*)
+          exec oopbot host "$mode" "$port"
+          ;;
+        "oopbot 0."[6-9]* | "oopbot 0."[1-9][0-9]* | "oopbot "[1-9]*)
           exec oopbot host "$mode" "$port"
           ;;
         *)
