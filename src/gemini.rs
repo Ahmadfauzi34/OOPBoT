@@ -309,10 +309,11 @@ impl GeminiClient {
 
         let clean_model = model.strip_prefix("models/").unwrap_or(model);
         let url = format!("{}/models/{}:generateContent", base_url, clean_model);
+        let gemini_contents = coalesce_gemini_contents(contents);
 
         let mut body = json!({
             "systemInstruction": { "parts": [{ "text": system_instruction }] },
-            "contents": contents,
+            "contents": gemini_contents,
         });
         if !function_declarations.is_empty() {
             body["tools"] = json!([{ "functionDeclarations": function_declarations }]);
@@ -391,6 +392,9 @@ impl GeminiClient {
     ) -> Result<ModelTurn, BoxError> {
         let url = format!("{}/chat/completions", base_url);
         let mut messages = vec![json!({ "role": "system", "content": system_instruction })];
+        let mut fallback_call_seq = 0usize;
+        let mut pending_fallback_ids: std::collections::VecDeque<(String, String)> =
+            std::collections::VecDeque::new();
 
         for item in contents {
             let role = item["role"].as_str().unwrap_or("user");
@@ -400,7 +404,7 @@ impl GeminiClient {
             if role == "model" {
                 let mut text_buf = String::new();
                 let mut tool_calls = Vec::new();
-                for (idx, part) in parts.iter().enumerate() {
+                for part in parts {
                     if part["thought"].as_bool() == Some(true) {
                         continue;
                     }
@@ -408,11 +412,17 @@ impl GeminiClient {
                         text_buf.push_str(t);
                     }
                     if let Some(fc) = part.get("functionCall") {
+                        let name = fc["name"].as_str().unwrap_or_default().to_string();
                         let call_id = fc["id"]
                             .as_str()
+                            .filter(|s| !s.is_empty())
                             .map(str::to_string)
-                            .unwrap_or_else(|| format!("call_{}", idx));
-                        let name = fc["name"].as_str().unwrap_or_default();
+                            .unwrap_or_else(|| {
+                                let gen_id = format!("call_{}", fallback_call_seq);
+                                fallback_call_seq += 1;
+                                pending_fallback_ids.push_back((gen_id.clone(), name.clone()));
+                                gen_id
+                            });
                         let args_str = serde_json::to_string(fc.get("args").unwrap_or(&json!({})))
                             .unwrap_or_else(|_| "{}".into());
                         tool_calls.push(json!({
@@ -422,20 +432,22 @@ impl GeminiClient {
                         }));
                     }
                 }
-                let mut msg = json!({ "role": "assistant" });
-                if !text_buf.is_empty() || tool_calls.is_empty() {
-                    msg["content"] = json!(text_buf);
+                if !text_buf.is_empty() || !tool_calls.is_empty() {
+                    let mut msg = json!({ "role": "assistant" });
+                    if !text_buf.is_empty() || tool_calls.is_empty() {
+                        msg["content"] = json!(text_buf);
+                    }
+                    if !tool_calls.is_empty() {
+                        msg["tool_calls"] = json!(tool_calls);
+                    }
+                    messages.push(msg);
                 }
-                if !tool_calls.is_empty() {
-                    msg["tool_calls"] = json!(tool_calls);
-                }
-                messages.push(msg);
             } else {
                 let mut user_texts = Vec::new();
                 let mut multimodal_parts = Vec::new();
                 let mut has_inline_image = false;
 
-                for (idx, part) in parts.iter().enumerate() {
+                for part in parts {
                     if let Some(t) = part["text"].as_str() {
                         user_texts.push(t.to_string());
                         multimodal_parts.push(json!({ "type": "text", "text": t }));
@@ -454,10 +466,17 @@ impl GeminiClient {
                         }
                     }
                     if let Some(fr) = part.get("functionResponse") {
+                        let fr_name = fr["name"].as_str().unwrap_or_default();
                         let call_id = fr["id"]
                             .as_str()
+                            .filter(|s| !s.is_empty())
                             .map(str::to_string)
-                            .unwrap_or_else(|| format!("call_{}", idx));
+                            .or_else(|| take_pending_fallback_id(&mut pending_fallback_ids, fr_name))
+                            .unwrap_or_else(|| {
+                                let gen_id = format!("call_{}", fallback_call_seq);
+                                fallback_call_seq += 1;
+                                gen_id
+                            });
                         let content_str =
                             serde_json::to_string(fr.get("response").unwrap_or(&json!({})))
                                 .unwrap_or_else(|_| "{}".into());
@@ -468,16 +487,13 @@ impl GeminiClient {
                         }));
                     }
                 }
-                if has_inline_image {
-                    messages.push(json!({
-                        "role": "user",
-                        "content": multimodal_parts
-                    }));
-                } else if !user_texts.is_empty() {
-                    messages.push(json!({
-                        "role": "user",
-                        "content": user_texts.join("\n")
-                    }));
+                if has_inline_image || !user_texts.is_empty() {
+                    push_openai_user_message(
+                        &mut messages,
+                        &user_texts,
+                        &multimodal_parts,
+                        has_inline_image,
+                    );
                 }
             }
         }
@@ -627,7 +643,10 @@ impl GeminiClient {
         options: &GenerationOptions,
     ) -> Result<ModelTurn, BoxError> {
         let url = format!("{}/messages", base_url.trim_end_matches('/'));
-        let mut messages = Vec::new();
+        let mut messages: Vec<Value> = Vec::new();
+        let mut fallback_call_seq = 0usize;
+        let mut pending_fallback_ids: std::collections::VecDeque<(String, String)> =
+            std::collections::VecDeque::new();
 
         for item in contents {
             let role = item["role"].as_str().unwrap_or("user");
@@ -636,7 +655,7 @@ impl GeminiClient {
             };
             let anthropic_role = if role == "model" { "assistant" } else { "user" };
             let mut blocks = Vec::new();
-            for (idx, part) in parts.iter().enumerate() {
+            for part in parts {
                 if part["thought"].as_bool() == Some(true) {
                     continue;
                 }
@@ -658,22 +677,36 @@ impl GeminiClient {
                     }
                 }
                 if let Some(fc) = part.get("functionCall") {
+                    let name = fc["name"].as_str().unwrap_or_default().to_string();
                     let call_id = fc["id"]
                         .as_str()
+                        .filter(|s| !s.is_empty())
                         .map(str::to_string)
-                        .unwrap_or_else(|| format!("toolu_{}", idx));
+                        .unwrap_or_else(|| {
+                            let gen_id = format!("toolu_{}", fallback_call_seq);
+                            fallback_call_seq += 1;
+                            pending_fallback_ids.push_back((gen_id.clone(), name.clone()));
+                            gen_id
+                        });
                     blocks.push(json!({
                         "type": "tool_use",
                         "id": call_id,
-                        "name": fc["name"].as_str().unwrap_or_default(),
+                        "name": name,
                         "input": fc.get("args").cloned().unwrap_or_else(|| json!({}))
                     }));
                 }
                 if let Some(fr) = part.get("functionResponse") {
+                    let fr_name = fr["name"].as_str().unwrap_or_default();
                     let call_id = fr["id"]
                         .as_str()
+                        .filter(|s| !s.is_empty())
                         .map(str::to_string)
-                        .unwrap_or_else(|| format!("toolu_{}", idx));
+                        .or_else(|| take_pending_fallback_id(&mut pending_fallback_ids, fr_name))
+                        .unwrap_or_else(|| {
+                            let gen_id = format!("toolu_{}", fallback_call_seq);
+                            fallback_call_seq += 1;
+                            gen_id
+                        });
                     let content_str =
                         serde_json::to_string(fr.get("response").unwrap_or(&json!({})))
                             .unwrap_or_else(|_| "{}".into());
@@ -685,7 +718,17 @@ impl GeminiClient {
                 }
             }
             if !blocks.is_empty() {
-                messages.push(json!({ "role": anthropic_role, "content": blocks }));
+                let merge_into_last = messages
+                    .last()
+                    .and_then(|m| m["role"].as_str())
+                    == Some(anthropic_role);
+                if merge_into_last {
+                    if let Some(last_content) = messages.last_mut().and_then(|m| m["content"].as_array_mut()) {
+                        last_content.extend(blocks);
+                    }
+                } else {
+                    messages.push(json!({ "role": anthropic_role, "content": blocks }));
+                }
             }
         }
 
@@ -779,6 +822,95 @@ impl GeminiClient {
             function_calls,
             usage,
         })
+    }
+}
+
+fn coalesce_gemini_contents(contents: &[Value]) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::with_capacity(contents.len());
+    for item in contents {
+        let role = item["role"].as_str().unwrap_or("user");
+        let norm_role = if role == "model" || role == "assistant" {
+            "model"
+        } else {
+            "user"
+        };
+        let parts = item["parts"].as_array().cloned().unwrap_or_default();
+        if parts.is_empty() {
+            continue;
+        }
+        let same_as_prev = out
+            .last()
+            .and_then(|prev| prev["role"].as_str())
+            == Some(norm_role);
+        if same_as_prev {
+            if let Some(prev_parts) = out.last_mut().and_then(|p| p["parts"].as_array_mut()) {
+                prev_parts.extend(parts);
+            }
+        } else {
+            out.push(json!({ "role": norm_role, "parts": parts }));
+        }
+    }
+    out
+}
+
+fn take_pending_fallback_id(
+    queue: &mut std::collections::VecDeque<(String, String)>,
+    name: &str,
+) -> Option<String> {
+    if let Some(pos) = queue.iter().position(|(_, n)| n == name) {
+        return queue.remove(pos).map(|(id, _)| id);
+    }
+    queue.pop_front().map(|(id, _)| id)
+}
+
+fn push_openai_user_message(
+    messages: &mut Vec<Value>,
+    user_texts: &[String],
+    multimodal_parts: &[Value],
+    has_inline_image: bool,
+) {
+    let can_merge = messages
+        .last()
+        .and_then(|m| m["role"].as_str())
+        == Some("user");
+    if can_merge {
+        if let Some(last) = messages.last_mut() {
+            if !has_inline_image && last["content"].is_string() {
+                let prev = last["content"].as_str().unwrap_or_default();
+                let next = user_texts.join("\n");
+                let merged = if prev.is_empty() {
+                    next
+                } else if next.is_empty() {
+                    prev.to_string()
+                } else {
+                    format!("{}\n{}", prev, next)
+                };
+                last["content"] = json!(merged);
+                return;
+            }
+            let mut merged_parts = if let Some(arr) = last["content"].as_array() {
+                arr.clone()
+            } else if let Some(s) = last["content"].as_str().filter(|s| !s.is_empty()) {
+                vec![json!({ "type": "text", "text": s })]
+            } else {
+                Vec::new()
+            };
+            merged_parts.extend(multimodal_parts.iter().cloned());
+            last["content"] = json!(merged_parts);
+            return;
+        }
+    }
+
+    if has_inline_image {
+        messages.push(json!({
+            "role": "user",
+            "content": multimodal_parts
+        }));
+    } else if !user_texts.is_empty() {
+        messages.push(json!({
+            "role": "user",
+            "content": user_texts.join("\n")
+        }));
     }
 }
 

@@ -20,8 +20,11 @@ use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Hook sinkron untuk menyuntikkan pesan `steer` yang sedang antre di sela langkah tool.
+pub type SteerHook = Arc<dyn Fn() -> Vec<ChatInput> + Send + Sync>;
 
 /// Input satu giliran obrolan: prompt teks dan daftar gambar inline opsional.
 #[derive(Debug, Clone, Default)]
@@ -55,6 +58,8 @@ pub struct TurnOutcome {
     pub steps: usize,
     pub outcome: StepsOutcome,
     pub usage: Option<TokenUsage>,
+    pub last_usage: Option<TokenUsage>,
+    pub aborted: bool,
 }
 
 /// Interface agen (OOP).
@@ -395,6 +400,36 @@ impl GeminiAgent {
         self.tabs.lock().unwrap().active().timeline.clone()
     }
 
+    pub fn active_history(&self) -> Vec<Value> {
+        self.tabs.lock().unwrap().active().history.clone()
+    }
+
+    pub fn replace_active_history(&self, id: &str, title: Option<&str>, history: Vec<Value>) {
+        let mut tabs = self.tabs.lock().unwrap();
+        let active = tabs.active_mut();
+        active.id = id.to_string();
+        active.title = match title {
+            Some(t) if !t.trim().is_empty() => t.to_string(),
+            _ => format!("Tab {}", id),
+        };
+        active.history = history;
+        active.timeline.clear();
+        self.persist_tabs(&tabs);
+    }
+
+    pub fn append_user_message_to_active_history(&self, input: &ChatInput) {
+        let msg = if input.images.is_empty() {
+            user_text(&input.text)
+        } else {
+            user_message_with_images(&input.text, &input.images)
+        };
+        let mut tabs = self.tabs.lock().unwrap();
+        let active = tabs.active_mut();
+        active.update_title_from_prompt(&input.text);
+        active.history.push(msg);
+        self.persist_tabs(&tabs);
+    }
+
     pub fn tool_names(&self) -> Vec<&'static str> {
         self.tools.names()
     }
@@ -410,13 +445,53 @@ impl GeminiAgent {
         collector.on_event(&event);
     }
 
+    /// Buat ringkasan konteks (untuk `compact` RPC) dengan dukungan pembatalan asinkron.
+    pub async fn generate_compaction_summary_cancellable(
+        &self,
+        prompt: &str,
+        mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(String, Option<TokenUsage>), BoxError> {
+        let (session_id, active_model) = {
+            let tabs = self.tabs.lock().unwrap();
+            let s = tabs.active();
+            (s.id.clone(), s.model.clone())
+        };
+        let model_info = self.active_model_info();
+        let gen_options = GenerationOptions {
+            api: Some(model_info.api.clone()),
+            max_tokens: model_info.output_token_limit,
+            thinking_level: Some(self.thinking_level()),
+            reasoning: model_info.reasoning,
+            thinking_level_map: model_info.thinking_level_map.clone(),
+            session_id: Some(session_id),
+        };
+        let contents = vec![user_text(prompt)];
+        let sys = "Kamu adalah asisten peringkas percakapan yang akurat dan ringkas.";
+        let turn = tokio::select! {
+            biased;
+            _ = wait_cancelled(&mut cancel_rx) => {
+                return Err("Operasi dibatalkan (aborted)".into());
+            }
+            res = self.client.generate_with_options(
+                &active_model,
+                sys,
+                &contents,
+                &[],
+                &gen_options,
+            ) => res?,
+        };
+        Ok((turn.text, turn.usage))
+    }
+
     /// Jalankan satu function call dan pancarkan event `ToolCallStart` + `ToolCallEnd`.
-    async fn run_tool(
+    /// Mengembalikan `None` jika dibatalkan saat menunggu konfirmasi atau eksekusi tool.
+    async fn run_tool_cancellable(
         &self,
         step_index: usize,
         call: &FunctionCall,
         collector: &MemoryEventCollector,
-    ) -> Value {
+        cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Option<Value> {
         let call_id = call
             .id
             .clone()
@@ -435,7 +510,7 @@ impl GeminiAgent {
                 },
                 collector,
             );
-            return err_val;
+            return Some(err_val);
         };
 
         let preview = tool.preview(&call.args);
@@ -453,25 +528,66 @@ impl GeminiAgent {
             collector,
         );
 
-        if requires_confirmation && !self.approver.approve(tool.name(), &preview).await {
-            let rejected =
-                json!({ "error": "User menolak eksekusi tool ini. Tanyakan alternatif ke user." });
-            self.emit(
-                AgentEvent::ToolCallEnd {
-                    step_index,
-                    call_id,
-                    tool_name: tool.name().to_string(),
-                    status: ToolStatus::Rejected,
-                    output: rejected.clone(),
-                    duration_ms: 0,
-                },
-                collector,
-            );
-            return rejected;
+        if requires_confirmation {
+            let approved = tokio::select! {
+                biased;
+                _ = wait_cancelled(cancel_rx) => {
+                    let abort_val = json!({ "error": "Dibatalkan oleh user (aborted)" });
+                    self.emit(
+                        AgentEvent::ToolCallEnd {
+                            step_index,
+                            call_id,
+                            tool_name: tool.name().to_string(),
+                            status: ToolStatus::Error,
+                            output: abort_val,
+                            duration_ms: 0,
+                        },
+                        collector,
+                    );
+                    return None;
+                }
+                res = self.approver.approve(tool.name(), &preview) => res,
+            };
+            if !approved {
+                let rejected =
+                    json!({ "error": "User menolak eksekusi tool ini. Tanyakan alternatif ke user." });
+                self.emit(
+                    AgentEvent::ToolCallEnd {
+                        step_index,
+                        call_id,
+                        tool_name: tool.name().to_string(),
+                        status: ToolStatus::Rejected,
+                        output: rejected.clone(),
+                        duration_ms: 0,
+                    },
+                    collector,
+                );
+                return Some(rejected);
+            }
         }
 
         let started = Instant::now();
-        match tool.execute(&call.args).await {
+        let exec_res = tokio::select! {
+            biased;
+            _ = wait_cancelled(cancel_rx) => {
+                let abort_val = json!({ "error": "Dibatalkan oleh user (aborted)" });
+                self.emit(
+                    AgentEvent::ToolCallEnd {
+                        step_index,
+                        call_id,
+                        tool_name: tool.name().to_string(),
+                        status: ToolStatus::Error,
+                        output: abort_val,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    },
+                    collector,
+                );
+                return None;
+            }
+            res = tool.execute(&call.args) => res,
+        };
+
+        match exec_res {
             Ok(result) => {
                 self.emit(
                     AgentEvent::ToolCallEnd {
@@ -484,7 +600,7 @@ impl GeminiAgent {
                     },
                     collector,
                 );
-                result
+                Some(result)
             }
             Err(e) => {
                 let err_val = json!({ "error": e });
@@ -499,31 +615,19 @@ impl GeminiAgent {
                     },
                     collector,
                 );
-                err_val
+                Some(err_val)
             }
         }
     }
-}
 
-#[async_trait]
-impl Agent for GeminiAgent {
-    fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    async fn chat(&self, prompt: &str) -> Result<String, BoxError> {
-        let outcome = self.chat_turn(&ChatInput::text_only(prompt)).await?;
-        match outcome.outcome {
-            StepsOutcome::Done => Ok(outcome.text),
-            StepsOutcome::Stopped | StepsOutcome::Working => Err(format!(
-                "Batas {} langkah tool tercapai. Ketik 'lanjut' untuk meneruskan.",
-                self.max_steps
-            )
-            .into()),
-        }
-    }
-
-    async fn chat_turn(&self, input: &ChatInput) -> Result<TurnOutcome, BoxError> {
+    /// Jalankan satu giliran obrolan dengan dukungan pembatalan nyata (`watch::Receiver<bool>`)
+    /// serta suntikan pesan `steer` di sela langkah tool (`step_idx > 1`).
+    pub async fn chat_turn_cancellable(
+        &self,
+        input: &ChatInput,
+        mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+        steer_hook: Option<SteerHook>,
+    ) -> Result<TurnOutcome, BoxError> {
         let (session_id, active_model, mut history) = {
             let tabs = self.tabs.lock().unwrap();
             let s = tabs.active();
@@ -542,6 +646,8 @@ impl Agent for GeminiAgent {
         let turn_started = Instant::now();
         let mut tool_steps = 0usize;
         let mut total_usage: Option<TokenUsage> = None;
+        let mut last_usage: Option<TokenUsage> = None;
+        let mut was_aborted = false;
 
         let model_info = self.active_model_info();
         let gen_options = GenerationOptions {
@@ -562,22 +668,49 @@ impl Agent for GeminiAgent {
         );
 
         for step_idx in 1..=self.max_steps {
-            let turn = self
-                .client
-                .generate_with_options(
+            if *cancel_rx.borrow() {
+                was_aborted = true;
+                break;
+            }
+
+            if step_idx > 1 {
+                if let Some(hook) = &steer_hook {
+                    for steer in hook() {
+                        let steer_msg = if steer.images.is_empty() {
+                            user_text(&steer.text)
+                        } else {
+                            user_message_with_images(&steer.text, &steer.images)
+                        };
+                        history.push(steer_msg);
+                    }
+                }
+                if *cancel_rx.borrow() {
+                    was_aborted = true;
+                    break;
+                }
+            }
+
+            let turn = tokio::select! {
+                biased;
+                _ = wait_cancelled(&mut cancel_rx) => {
+                    was_aborted = true;
+                    break;
+                }
+                res = self.client.generate_with_options(
                     &active_model,
                     &self.system_instruction,
                     &history,
                     &decls,
                     &gen_options,
-                )
-                .await?;
+                ) => res?,
+            };
             history.push(turn.raw_content.clone());
 
             if let Some(u) = turn.usage {
                 let cur = total_usage.get_or_insert(TokenUsage::default());
                 cur.input_tokens += u.input_tokens;
                 cur.output_tokens += u.output_tokens;
+                last_usage = Some(u);
             }
 
             for thought in &turn.thoughts {
@@ -621,6 +754,8 @@ impl Agent for GeminiAgent {
                     steps: tool_steps,
                     outcome: StepsOutcome::Done,
                     usage: total_usage,
+                    last_usage,
+                    aborted: false,
                 });
             }
 
@@ -635,12 +770,30 @@ impl Agent for GeminiAgent {
             }
 
             let mut parts = Vec::with_capacity(turn.function_calls.len());
-            for call in &turn.function_calls {
+            for (idx, call) in turn.function_calls.iter().enumerate() {
                 tool_steps += 1;
-                let response = self.run_tool(step_idx, call, &collector).await;
-                parts.push(function_response_part(call, response));
+                match self
+                    .run_tool_cancellable(step_idx, call, &collector, &mut cancel_rx)
+                    .await
+                {
+                    Some(response) => {
+                        parts.push(function_response_part(call, response));
+                    }
+                    None => {
+                        let cancel_err = json!({ "error": "Dibatalkan oleh user (aborted)" });
+                        parts.push(function_response_part(call, cancel_err.clone()));
+                        for unstarted in &turn.function_calls[idx + 1..] {
+                            parts.push(function_response_part(unstarted, cancel_err.clone()));
+                        }
+                        was_aborted = true;
+                        break;
+                    }
+                }
             }
             history.push(json!({ "role": "user", "parts": parts }));
+            if was_aborted {
+                break;
+            }
         }
 
         self.emit(
@@ -666,7 +819,45 @@ impl Agent for GeminiAgent {
             steps: tool_steps,
             outcome: StepsOutcome::Stopped,
             usage: total_usage,
+            last_usage,
+            aborted: was_aborted,
         })
+    }
+}
+
+async fn wait_cancelled(cancel_rx: &mut tokio::sync::watch::Receiver<bool>) {
+    if *cancel_rx.borrow() {
+        return;
+    }
+    while cancel_rx.changed().await.is_ok() {
+        if *cancel_rx.borrow() {
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
+}
+
+#[async_trait]
+impl Agent for GeminiAgent {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    async fn chat(&self, prompt: &str) -> Result<String, BoxError> {
+        let outcome = self.chat_turn(&ChatInput::text_only(prompt)).await?;
+        match outcome.outcome {
+            StepsOutcome::Done => Ok(outcome.text),
+            StepsOutcome::Stopped | StepsOutcome::Working => Err(format!(
+                "Batas {} langkah tool tercapai. Ketik 'lanjut' untuk meneruskan.",
+                self.max_steps
+            )
+            .into()),
+        }
+    }
+
+    async fn chat_turn(&self, input: &ChatInput) -> Result<TurnOutcome, BoxError> {
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        self.chat_turn_cancellable(input, cancel_rx, None).await
     }
 
     fn clear_memory(&self) {
@@ -802,12 +993,15 @@ mod tests {
                 input_tokens: 150,
                 output_tokens: 80,
             }),
+            last_usage: None,
+            aborted: false,
         };
 
         assert_eq!(outcome.steps, 2);
         assert_eq!(outcome.outcome, StepsOutcome::Done);
         assert_eq!(outcome.usage.unwrap().input_tokens, 150);
         assert_eq!(outcome.usage.unwrap().output_tokens, 80);
+        assert!(!outcome.aborted);
     }
 }
 
