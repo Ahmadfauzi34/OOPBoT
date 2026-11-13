@@ -237,7 +237,7 @@ impl Drop for CoordinatorFinishGuard {
 pub struct RpcRuntime {
     pub cwd: PathBuf,
     pub config_dir: PathBuf,
-    pub plugins: PluginRegistry,
+    pub plugins: Arc<PluginRegistry>,
     pub agent: GeminiAgent,
     pub ui_state: Arc<Mutex<RpcUiState>>,
     pub pending_approvals: PendingApprovals,
@@ -355,6 +355,7 @@ impl RpcRuntime {
             plugins.activate(ext);
         }
         plugins.register_active_tools(&mut tools);
+        let plugins = Arc::new(plugins);
 
         let mut system_instruction = default_rpc_system_instruction(&cwd, &tools);
         let plugin_system_append = plugins.system_prompt_append();
@@ -448,7 +449,8 @@ impl RpcRuntime {
         }
 
         let sink = RpcEventSink::new(Arc::clone(&ui_state))
-            .with_defer_settled(Arc::clone(&defer_settled));
+            .with_defer_settled(Arc::clone(&defer_settled))
+            .with_plugins(Arc::clone(&plugins));
         let approver = RpcApprover::new(Arc::clone(&pending_approvals));
         let mut agent = GeminiAgent::with_event_sink_and_tabs(
             "oopbot-rpc",
@@ -542,9 +544,9 @@ impl RpcRuntime {
                     }));
                 }
             }
-        }
-        if self.plugins.is_active("pipkin-background") {
-            Self::send_channel("background", json!({ "active": 0 }));
+            if let Some((topic, data)) = plugin.channel_status() {
+                Self::send_channel(topic, data);
+            }
         }
         if self.plugins.is_active("pipkin-subagents") {
             Self::send_channel("subagents", json!({ "runs": [], "standingAside": false }));
@@ -755,12 +757,10 @@ impl RpcRuntime {
                 .collect();
             if !patterns.is_empty() {
                 let scoped = resolve_model_scope(&patterns, &all_models);
-                if !scoped.is_empty() {
-                    return scoped
-                        .into_iter()
-                        .map(|(m, _)| m.to_pipkin_json(Some(&m.provider)))
-                        .collect();
-                }
+                return scoped
+                    .into_iter()
+                    .map(|(m, _)| m.to_pipkin_json(Some(&m.provider)))
+                    .collect();
             }
         }
 
@@ -3632,6 +3632,7 @@ pub struct RpcEventSink {
     internal: Mutex<RpcEventSinkInternal>,
     emitter: Option<EventEmitter>,
     defer_settled: Arc<AtomicBool>,
+    plugins: Option<Arc<PluginRegistry>>,
 }
 
 impl RpcEventSink {
@@ -3641,6 +3642,7 @@ impl RpcEventSink {
             internal: Mutex::new(RpcEventSinkInternal::default()),
             emitter: None,
             defer_settled: Arc::new(AtomicBool::new(false)),
+            plugins: None,
         }
     }
 
@@ -3653,11 +3655,17 @@ impl RpcEventSink {
             internal: Mutex::new(RpcEventSinkInternal::default()),
             emitter: Some(Box::new(emitter)),
             defer_settled: Arc::new(AtomicBool::new(false)),
+            plugins: None,
         }
     }
 
     pub fn with_defer_settled(mut self, defer_settled: Arc<AtomicBool>) -> Self {
         self.defer_settled = defer_settled;
+        self
+    }
+
+    pub fn with_plugins(mut self, plugins: Arc<PluginRegistry>) -> Self {
+        self.plugins = Some(plugins);
         self
     }
 
@@ -3874,6 +3882,45 @@ impl EventSink for RpcEventSink {
                     let mut state = self.ui_state.lock().unwrap();
                     state.ui_messages.push(tool_result_msg.clone());
                     state.append_session_entry("message", json!({ "message": tool_result_msg }));
+                }
+
+                if let Some(plugins) = &self.plugins {
+                    match tool_name.as_str() {
+                        "todo" => {
+                            if let Some(plugin) = plugins.get_plugin("pipkin-todo") {
+                                if let Some(lines) = plugin.render_widget("todos") {
+                                    self.emit(&json!({
+                                        "type": "extension_ui_request",
+                                        "id": "todos-widget",
+                                        "method": "setWidget",
+                                        "widgetKey": "todos",
+                                        "widgetLines": lines,
+                                        "widgetPlacement": "aboveEditor"
+                                    }));
+                                } else {
+                                    self.emit(&json!({
+                                        "type": "extension_ui_request",
+                                        "id": "todos-widget",
+                                        "method": "setWidget",
+                                        "widgetKey": "todos",
+                                        "widgetPlacement": "aboveEditor"
+                                    }));
+                                }
+                            }
+                        }
+                        "background" => {
+                            if let Some(plugin) = plugins.get_plugin("pipkin-background") {
+                                if let Some((topic, data)) = plugin.channel_status() {
+                                    self.emit(&json!({
+                                        "type": "pipkin_channel",
+                                        "topic": topic,
+                                        "data": data
+                                    }));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             AgentEvent::AssistantText { text } => {
@@ -4125,7 +4172,7 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
             p.has_auth = true;
         }
     }
-    if let Some(key) = get_env_or_file("GEMINI_API_KEY") {
+    if let Some(key) = get_env_or_file("GEMINI_API_KEY").or_else(|| get_env_or_file("GOOGLE_API_KEY")) {
         if let Some(p) = map.get_mut("google") {
             if p.api_key.is_empty() {
                 p.api_key = key;
@@ -4171,20 +4218,9 @@ fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashMap<String, 
 }
 
 fn extract_auth_key(auth_json: &Value, provider_id: &str) -> String {
-    let entry = &auth_json[provider_id];
-    if let Some(s) = entry.as_str() {
-        return s.to_string();
-    }
-    if let Some(s) = entry["apiKey"].as_str() {
-        return s.to_string();
-    }
-    if let Some(s) = entry["key"].as_str() {
-        return s.to_string();
-    }
-    if let Some(s) = entry["auth"]["apiKey"].as_str() {
-        return s.to_string();
-    }
-    String::new()
+    crate::models::extract_auth_credentials(auth_json, provider_id)
+        .map(|(k, _)| k)
+        .unwrap_or_default()
 }
 
 fn save_settings_fields(
@@ -8362,5 +8398,159 @@ mod tests {
 
         mock_handle.abort();
     }
-}
 
+    #[tokio::test]
+    async fn reg011_live_todo_widget_emitted_on_tool_call_end_and_background_active_count() {
+        let tmp = TempConfigGuard::new("reg011_live_widget");
+        let mut reg = PluginRegistry::with_defaults();
+        assert!(reg.activate("pipkin-todo"));
+        assert!(reg.activate("pipkin-background"));
+        let mut tools = ToolRegistry::new();
+        reg.register_active_tools(&mut tools);
+        let plugins = Arc::new(reg);
+
+        let emitted = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let emitted_clone = Arc::clone(&emitted);
+        let ui_state = Arc::new(Mutex::new(RpcUiState::from_loaded_session(
+            init_or_load_session(tmp.path(), tmp.path(), None),
+        )));
+        let sink = RpcEventSink::with_emitter(ui_state, move |val| {
+            emitted_clone.lock().unwrap().push(val.clone());
+        })
+        .with_plugins(Arc::clone(&plugins));
+
+        // 1. Jalankan todo tool -> kirim ToolCallEnd -> setWidget harus terpancar langsung (sebelum TurnEnd)
+        let todo_tool = tools.get("todo").unwrap();
+        let todo_out = todo_tool
+            .execute(&json!({ "action": "create", "subject": "Widget Live" }))
+            .await
+            .unwrap();
+        sink.on_event(&AgentEvent::ToolCallEnd {
+            step_index: 0,
+            call_id: "call_todo_1".into(),
+            tool_name: "todo".into(),
+            status: ToolStatus::Done,
+            output: todo_out,
+            duration_ms: 2,
+        });
+
+        let events_after_todo = emitted.lock().unwrap().clone();
+        let widget_evt = events_after_todo
+            .iter()
+            .find(|v| v["type"] == "extension_ui_request" && v["method"] == "setWidget")
+            .expect("setWidget must be emitted immediately on todo ToolCallEnd");
+        assert_eq!(widget_evt["widgetKey"], "todos");
+        assert!(widget_evt["widgetLines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l.as_str().unwrap_or("").contains("Widget Live")));
+
+        // Clear todo -> setWidget tanpa widgetLines harus terpancar untuk menghapus widget UI
+        let clear_out = todo_tool
+            .execute(&json!({ "action": "clear" }))
+            .await
+            .unwrap();
+        emitted.lock().unwrap().clear();
+        sink.on_event(&AgentEvent::ToolCallEnd {
+            step_index: 0,
+            call_id: "call_todo_2".into(),
+            tool_name: "todo".into(),
+            status: ToolStatus::Done,
+            output: clear_out,
+            duration_ms: 1,
+        });
+        let events_after_clear = emitted.lock().unwrap().clone();
+        let clear_evt = events_after_clear
+            .iter()
+            .find(|v| v["type"] == "extension_ui_request" && v["method"] == "setWidget")
+            .expect("setWidget clear must be emitted when todo becomes empty");
+        assert!(clear_evt.get("widgetLines").is_none());
+
+        // 2. Jalankan background tool -> ToolCallEnd harus memancarkan pipkin_channel active: 1, lalu kill -> active: 0
+        let bg_tool = tools.get("background").unwrap();
+        let bg_start = bg_tool
+            .execute(&json!({ "action": "start", "command": "sleep 30" }))
+            .await
+            .unwrap();
+        let bg_id = bg_start["id"].as_u64().unwrap();
+        emitted.lock().unwrap().clear();
+        sink.on_event(&AgentEvent::ToolCallEnd {
+            step_index: 0,
+            call_id: "call_bg_1".into(),
+            tool_name: "background".into(),
+            status: ToolStatus::Done,
+            output: bg_start,
+            duration_ms: 3,
+        });
+        let bg_events = emitted.lock().unwrap().clone();
+        let ch_active = bg_events
+            .iter()
+            .find(|v| v["type"] == "pipkin_channel" && v["topic"] == "background")
+            .expect("background channel must be emitted on ToolCallEnd");
+        assert_eq!(ch_active["data"]["active"], 1);
+
+        let bg_kill = bg_tool
+            .execute(&json!({ "action": "kill", "id": bg_id }))
+            .await
+            .unwrap();
+        emitted.lock().unwrap().clear();
+        sink.on_event(&AgentEvent::ToolCallEnd {
+            step_index: 0,
+            call_id: "call_bg_2".into(),
+            tool_name: "background".into(),
+            status: ToolStatus::Done,
+            output: bg_kill,
+            duration_ms: 1,
+        });
+        let bg_events_after = emitted.lock().unwrap().clone();
+        let ch_killed = bg_events_after
+            .iter()
+            .find(|v| v["type"] == "pipkin_channel" && v["topic"] == "background")
+            .unwrap();
+        assert_eq!(ch_killed["data"]["active"], 0);
+    }
+
+    #[test]
+    fn reg005_available_models_empty_scope_and_no_local_duplicate() {
+        let tmp = TempConfigGuard::new("reg005_models_scope");
+        std::fs::write(
+            tmp.path().join("settings.json"),
+            json!({ "enabledModels": [] }).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("models.json"),
+            json!({
+                "providers": {
+                    "pipkin-local": {
+                        "baseUrl": "http://127.0.0.1:11434/v1",
+                        "api": "openai-completions",
+                        "models": [{ "id": "llama3.2", "name": "Llama 3.2" }]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let server = RpcServer::new_in_dir_with_cwd(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            None,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let models = server.available_models_json();
+        let local_matches: Vec<&Value> = models
+            .iter()
+            .filter(|m| m["id"] == "llama3.2" && m["provider"] == "pipkin-local")
+            .collect();
+        assert_eq!(
+            local_matches.len(),
+            1,
+            "empty enabledModels must leave scope unrestricted and local model must appear once"
+        );
+    }
+}

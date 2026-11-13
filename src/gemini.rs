@@ -274,10 +274,25 @@ impl GeminiClient {
                     )
                     .await;
             }
-            "openai-completions" | "openai-responses" => {
+            "openai-completions" => {
                 if !is_native_google {
                     return self
                         .generate_openai_compatible(
+                            &api_key,
+                            &base_url,
+                            model,
+                            system_instruction,
+                            contents,
+                            function_declarations,
+                            options,
+                        )
+                        .await;
+                }
+            }
+            "openai-responses" => {
+                if !is_native_google {
+                    return self
+                        .generate_openai_responses(
                             &api_key,
                             &base_url,
                             model,
@@ -629,6 +644,193 @@ impl GeminiClient {
             function_calls,
             usage,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn generate_openai_responses(
+        &self,
+        api_key: &str,
+        base_url: &str,
+        model: &str,
+        system_instruction: &str,
+        contents: &[Value],
+        function_declarations: &[Value],
+        options: &GenerationOptions,
+    ) -> Result<ModelTurn, BoxError> {
+        let url = format!("{}/responses", base_url);
+        let mut input_items: Vec<Value> = Vec::new();
+        let mut fallback_call_seq = 0usize;
+        let mut pending_fallback_ids: std::collections::VecDeque<(String, String)> =
+            std::collections::VecDeque::new();
+
+        for item in contents {
+            let role = item["role"].as_str().unwrap_or("user");
+            let Some(parts) = item["parts"].as_array() else {
+                continue;
+            };
+            if role == "model" {
+                let mut text_buf = String::new();
+                let mut pending_calls: Vec<Value> = Vec::new();
+                for part in parts {
+                    if part["thought"].as_bool() == Some(true) {
+                        continue;
+                    }
+                    if let Some(t) = part["text"].as_str() {
+                        text_buf.push_str(t);
+                    }
+                    if let Some(fc) = part.get("functionCall") {
+                        let name = fc["name"].as_str().unwrap_or_default().to_string();
+                        let call_id = fc["id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                let gen_id = format!("call_{}", fallback_call_seq);
+                                fallback_call_seq += 1;
+                                pending_fallback_ids.push_back((gen_id.clone(), name.clone()));
+                                gen_id
+                            });
+                        let args_str = serde_json::to_string(fc.get("args").unwrap_or(&json!({})))
+                            .unwrap_or_else(|_| "{}".into());
+                        pending_calls.push(json!({
+                            "type": "function_call",
+                            "call_id": call_id,
+                            "name": name,
+                            "arguments": args_str,
+                        }));
+                    }
+                }
+                if !text_buf.is_empty() {
+                    input_items.push(json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": text_buf }]
+                    }));
+                }
+                input_items.extend(pending_calls);
+            } else {
+                let mut user_content: Vec<Value> = Vec::new();
+                for part in parts {
+                    if let Some(t) = part["text"].as_str() {
+                        user_content.push(json!({ "type": "input_text", "text": t }));
+                    }
+                    if let Some(inline) = part.get("inlineData") {
+                        let mime = inline["mimeType"].as_str().unwrap_or("image/jpeg");
+                        let data = inline["data"].as_str().unwrap_or_default();
+                        if !data.is_empty() {
+                            user_content.push(json!({
+                                "type": "input_image",
+                                "image_url": format!("data:{};base64,{}", mime, data)
+                            }));
+                        }
+                    }
+                    if let Some(fr) = part.get("functionResponse") {
+                        if !user_content.is_empty() {
+                            push_responses_user_message(&mut input_items, &mut user_content);
+                        }
+                        let fr_name = fr["name"].as_str().unwrap_or_default();
+                        let call_id = fr["id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .or_else(|| take_pending_fallback_id(&mut pending_fallback_ids, fr_name))
+                            .unwrap_or_else(|| {
+                                let gen_id = format!("call_{}", fallback_call_seq);
+                                fallback_call_seq += 1;
+                                gen_id
+                            });
+                        let output_str =
+                            serde_json::to_string(fr.get("response").unwrap_or(&json!({})))
+                                .unwrap_or_else(|_| "{}".into());
+                        input_items.push(json!({
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": output_str
+                        }));
+                    }
+                }
+                if !user_content.is_empty() {
+                    push_responses_user_message(&mut input_items, &mut user_content);
+                }
+            }
+        }
+
+        let mut body = json!({
+            "model": model,
+            "input": input_items,
+        });
+        if !system_instruction.trim().is_empty() {
+            body["instructions"] = json!(system_instruction);
+        }
+        if let Some(max_tok) = options.max_tokens.filter(|&n| n > 0) {
+            body["max_output_tokens"] = json!(max_tok);
+        }
+        let is_local = base_url.contains("127.0.0.1") || base_url.contains("localhost");
+        if options.reasoning {
+            if let Some(level) = options.thinking_level.as_deref() {
+                if level != "off" {
+                    let mapped = options
+                        .thinking_level_map
+                        .as_ref()
+                        .and_then(|m| m.get(level))
+                        .and_then(|v| v.clone())
+                        .or_else(|| {
+                            if is_local {
+                                None
+                            } else {
+                                Some(
+                                    match level {
+                                        "minimal" | "low" => "low",
+                                        "medium" => "medium",
+                                        "high" | "xhigh" => "high",
+                                        other => other,
+                                    }
+                                    .to_string(),
+                                )
+                            }
+                        });
+                    if let Some(effort) = mapped {
+                        body["reasoning"] = json!({ "effort": effort });
+                    }
+                }
+            }
+        }
+        if !function_declarations.is_empty() {
+            let tools: Vec<Value> = function_declarations
+                .iter()
+                .map(|decl| {
+                    json!({
+                        "type": "function",
+                        "name": decl["name"],
+                        "description": decl["description"],
+                        "parameters": decl["parameters"],
+                    })
+                })
+                .collect();
+            body["tools"] = json!(tools);
+        }
+
+        let mut req = self.http.post(&url);
+        if !api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
+        if let Some(sid) = options.session_id.as_deref().filter(|s| !s.is_empty()) {
+            req = req.header("x-session-affinity", sid);
+        }
+        let resp = req.json(&body).send().await?;
+
+        let status = resp.status();
+        let res_json: Value = resp.json().await?;
+        if !status.is_success() {
+            let msg = res_json["error"]["message"]
+                .as_str()
+                .or_else(|| res_json["message"].as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| res_json.to_string());
+            return Err(format!("Provider Responses API {}: {}", status, msg).into());
+        }
+
+        Ok(parse_openai_responses_turn(&res_json))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1024,6 +1226,126 @@ pub fn function_response_part(call: &FunctionCall, response: Value) -> Value {
     json!({ "functionResponse": fr })
 }
 
+fn push_responses_user_message(input_items: &mut Vec<Value>, user_content: &mut Vec<Value>) {
+    if let Some(last) = input_items.last_mut() {
+        if last["type"].as_str() == Some("message") && last["role"].as_str() == Some("user") {
+            if let Some(arr) = last["content"].as_array_mut() {
+                arr.append(user_content);
+                return;
+            }
+        }
+    }
+    let taken = std::mem::take(user_content);
+    input_items.push(json!({
+        "type": "message",
+        "role": "user",
+        "content": taken
+    }));
+}
+
+pub fn parse_openai_responses_turn(res_json: &Value) -> ModelTurn {
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut thoughts: Vec<String> = Vec::new();
+    let mut function_calls: Vec<FunctionCall> = Vec::new();
+    let mut raw_parts: Vec<Value> = Vec::new();
+
+    if let Some(output) = res_json["output"].as_array() {
+        for item in output {
+            match item["type"].as_str().unwrap_or_default() {
+                "reasoning" => {
+                    if let Some(summary) = item["summary"].as_array() {
+                        for s in summary {
+                            if let Some(t) = s["text"].as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                                thoughts.push(t.to_string());
+                                raw_parts.push(json!({ "thought": true, "text": t }));
+                            }
+                        }
+                    }
+                    if let Some(content) = item["content"].as_array() {
+                        for c in content {
+                            if let Some(t) = c["text"].as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                                thoughts.push(t.to_string());
+                                raw_parts.push(json!({ "thought": true, "text": t }));
+                            }
+                        }
+                    }
+                }
+                "message" => {
+                    if let Some(content) = item["content"].as_array() {
+                        for part in content {
+                            let ptype = part["type"].as_str().unwrap_or_default();
+                            if ptype == "output_text" || ptype == "text" || ptype.is_empty() {
+                                if let Some(t) = part["text"].as_str() {
+                                    text_parts.push(t.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                "function_call" => {
+                    let id = item["call_id"]
+                        .as_str()
+                        .or_else(|| item["id"].as_str())
+                        .map(str::to_string);
+                    let name = item["name"].as_str().unwrap_or_default().to_string();
+                    let args = match item.get("arguments") {
+                        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_else(|_| json!({})),
+                        Some(other) if !other.is_null() => other.clone(),
+                        _ => json!({}),
+                    };
+                    raw_parts.push(json!({
+                        "functionCall": {
+                            "id": id,
+                            "name": name,
+                            "args": args
+                        }
+                    }));
+                    function_calls.push(FunctionCall { id, name, args });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let text = if !text_parts.is_empty() {
+        text_parts.join("").trim().to_string()
+    } else {
+        res_json["output_text"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    if !text.is_empty() {
+        raw_parts.insert(thoughts.len(), json!({ "text": text }));
+    }
+
+    let usage = res_json.get("usage").and_then(|u| {
+        let inp = u["input_tokens"]
+            .as_u64()
+            .or_else(|| u["prompt_tokens"].as_u64())?;
+        let out = u["output_tokens"]
+            .as_u64()
+            .or_else(|| u["completion_tokens"].as_u64())
+            .unwrap_or(0);
+        Some(TokenUsage {
+            input_tokens: inp,
+            output_tokens: out,
+        })
+    });
+
+    ModelTurn {
+        raw_content: json!({
+            "role": "model",
+            "parts": raw_parts
+        }),
+        text,
+        thoughts,
+        function_calls,
+        usage,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1077,6 +1399,150 @@ mod tests {
         let part = function_response_part(&call, json!({ "ok": true }));
         assert_eq!(part["functionResponse"]["id"], "x1");
         assert_eq!(part["functionResponse"]["name"], "read_file");
+    }
+
+    #[tokio::test]
+    async fn reg006_openai_responses_routes_to_responses_endpoint_and_parses_output() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..pos]);
+                    let content_len = head
+                        .lines()
+                        .find_map(|l| {
+                            let lower = l.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= pos + 4 + content_len {
+                        let req_body = &buf[pos + 4..pos + 4 + content_len];
+                        let captured = (
+                            head.to_string(),
+                            serde_json::from_slice::<Value>(req_body).unwrap(),
+                        );
+                        let resp_body = json!({
+                            "id": "resp_1",
+                            "output": [
+                                {
+                                    "type": "reasoning",
+                                    "summary": [{ "type": "summary_text", "text": "Checking files first" }]
+                                },
+                                {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [{ "type": "output_text", "text": "Running tool now." }]
+                                },
+                                {
+                                    "type": "function_call",
+                                    "call_id": "fc_99",
+                                    "name": "read_file",
+                                    "arguments": "{\"path\":\"Cargo.toml\"}"
+                                }
+                            ],
+                            "usage": { "input_tokens": 88, "output_tokens": 24 }
+                        })
+                        .to_string();
+                        let http_resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            resp_body.len(),
+                            resp_body
+                        );
+                        stream.write_all(http_resp.as_bytes()).await.unwrap();
+                        return captured;
+                    }
+                }
+            }
+            panic!("Incomplete HTTP request received");
+        });
+
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-5.3-codex".into(),
+            Some(format!("http://{}/v1", addr)),
+        )
+        .unwrap();
+
+        let contents = vec![
+            user_message_with_images("Check image", &[("image/png".into(), "Zm9v".into())]),
+            json!({
+                "role": "model",
+                "parts": [
+                    { "thought": true, "text": "old thought" },
+                    { "text": "Calling list" },
+                    { "functionCall": { "id": "call_prev", "name": "list_dir", "args": { "path": "." } } }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "parts": [
+                    function_response_part(
+                        &FunctionCall { id: Some("call_prev".into()), name: "list_dir".into(), args: json!({}) },
+                        json!({ "files": ["Cargo.toml"] })
+                    )
+                ]
+            }),
+        ];
+        let decls = vec![json!({
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": { "type": "object" }
+        })];
+        let opts = GenerationOptions {
+            api: Some("openai-responses".into()),
+            max_tokens: Some(2048),
+            thinking_level: Some("high".into()),
+            reasoning: true,
+            thinking_level_map: None,
+            session_id: Some("sess-resp-1".into()),
+        };
+
+        let turn = client
+            .generate_with_options("gpt-5.3-codex", "System guide", &contents, &decls, &opts)
+            .await
+            .unwrap();
+
+        let (head, req_json) = server.await.unwrap();
+        assert!(head.starts_with("POST /v1/responses HTTP/1.1"), "unexpected request head: {}", head);
+        assert!(head.to_ascii_lowercase().contains("authorization: bearer sk-test"));
+        assert!(head.to_ascii_lowercase().contains("x-session-affinity: sess-resp-1"));
+        assert_eq!(req_json["model"], "gpt-5.3-codex");
+        assert_eq!(req_json["instructions"], "System guide");
+        assert_eq!(req_json["max_output_tokens"], 2048);
+        assert_eq!(req_json["tools"][0]["type"], "function");
+        assert_eq!(req_json["tools"][0]["name"], "read_file");
+        assert_eq!(req_json["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(req_json["input"][0]["content"][1]["type"], "input_image");
+        assert_eq!(req_json["input"][1]["type"], "message");
+        assert_eq!(req_json["input"][1]["content"][0]["type"], "output_text");
+        assert_eq!(req_json["input"][2]["type"], "function_call");
+        assert_eq!(req_json["input"][2]["call_id"], "call_prev");
+        assert_eq!(req_json["input"][3]["type"], "function_call_output");
+        assert_eq!(req_json["input"][3]["call_id"], "call_prev");
+
+        assert_eq!(turn.thoughts, vec!["Checking files first"]);
+        assert_eq!(turn.text, "Running tool now.");
+        assert_eq!(turn.function_calls.len(), 1);
+        assert_eq!(turn.function_calls[0].id.as_deref(), Some("fc_99"));
+        assert_eq!(turn.function_calls[0].name, "read_file");
+        assert_eq!(turn.function_calls[0].args["path"], "Cargo.toml");
+        assert_eq!(turn.usage.unwrap().input_tokens, 88);
+        assert_eq!(turn.usage.unwrap().output_tokens, 24);
     }
 }
 
