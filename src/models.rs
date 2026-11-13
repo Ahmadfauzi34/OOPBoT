@@ -1250,6 +1250,73 @@ pub fn resolve_model_scope(
     scoped
 }
 
+/// Ekstrak kredensial (`(token, "oauth" | "api_key")`) dari `auth.json` untuk provider tertentu.
+pub fn extract_auth_credentials(auth_json: &Value, provider_id: &str) -> Option<(String, &'static str)> {
+    let entry = auth_json.get(provider_id)?;
+    if let Some(s) = entry.as_str().map(str::trim).filter(|s| !s.is_empty() && *s != "no-api-key") {
+        return Some((s.to_string(), "api_key"));
+    }
+
+    let obj = entry.as_object()?;
+    let declared_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+
+    let oauth_candidates = [
+        obj.get("access").and_then(|v| v.as_str()),
+        obj.get("access_token").and_then(|v| v.as_str()),
+        obj.get("accessToken").and_then(|v| v.as_str()),
+        obj.get("auth").and_then(|a| a.get("access")).and_then(|v| v.as_str()),
+        obj.get("auth").and_then(|a| a.get("access_token")).and_then(|v| v.as_str()),
+        obj.get("auth").and_then(|a| a.get("accessToken")).and_then(|v| v.as_str()),
+    ];
+    let api_candidates = [
+        obj.get("apiKey").and_then(|v| v.as_str()),
+        obj.get("key").and_then(|v| v.as_str()),
+        obj.get("auth").and_then(|a| a.get("apiKey")).and_then(|v| v.as_str()),
+        obj.get("auth").and_then(|a| a.get("key")).and_then(|v| v.as_str()),
+    ];
+    let token_fallback = obj
+        .get("token")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("auth").and_then(|a| a.get("token")).and_then(|v| v.as_str()));
+
+    if declared_type == "oauth" {
+        if let Some(tok) = oauth_candidates
+            .into_iter()
+            .flatten()
+            .chain(token_fallback)
+            .map(str::trim)
+            .find(|s| !s.is_empty() && *s != "no-api-key")
+        {
+            return Some((tok.to_string(), "oauth"));
+        }
+    }
+
+    if let Some(key) = api_candidates
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty() && *s != "no-api-key")
+    {
+        return Some((key.to_string(), "api_key"));
+    }
+
+    if let Some(tok) = oauth_candidates
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty() && *s != "no-api-key")
+    {
+        return Some((tok.to_string(), "oauth"));
+    }
+
+    if let Some(tok) = token_fallback.map(str::trim).filter(|s| !s.is_empty() && *s != "no-api-key") {
+        let kind = if declared_type == "oauth" { "oauth" } else { "api_key" };
+        return Some((tok.to_string(), kind));
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1375,5 +1442,32 @@ mod tests {
         assert_eq!(scoped[1].0.id, "gemini-2.5-flash");
         assert_eq!(scoped[1].1, None);
     }
-}
 
+    #[test]
+    fn reg005_extract_auth_credentials_supports_oauth_and_api_key() {
+        let doc = json!({
+            "anthropic": { "type": "oauth", "access": "oa-tok-1", "refresh": "ref-1" },
+            "openai-codex": { "access_token": "oa-tok-2" },
+            "openrouter": { "type": "api_key", "key": "sk-or-123" },
+            "google": "AIza-direct-str",
+            "zai": { "apiKey": "no-api-key" }
+        });
+        assert_eq!(
+            extract_auth_credentials(&doc, "anthropic"),
+            Some(("oa-tok-1".to_string(), "oauth"))
+        );
+        assert_eq!(
+            extract_auth_credentials(&doc, "openai-codex"),
+            Some(("oa-tok-2".to_string(), "oauth"))
+        );
+        assert_eq!(
+            extract_auth_credentials(&doc, "openrouter"),
+            Some(("sk-or-123".to_string(), "api_key"))
+        );
+        assert_eq!(
+            extract_auth_credentials(&doc, "google"),
+            Some(("AIza-direct-str".to_string(), "api_key"))
+        );
+        assert_eq!(extract_auth_credentials(&doc, "zai"), None);
+    }
+}
