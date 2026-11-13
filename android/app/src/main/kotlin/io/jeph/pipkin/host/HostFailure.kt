@@ -117,9 +117,7 @@ internal sealed class HostFailure(
     private const val RELEASE_ASSET = "oopbot-aarch64-linux-android"
 
     internal fun upgradeCommand(expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION): String {
-      val version = expectedVersion.trim()
-        .filter { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' || it == '.' || it == '-' || it == '+' }
-        .ifEmpty { TermuxSetup.DEFAULT_OOPBOT_VERSION }
+      val version = TermuxSetup.sanitizeVersion(expectedVersion)
       val tagUrl = "$RELEASES_BASE/download/v$version/$RELEASE_ASSET"
       val latestUrl = "$RELEASES_BASE/latest/download/$RELEASE_ASSET"
       val rootBin = "\$HOME/.local/share/${TermuxBuild.NAME}/bin/oopbot"

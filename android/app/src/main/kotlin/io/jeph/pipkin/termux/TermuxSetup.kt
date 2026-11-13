@@ -21,12 +21,19 @@ internal object TermuxSetup {
   const val DEFAULT_OOPBOT_VERSION = "0.5.5"
   private const val RELEASE_BASE = "https://github.com/Ahmadfauzi34/OOPBoT/releases"
   private const val RELEASE_ASSET = "oopbot-aarch64-linux-android"
+  private val SAFE_VERSION = Regex("""^\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z._+-]+)?$""")
+
+  internal fun sanitizeVersion(raw: String): String =
+    raw.trim().takeIf(SAFE_VERSION::matches) ?: DEFAULT_OOPBOT_VERSION
 
   fun expectedOopbotVersion(context: Context): String = runCatching {
     val raw = context.assets.open("pi/package.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
     val deps = JSONObject(raw).getJSONObject("dependencies")
-    deps.optString("oopbot", deps.optString("@earendil-works/pi-coding-agent", DEFAULT_OOPBOT_VERSION))
-      .ifBlank { DEFAULT_OOPBOT_VERSION }
+    val configured = deps.optString(
+      "oopbot",
+      deps.optString("@earendil-works/pi-coding-agent", DEFAULT_OOPBOT_VERSION),
+    )
+    sanitizeVersion(configured)
   }.getOrDefault(DEFAULT_OOPBOT_VERSION)
 
   /**
@@ -35,19 +42,20 @@ internal object TermuxSetup {
    * done. `yes` answers dpkg's conffile prompts. Storage access is its own setup step.
    */
   fun fdroidCommand(packageName: String, expectedVersion: String = DEFAULT_OOPBOT_VERSION): String {
-    val tagUrl = "$RELEASE_BASE/download/v$expectedVersion/$RELEASE_ASSET"
+    val version = sanitizeVersion(expectedVersion)
+    val tagUrl = "$RELEASE_BASE/download/v$version/$RELEASE_ASSET"
     val latestUrl = "$RELEASE_BASE/latest/download/$RELEASE_ASSET"
     val rootBin = "${'$'}HOME/.local/share/${TermuxBuild.NAME}/bin/oopbot"
     return inBash(
       "{ { command -v oopbot >/dev/null 2>&1 && case \"${'$'}(oopbot --version 2>/dev/null)\" in " +
-        "\"oopbot $expectedVersion\"|\"oopbot $expectedVersion \"*) true;; *) false;; esac; } || " +
+        "\"oopbot $version\"|\"oopbot $version \"*) true;; *) false;; esac; } || " +
         "{ { command -v curl >/dev/null 2>&1 || " +
         "{ dpkg --configure -a; yes | pkg upgrade -y && pkg install -y curl; }; } && " +
         "mkdir -p \"${'$'}PREFIX/bin\" && t=\"${'$'}PREFIX/bin/oopbot.tmp\" && " +
         "{ curl -fsSL -m 120 \"$tagUrl\" -o \"${'$'}t\" || curl -fsSL -m 120 \"$latestUrl\" -o \"${'$'}t\"; } && " +
         "chmod 755 \"${'$'}t\" && " +
         "case \"${'$'}(\"${'$'}t\" --version 2>/dev/null)\" in " +
-        "\"oopbot $expectedVersion\"|\"oopbot $expectedVersion \"*) true;; *) false;; esac && " +
+        "\"oopbot $version\"|\"oopbot $version \"*) true;; *) false;; esac && " +
         "mv -f \"${'$'}t\" \"${'$'}PREFIX/bin/oopbot\" || { rm -f \"${'$'}PREFIX/bin/oopbot.tmp\"; false; }; }; } && " +
         "{ [ ! -e \"$rootBin\" ] || { cp -f \"${'$'}PREFIX/bin/oopbot\" \"$rootBin.tmp\" && " +
         "chmod 755 \"$rootBin.tmp\" && mv -f \"$rootBin.tmp\" \"$rootBin\"; } || rm -f \"$rootBin.tmp\"; } && " +

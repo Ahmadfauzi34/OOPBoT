@@ -1,9 +1,11 @@
 package io.jeph.pipkin.host
 
+import io.jeph.pipkin.termux.TermuxSetup
 import io.jeph.pipkin.termux.assertRunsInAnyShell
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -25,10 +27,18 @@ class HostFailureTest {
 
   @Test
   fun upgradeCommandSanitizesBlankOrUnsafeExpectedVersion() {
-    val cmd = HostFailure.upgradeCommand(" 0.5.5; rm -rf / ")
-    assertRunsInAnyShell(cmd)
-    assertTrue(cmd.contains("0.5.5rm-rf"))
-    assertTrue(!cmd.contains(";"))
+    for (unsafe in listOf("", "   ", " 0.5.5; rm -rf / ", "0.5.5'\\`\$(id)")) {
+      val cmd = HostFailure.upgradeCommand(unsafe)
+      assertRunsInAnyShell(cmd)
+      assertTrue(cmd.contains("/releases/download/v${TermuxSetup.DEFAULT_OOPBOT_VERSION}/"))
+      assertFalse(cmd.contains("rm -rf"))
+      assertFalse(cmd.contains("rm-rf"))
+      assertFalse(cmd.contains("\$(id)"))
+    }
+    val validWithSpaces = HostFailure.upgradeCommand(" 0.6.1 ")
+    assertRunsInAnyShell(validWithSpaces)
+    assertTrue(validWithSpaces.contains("/releases/download/v0.6.1/"))
+    assertTrue(validWithSpaces.contains("\"oopbot 0.6.1\""))
   }
 
   @Test
