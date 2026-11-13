@@ -3,6 +3,7 @@ package io.jeph.pipkin.ui.onboarding
 import io.jeph.pipkin.host.HostFailure
 import io.jeph.pipkin.host.HostHello
 import io.jeph.pipkin.termux.TermuxInstall.Status
+import io.jeph.pipkin.termux.assertRunsInAnyShell
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -91,7 +92,11 @@ class OnboardingStateTest {
   @Test
   fun aFailuresOwnFixCommandIsDroppedAfterAReinstall() {
     val tooOld = HostFailure.NodeTooOld().toSetupError()
-    assertEquals("yes | pkg upgrade -y", state(fdroid(runCommand = true), error = tooOld).setupLiteral)
+    val literal = state(fdroid(runCommand = true), error = tooOld).setupLiteral
+    assertEquals(tooOld.command, literal)
+    assertTrue(literal?.contains("\$PREFIX/bin/oopbot") == true)
+    assertFalse(literal?.contains("{'$'}") == true)
+    assertRunsInAnyShell(requireNotNull(literal))
     assertNull(state(fdroid(runCommand = true).copy(termuxChanged = true), error = tooOld).setupLiteral)
   }
 

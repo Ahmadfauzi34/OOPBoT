@@ -48,7 +48,13 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
     }
 
     let home = env::var("HOME").unwrap_or_else(|_| ".".into());
-    let _prefix = env::var("PREFIX").unwrap_or_else(|_| "/data/data/com.termux/files/usr".into());
+    let prefix = env::var("PREFIX").unwrap_or_else(|_| "/data/data/com.termux/files/usr".into());
+    let oopbot_root = env::var("OOPBOT_ROOT")
+        .or_else(|_| env::var("PIPKIN_ROOT"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
     let config_dir = env::var("OOPBOT_CONFIG_DIR")
         .or_else(|_| env::var("PI_CODING_AGENT_DIR"))
         .map(PathBuf::from)
@@ -118,25 +124,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
     // 5. Tangani request sesuai mode
     match mode {
         "ensure" => {
-            // Android meminta verifikasi kesiapan runtime
-            let progress = json!({
-                "type": "pipkin_progress",
-                "line": format!("OOPBoT v{} native engine ready (Node.js bypassed)", env!("CARGO_PKG_VERSION"))
-            });
-            writeln!(writer, "{}", serde_json::to_string(&progress)?)?;
-            writer.flush()?;
-
-            let result = json!({
-                "type": "pipkin_result",
-                "ok": true,
-                "data": {
-                    "oopbotVersion": env!("CARGO_PKG_VERSION"),
-                    "piVersion": env!("CARGO_PKG_VERSION")
-                }
-            });
-            writeln!(writer, "{}", serde_json::to_string(&result)?)?;
-            writer.flush()?;
-            Ok(())
+            handle_ensure_mode(params, Path::new(&prefix), oopbot_root.as_deref(), writer).await
         }
         "hello" => {
             let result = json!({
@@ -225,6 +213,400 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
             writer.flush()?;
             Ok(())
         }
+    }
+}
+
+const OOPBOT_RELEASES_BASE: &str = "https://github.com/Ahmadfauzi34/OOPBoT/releases";
+const OOPBOT_RELEASE_ASSET: &str = "oopbot-aarch64-linux-android";
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Debug, PartialEq, Eq)]
+struct EnsureError {
+    code: &'static str,
+    message: String,
+    i18n: Option<Value>,
+}
+
+fn oopbot_release_urls(expected_version: &str) -> Vec<String> {
+    let trimmed = expected_version.trim();
+    if trimmed.is_empty() {
+        vec![format!("{}/latest/download/{}", OOPBOT_RELEASES_BASE, OOPBOT_RELEASE_ASSET)]
+    } else {
+        vec![
+            format!("{}/download/v{}/{}", OOPBOT_RELEASES_BASE, trimmed, OOPBOT_RELEASE_ASSET),
+            format!("{}/latest/download/{}", OOPBOT_RELEASES_BASE, OOPBOT_RELEASE_ASSET),
+        ]
+    }
+}
+
+fn parse_oopbot_version_output(stdout: &str) -> Option<String> {
+    let first_line = stdout.lines().next()?.trim();
+    let mut parts = first_line.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some("oopbot"), Some(ver)) if !ver.is_empty() => Some(ver.to_string()),
+        _ => None,
+    }
+}
+
+fn is_executable_file_busy(err: &std::io::Error) -> bool {
+    if err.kind() == std::io::ErrorKind::ExecutableFileBusy {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        return err.raw_os_error() == Some(26);
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn read_oopbot_binary_version_detail(path: &Path) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("metadata failed: {}", e))?;
+    if !meta.is_file() || meta.len() == 0 {
+        return Err("binary is missing or empty".to_string());
+    }
+
+    // Di Linux multi-threaded (termasuk test paralel atau child spawn bersamaan),
+    // fork() pada thread lain sesaat saat File::create masih terbuka bisa menyebabkan
+    // execve() mengembalikan ETXTBSY sampai child selesai execve().
+    const ETXTBSY_RETRY_DELAYS_MS: &[u64] = &[2, 5, 10, 20, 40, 80, 100, 150];
+    let mut attempt = 0usize;
+    let output = loop {
+        match std::process::Command::new(path).arg("--version").output() {
+            Ok(out) => break out,
+            Err(err) if is_executable_file_busy(&err) && attempt < ETXTBSY_RETRY_DELAYS_MS.len() => {
+                std::thread::sleep(std::time::Duration::from_millis(ETXTBSY_RETRY_DELAYS_MS[attempt]));
+                attempt += 1;
+            }
+            Err(err) => return Err(format!("exec failed: {}", err)),
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("exited with {}", output.status)
+        } else {
+            format!("exited with {}: {}", output.status, stderr)
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_oopbot_version_output(&stdout)
+        .ok_or_else(|| format!("unexpected --version output: {:?}", stdout.trim()))
+}
+
+fn read_oopbot_binary_version(path: &Path) -> Option<String> {
+    read_oopbot_binary_version_detail(path).ok()
+}
+
+#[cfg(unix)]
+fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms)
+}
+
+#[cfg(not(unix))]
+fn set_executable_permissions(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn atomic_write_binary(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let name = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("oopbot");
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = target.with_file_name(format!(".{}.{}.{}.tmp", name, std::process::id(), seq));
+    let write_res = (|| -> std::io::Result<()> {
+        {
+            let mut file = std::fs::File::create(&tmp)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+        }
+        set_executable_permissions(&tmp)?;
+        std::fs::rename(&tmp, target)
+    })();
+    if write_res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    write_res
+}
+
+fn sync_secondary_targets(
+    secondary_targets: &[PathBuf],
+    primary_target: &Path,
+    bytes: Option<&[u8]>,
+    version: &str,
+) {
+    for target in secondary_targets {
+        if target == primary_target {
+            continue;
+        }
+        if target.exists() {
+            let payload = if let Some(b) = bytes {
+                Some(b.to_vec())
+            } else {
+                std::fs::read(primary_target).ok()
+            };
+            if let Some(ref data) = payload {
+                let _ = atomic_write_binary(target, data);
+            }
+        }
+        if let Some(parent) = target.parent() {
+            let version_file = parent.join("oopbot.version");
+            if version_file.exists() {
+                let _ = std::fs::write(&version_file, format!("{}\n", version));
+            }
+        }
+    }
+}
+
+async fn ensure_oopbot_binary_with<F>(
+    current_version: &str,
+    expected_version: &str,
+    reinstall: bool,
+    primary_target: &Path,
+    secondary_targets: &[PathBuf],
+    release_urls: &[String],
+    mut on_progress: F,
+) -> Result<String, EnsureError>
+where
+    F: FnMut(&str),
+{
+    let expected = expected_version.trim();
+    if !reinstall {
+        if let Some(disk_ver) = read_oopbot_binary_version(primary_target) {
+            if expected.is_empty() || disk_ver == expected {
+                on_progress(&format!("OOPBoT v{} native engine ready", disk_ver));
+                sync_secondary_targets(secondary_targets, primary_target, None, &disk_ver);
+                return Ok(disk_ver);
+            }
+        }
+    }
+
+    on_progress(&format!(
+        "Installing OOPBoT native engine{}...",
+        if expected.is_empty() { String::new() } else { format!(" v{}", expected) }
+    ));
+
+    let use_no_proxy = release_urls.iter().any(|u| {
+        u.starts_with("http://127.0.0.1") || u.starts_with("http://localhost")
+    });
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120));
+    if use_no_proxy {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(|e| EnsureError {
+        code: "npm_failed",
+        message: format!("Failed to initialize HTTP client: {}", e),
+        i18n: None,
+    })?;
+
+    if let Some(parent) = primary_target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| EnsureError {
+            code: "upgrade_failed",
+            message: format!("Failed to prepare {}: {}", parent.display(), e),
+            i18n: None,
+        })?;
+    }
+
+    let mut last_status: Option<u16> = None;
+    let mut mismatch_msg: Option<String> = None;
+    let mut saw_network_error = false;
+
+    for url in release_urls {
+        on_progress(&format!("Downloading {}", url));
+        let resp = match client.get(url).send().await {
+            Ok(r) => r,
+            Err(_) => {
+                saw_network_error = true;
+                continue;
+            }
+        };
+        if !resp.status().is_success() {
+            last_status = Some(resp.status().as_u16());
+            continue;
+        }
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(_) => {
+                saw_network_error = true;
+                continue;
+            }
+        };
+        if bytes.is_empty() {
+            mismatch_msg = Some("Downloaded oopbot binary was empty".to_string());
+            continue;
+        }
+
+        let name = primary_target
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("oopbot");
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp_path = primary_target.with_file_name(format!(".{}.{}.{}.tmp", name, std::process::id(), seq));
+
+        if let Err(e) = (|| -> std::io::Result<()> {
+            {
+                let mut file = std::fs::File::create(&tmp_path)?;
+                file.write_all(&bytes)?;
+                file.sync_all()?;
+            }
+            set_executable_permissions(&tmp_path)
+        })() {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(EnsureError {
+                code: "upgrade_failed",
+                message: format!("Failed to stage oopbot binary: {}", e),
+                i18n: None,
+            });
+        }
+
+        let candidate_ver = match read_oopbot_binary_version_detail(&tmp_path) {
+            Ok(v) => v,
+            Err(detail) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                mismatch_msg = Some(format!("Downloaded oopbot binary failed --version check ({})", detail));
+                continue;
+            }
+        };
+
+        if !expected.is_empty() && candidate_ver != expected {
+            let _ = std::fs::remove_file(&tmp_path);
+            mismatch_msg = Some(format!(
+                "Downloaded oopbot {}, expected {} (current {})",
+                candidate_ver, expected, current_version
+            ));
+            continue;
+        }
+
+        if let Err(e) = std::fs::rename(&tmp_path, primary_target) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(EnsureError {
+                code: "upgrade_failed",
+                message: format!("Failed to install {}: {}", primary_target.display(), e),
+                i18n: None,
+            });
+        }
+
+        sync_secondary_targets(secondary_targets, primary_target, Some(&bytes), &candidate_ver);
+        return Ok(candidate_ver);
+    }
+
+    if saw_network_error && last_status.is_none() && mismatch_msg.is_none() {
+        return Err(EnsureError {
+            code: "npm_offline",
+            message: "Couldn't download oopbot. Check your internet connection, then retry.".to_string(),
+            i18n: Some(json!({ "key": "agent_download_offline" })),
+        });
+    }
+    if let Some(msg) = mismatch_msg {
+        return Err(EnsureError {
+            code: "upgrade_failed",
+            message: msg,
+            i18n: None,
+        });
+    }
+    let status = last_status.unwrap_or(1);
+    Err(EnsureError {
+        code: "npm_failed",
+        message: format!("Failed to download oopbot (HTTP {})", status),
+        i18n: Some(json!({
+            "key": "command_failed",
+            "args": { "command": "download oopbot", "exit": status }
+        })),
+    })
+}
+
+async fn handle_ensure_mode(
+    params: Value,
+    prefix: &Path,
+    oopbot_root: Option<&Path>,
+    mut writer: BufWriter<TcpStream>,
+) -> Result<(), BoxError> {
+    let expected_version = params["expectedVersion"].as_str().unwrap_or("").trim().to_string();
+    let reinstall = params["reinstall"].as_bool().unwrap_or(false);
+    let primary_target = prefix.join("bin").join("oopbot");
+    let mut secondary_targets = Vec::new();
+    if let Some(root) = oopbot_root {
+        secondary_targets.push(root.join("bin").join("oopbot"));
+    }
+    let release_urls = oopbot_release_urls(&expected_version);
+
+    let result = ensure_oopbot_binary_with(
+        env!("CARGO_PKG_VERSION"),
+        &expected_version,
+        reinstall,
+        &primary_target,
+        &secondary_targets,
+        &release_urls,
+        |line| {
+            let progress = json!({
+                "type": "pipkin_progress",
+                "line": line
+            });
+            if let Ok(s) = serde_json::to_string(&progress) {
+                let _ = writeln!(writer, "{}", s);
+                let _ = writer.flush();
+            }
+        },
+    )
+    .await;
+
+    let response = match result {
+        Ok(ver) => json!({
+            "type": "pipkin_result",
+            "ok": true,
+            "data": {
+                "oopbotVersion": ver,
+                "piVersion": ver
+            }
+        }),
+        Err(err) => {
+            let mut obj = json!({
+                "type": "pipkin_result",
+                "ok": false,
+                "error": err.message,
+                "code": err.code
+            });
+            if let Some(i18n) = err.i18n {
+                obj["i18n"] = i18n;
+            }
+            obj
+        }
+    };
+    writeln!(writer, "{}", serde_json::to_string(&response)?)?;
+    writer.flush()?;
+    Ok(())
+}
+
+fn check_rpc_expected_version(params: &Value, installed_version: &str) -> Option<Value> {
+    let expected = params["expectedVersion"].as_str().unwrap_or("").trim();
+    if !expected.is_empty() && expected != installed_version {
+        Some(json!({
+            "type": "pipkin_result",
+            "ok": false,
+            "error": format!("Agent {} is installed; OOPBoT needs {}", installed_version, expected),
+            "code": "pi_version",
+            "i18n": {
+                "key": "agent_version_mismatch",
+                "args": {
+                    "installed": installed_version,
+                    "expected": expected
+                }
+            }
+        }))
+    } else {
+        None
     }
 }
 
@@ -321,8 +703,14 @@ async fn handle_rpc_mode(
     params: Value,
     _config_dir: &Path,
     reader: BufReader<TcpStream>,
-    writer: BufWriter<TcpStream>,
+    mut writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
+    if let Some(err) = check_rpc_expected_version(&params, env!("CARGO_PKG_VERSION")) {
+        writeln!(writer, "{}", serde_json::to_string(&err)?)?;
+        writer.flush()?;
+        return Ok(());
+    }
+
     let cwd = params["cwd"].as_str().map(PathBuf::from);
     if let Some(ref dir) = cwd {
         if !dir.is_dir() {
@@ -2664,6 +3052,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rpc_stream_processing() {
+        let _sink_guard = crate::rpc::output_sink_test_mutex().lock().await;
         let raw = Arc::new(Mutex::new(Vec::new()));
         let output_buf = Arc::new(Mutex::new(Box::new(SharedBuf(raw.clone())) as Box<dyn Write + Send + Sync>));
         set_output_sink(Some(output_buf));
@@ -2898,6 +3287,276 @@ Binary files a/image.png and b/image.png differ
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    fn spawn_mock_release_server(
+        routes: Vec<(String, u16, Vec<u8>)>,
+        max_requests: usize,
+    ) -> (
+        String,
+        Arc<std::sync::atomic::AtomicUsize>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_clone = Arc::clone(&hits);
+
+        let handle = std::thread::spawn(move || {
+            use std::io::Read;
+            for _ in 0..max_requests {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                hits_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, body) = routes
+                    .iter()
+                    .find(|(p, _, _)| p == path)
+                    .map(|(_, s, b)| (*s, b.as_slice()))
+                    .unwrap_or((404, b"not found".as_slice()));
+                let reason = if status == 200 { "OK" } else { "Not Found" };
+                let header = format!(
+                    "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    status,
+                    reason,
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            }
+        });
+        (base_url, hits, handle)
+    }
+
+    fn write_fake_oopbot(path: &Path, version: &str) {
+        let body = format!("#!/bin/sh\necho \"oopbot {}\"\n", version);
+        atomic_write_binary(path, body.as_bytes()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ensure_oopbot_upgrades_stale_primary_and_secondary_from_release() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ensure_upg_{}_{}", epoch_ms(), seq));
+        let primary = temp_dir.join("usr/bin/oopbot");
+        let secondary = temp_dir.join("root/bin/oopbot");
+        let version_file = temp_dir.join("root/bin/oopbot.version");
+        write_fake_oopbot(&primary, "0.5.2");
+        write_fake_oopbot(&secondary, "0.5.2");
+        std::fs::write(&version_file, "0.5.2\n").unwrap();
+
+        let new_script = b"#!/bin/sh\necho \"oopbot 0.5.4\"\n".to_vec();
+        let (base_url, hits, server) = spawn_mock_release_server(
+            vec![("/v0.5.4/oopbot".to_string(), 200, new_script)],
+            1,
+        );
+        let urls = vec![
+            format!("{}/v0.5.4/oopbot", base_url),
+            format!("{}/latest/oopbot", base_url),
+        ];
+        let mut logs = Vec::new();
+        let res = ensure_oopbot_binary_with(
+            "0.5.2",
+            "0.5.4",
+            false,
+            &primary,
+            &[secondary.clone()],
+            &urls,
+            |line| logs.push(line.to_string()),
+        )
+        .await;
+
+        server.join().unwrap();
+        assert_eq!(res, Ok("0.5.4".to_string()));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(read_oopbot_binary_version(&primary).as_deref(), Some("0.5.4"));
+        assert_eq!(read_oopbot_binary_version(&secondary).as_deref(), Some("0.5.4"));
+        assert_eq!(std::fs::read_to_string(&version_file).unwrap().trim(), "0.5.4");
+        assert!(!logs.is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_oopbot_falls_back_on_404_and_rejects_version_mismatch() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ensure_fb_{}_{}", epoch_ms(), seq));
+        let primary = temp_dir.join("usr/bin/oopbot");
+        write_fake_oopbot(&primary, "0.5.2");
+
+        // 1. Primary tag 404 -> falls back to latest 200 with matching version
+        let new_script = b"#!/bin/sh\necho \"oopbot 0.5.4\"\n".to_vec();
+        let (base_url, hits, server) = spawn_mock_release_server(
+            vec![("/latest/oopbot".to_string(), 200, new_script)],
+            2,
+        );
+        let urls = vec![
+            format!("{}/v0.5.4/oopbot", base_url),
+            format!("{}/latest/oopbot", base_url),
+        ];
+        let res = ensure_oopbot_binary_with(
+            "0.5.2",
+            "0.5.4",
+            false,
+            &primary,
+            &[],
+            &urls,
+            |_| {},
+        )
+        .await;
+        server.join().unwrap();
+        assert_eq!(res, Ok("0.5.4".to_string()));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(read_oopbot_binary_version(&primary).as_deref(), Some("0.5.4"));
+
+        // 2. Mismatched version from server fails closed with upgrade_failed and keeps 0.5.4 intact
+        let wrong_script = b"#!/bin/sh\necho \"oopbot 0.5.3\"\n".to_vec();
+        let (bad_url, _bad_hits, bad_server) = spawn_mock_release_server(
+            vec![("/v0.5.5/oopbot".to_string(), 200, wrong_script)],
+            1,
+        );
+        let err = ensure_oopbot_binary_with(
+            "0.5.4",
+            "0.5.5",
+            false,
+            &primary,
+            &[],
+            &[format!("{}/v0.5.5/oopbot", bad_url)],
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        bad_server.join().unwrap();
+        assert_eq!(err.code, "upgrade_failed");
+        assert_eq!(read_oopbot_binary_version(&primary).as_deref(), Some("0.5.4"));
+
+        // 3. Unreachable endpoint reports npm_offline and keeps 0.5.4 intact
+        let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_port = dead_listener.local_addr().unwrap().port();
+        drop(dead_listener);
+        let offline_err = ensure_oopbot_binary_with(
+            "0.5.4",
+            "0.5.5",
+            false,
+            &primary,
+            &[],
+            &[format!("http://127.0.0.1:{}/v0.5.5/oopbot", dead_port)],
+            |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(offline_err.code, "npm_offline");
+        assert_eq!(read_oopbot_binary_version(&primary).as_deref(), Some("0.5.4"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_oopbot_skips_download_when_version_matches_and_syncs_secondary() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ensure_skip_{}_{}", epoch_ms(), seq));
+        let primary = temp_dir.join("usr/bin/oopbot");
+        let secondary = temp_dir.join("root/bin/oopbot");
+        write_fake_oopbot(&primary, "0.5.4");
+        write_fake_oopbot(&secondary, "0.5.2");
+
+        let (base_url, hits, server) = spawn_mock_release_server(vec![], 0);
+        server.join().unwrap();
+        let urls = vec![format!("{}/v0.5.4/oopbot", base_url)];
+        let res = ensure_oopbot_binary_with(
+            "0.5.4",
+            "0.5.4",
+            false,
+            &primary,
+            &[secondary.clone()],
+            &urls,
+            |_| {},
+        )
+        .await;
+
+        assert_eq!(res, Ok("0.5.4".to_string()));
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(read_oopbot_binary_version(&secondary).as_deref(), Some("0.5.4"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_check_rpc_expected_version() {
+        assert!(check_rpc_expected_version(&json!({}), "0.5.4").is_none());
+        assert!(check_rpc_expected_version(&json!({ "expectedVersion": "0.5.4" }), "0.5.4").is_none());
+
+        let refusal = check_rpc_expected_version(&json!({ "expectedVersion": "0.5.5" }), "0.5.4").unwrap();
+        assert_eq!(refusal["type"], "pipkin_result");
+        assert_eq!(refusal["ok"], false);
+        assert_eq!(refusal["code"], "pi_version");
+        assert_eq!(refusal["i18n"]["key"], "agent_version_mismatch");
+    }
+
+    #[test]
+    fn test_read_oopbot_binary_version_detail_diagnostics() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ver_diag_{}_{}", epoch_ms(), seq));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let missing = temp_dir.join("missing");
+        assert!(read_oopbot_binary_version_detail(&missing).unwrap_err().contains("metadata failed"));
+
+        let empty = temp_dir.join("empty");
+        std::fs::write(&empty, b"").unwrap();
+        assert_eq!(
+            read_oopbot_binary_version_detail(&empty).unwrap_err(),
+            "binary is missing or empty"
+        );
+
+        let fail_script = temp_dir.join("fail");
+        atomic_write_binary(&fail_script, b"#!/bin/sh\necho boom >&2\nexit 2\n").unwrap();
+        let fail_err = read_oopbot_binary_version_detail(&fail_script).unwrap_err();
+        assert!(fail_err.contains("exited with"));
+        assert!(fail_err.contains("boom"));
+
+        let bad_out = temp_dir.join("bad_out");
+        atomic_write_binary(&bad_out, b"#!/bin/sh\necho not-oopbot\n").unwrap();
+        let bad_err = read_oopbot_binary_version_detail(&bad_out).unwrap_err();
+        assert!(bad_err.contains("unexpected --version output"));
+
+        let busy_err = std::io::Error::from(std::io::ErrorKind::ExecutableFileBusy);
+        assert!(is_executable_file_busy(&busy_err));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_ver_fork_{}_{}", epoch_ms(), seq));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_bg = Arc::clone(&stop);
+        let forker = std::thread::spawn(move || {
+            while !stop_bg.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = std::process::Command::new("sh").arg("-c").arg(":").status();
+            }
+        });
+
+        for i in 0..25 {
+            let bin = temp_dir.join(format!("oopbot_{}", i));
+            write_fake_oopbot(&bin, "0.5.4");
+            let ver = read_oopbot_binary_version_detail(&bin).unwrap();
+            assert_eq!(ver, "0.5.4");
+        }
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        forker.join().unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
-
-

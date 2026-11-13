@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { decryptPairingBody, pairingKey } from "../src/helper/pairing.js";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { HelperFiles } from "../src/helper/files.js";
+import { decryptPairingBody, pair, pairingKey } from "../src/helper/pairing.js";
 import {
   clientMac,
   FrameError,
@@ -84,5 +90,33 @@ describe("pairing vector", () => {
     expect(() => decryptPairingBody(body, token, "ffeeddccbbaa99887766554433221100")).toThrow(
       "The key from Pipkin didn't match this setup command.",
     );
+  });
+
+  it.each([
+    ["OOPBOT_URL and OOPBOT_TOKEN", (url: string, hex: string) => ({ OOPBOT_URL: url, OOPBOT_TOKEN: hex })],
+    ["PIPKIN_URL and PIPKIN_TOKEN", (url: string, hex: string) => ({ PIPKIN_URL: url, PIPKIN_TOKEN: hex })],
+  ])("pairs via %s", async (_, buildEnv) => {
+    const server = createServer((req, res) => {
+      if (req.url === `/oopbot/${sid}/key`) {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(body);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    onTestFinished(async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "oopbot-pair-"));
+    onTestFinished(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const files = new HelperFiles(tempDir);
+    const { port } = server.address() as AddressInfo;
+    const exitCode = await pair(buildEnv(`http://127.0.0.1:${port}/oopbot/${sid}`, token.toString("hex")), files);
+    expect(exitCode).toBe(0);
+    expect(readFileSync(files.key, "utf8")).toBe(`${K.toString("hex")}\n`);
   });
 });

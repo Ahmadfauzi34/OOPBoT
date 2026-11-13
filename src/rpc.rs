@@ -34,16 +34,22 @@ pub fn set_output_sink(sink: Option<OutputSink>) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn output_sink_test_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 pub type PendingApprovals = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
 
 /// Approver berbasis RPC yang berinteraksi secara asinkron dengan UI Pipkin Android
-/// melalui protokol channel `tool_approval`.
+/// melalui protokol standar Pi `extension_ui_request` (`method: "confirm"`) dan `extension_ui_response`.
 #[derive(Clone)]
 pub struct RpcApprover {
     pending: PendingApprovals,
     counter: Arc<AtomicU64>,
     timeout: std::time::Duration,
-    emitter: Option<Arc<dyn Fn(&str, Value) + Send + Sync>>,
+    emitter: Option<Arc<dyn Fn(Value) + Send + Sync>>,
 }
 
 impl RpcApprover {
@@ -63,7 +69,7 @@ impl RpcApprover {
 
     pub fn with_emitter<F>(mut self, emitter: F) -> Self
     where
-        F: Fn(&str, Value) + Send + Sync + 'static,
+        F: Fn(Value) + Send + Sync + 'static,
     {
         self.emitter = Some(Arc::new(emitter));
         self
@@ -82,18 +88,20 @@ impl Approver for RpcApprover {
             pending.insert(req_id.clone(), tx);
         }
 
-        let payload = json!({
-            "kind": "request",
-            "request_id": req_id,
-            "call_id": Value::Null,
-            "tool_name": tool_name,
-            "preview": preview,
+        let timeout_ms = self.timeout.as_millis() as u64;
+        let event = json!({
+            "type": "extension_ui_request",
+            "id": req_id,
+            "method": "confirm",
+            "title": format!("Allow {}?", tool_name),
+            "message": preview,
+            "timeout": timeout_ms,
         });
 
         if let Some(ref em) = self.emitter {
-            em("tool_approval", payload);
+            em(event);
         } else {
-            RpcServer::send_channel("tool_approval", payload);
+            RpcServer::send_line(&event);
         }
 
         match tokio::time::timeout(self.timeout, rx).await {
@@ -1250,17 +1258,35 @@ impl RpcServer {
             loop {
                 line.clear();
                 match reader.read_line(&mut line) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        pending.lock().unwrap().clear();
+                        break;
+                    }
                     Ok(_) => {
                         let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
                         if trimmed.is_empty() {
                             continue;
                         }
-                        // Rutekan pesan tool_approval langsung ke waiter oneshot untuk mencegah deadlock
-                        // jika dispatch loop sedang menantikan completion dari prompt / tool execution.
+                        // Rutekan respons konfirmasi (`extension_ui_response` & legacy `tool_approval`)
+                        // langsung ke waiter oneshot untuk mencegah deadlock saat loop menunggu prompt / tool.
                         if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+                            let msg_type = val["type"].as_str().unwrap_or_default();
+                            if msg_type == "extension_ui_response" {
+                                let req_id = val["id"].as_str().unwrap_or_default();
+                                let approved = if val["cancelled"].as_bool() == Some(true) {
+                                    false
+                                } else {
+                                    val["confirmed"].as_bool().unwrap_or(false)
+                                };
+                                if !req_id.is_empty() {
+                                    if let Some(sender) = pending.lock().unwrap().remove(req_id) {
+                                        let _ = sender.send(approved);
+                                    }
+                                }
+                                continue;
+                            }
                             let is_channel =
-                                val["type"] == "pipkin_channel" || val["type"] == "oopbot_channel";
+                                msg_type == "pipkin_channel" || msg_type == "oopbot_channel";
                             if is_channel && val["topic"] == "tool_approval" {
                                 let data = &val["data"];
                                 let req_id = data["request_id"]
@@ -1273,13 +1299,17 @@ impl RpcServer {
                                         let _ = sender.send(approved);
                                     }
                                 }
+                                continue;
                             }
                         }
                         if tx.send(line.clone()).is_err() {
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        pending.lock().unwrap().clear();
+                        break;
+                    }
                 }
             }
         });
@@ -1475,6 +1505,7 @@ impl RpcServer {
                         self.execute_prompt(&message, &images).await;
                     }
                 }
+                "extension_ui_response" => {}
                 other => {
                     if !id.is_empty() {
                         Self::send_error(&id, other, &format!("Command '{}' tidak dikenal", other));
@@ -2860,6 +2891,7 @@ mod tests {
     #[tokio::test]
     async fn test_pipkin_channel_handshake_and_incoming_events() {
         use std::io::Cursor;
+        let _sink_guard = output_sink_test_mutex().lock().await;
 
         let raw = Arc::new(Mutex::new(Vec::new()));
         struct TestBuf(Arc<Mutex<Vec<u8>>>);
@@ -3061,8 +3093,8 @@ mod tests {
         let emitted_clone = Arc::clone(&emitted);
 
         let approver = RpcApprover::new(Arc::clone(&pending))
-            .with_emitter(move |topic, val| {
-                emitted_clone.lock().unwrap().push((topic.to_string(), val));
+            .with_emitter(move |val| {
+                emitted_clone.lock().unwrap().push(val);
             });
 
         let handle = tokio::spawn(async move {
@@ -3082,15 +3114,16 @@ mod tests {
             map.keys().next().unwrap().clone()
         };
 
-        // Verifikasi event request yang dipancarkan
+        // Verifikasi event request mengikuti protokol Android extension_ui_request (confirm)
         {
             let events = emitted.lock().unwrap();
             assert_eq!(events.len(), 1);
-            assert_eq!(events[0].0, "tool_approval");
-            assert_eq!(events[0].1["kind"], "request");
-            assert_eq!(events[0].1["request_id"], req_id);
-            assert_eq!(events[0].1["tool_name"], "run_shell");
-            assert_eq!(events[0].1["preview"], "$ rm -rf /tmp/danger");
+            assert_eq!(events[0]["type"], "extension_ui_request");
+            assert_eq!(events[0]["id"], req_id);
+            assert_eq!(events[0]["method"], "confirm");
+            assert_eq!(events[0]["title"], "Allow run_shell?");
+            assert_eq!(events[0]["message"], "$ rm -rf /tmp/danger");
+            assert_eq!(events[0]["timeout"], 300_000);
         }
 
         // Simulasikan persetujuan dari UI
@@ -3106,7 +3139,7 @@ mod tests {
     async fn test_rpc_approver_denied() {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let approver = RpcApprover::new(Arc::clone(&pending))
-            .with_emitter(|_, _| {});
+            .with_emitter(|_| {});
 
         let handle = tokio::spawn(async move {
             approver.approve("run_shell", "$ sudo rm -rf /").await
@@ -3138,7 +3171,7 @@ mod tests {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let approver = RpcApprover::new(Arc::clone(&pending))
             .with_timeout(std::time::Duration::from_millis(50))
-            .with_emitter(|_, _| {});
+            .with_emitter(|_| {});
 
         // Panggil approve tanpa ada yang menyelesaikan respons -> harus timeout dan return false
         let approved = approver.approve("run_shell", "reboot").await;
@@ -3152,7 +3185,7 @@ mod tests {
     async fn test_rpc_approver_channel_dropped_fails_closed() {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let approver = RpcApprover::new(Arc::clone(&pending))
-            .with_emitter(|_, _| {});
+            .with_emitter(|_| {});
 
         let handle = tokio::spawn(async move {
             approver.approve("run_shell", "ls").await
@@ -3207,6 +3240,60 @@ mod tests {
 
         // Verifikasi bahwa waiter oneshot menerima approval = true dari stream JSONL
         assert_eq!(rx.await.unwrap(), true);
+    }
+
+    #[tokio::test]
+    async fn test_rpc_loop_extension_ui_response_roundtrip() {
+        let _sink_guard = output_sink_test_mutex().lock().await;
+
+        let raw = Arc::new(Mutex::new(Vec::new()));
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+        impl io::Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().write(buf)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.0.lock().unwrap().flush()
+            }
+        }
+        let output_buf = Arc::new(Mutex::new(Box::new(SharedBuf(raw.clone())) as Box<dyn io::Write + Send + Sync>));
+        set_output_sink(Some(output_buf));
+
+        let mut server = RpcServer::new(None, None, vec![]).unwrap();
+        let (tx1, rx1) = tokio::sync::oneshot::channel::<bool>();
+        let (tx2, rx2) = tokio::sync::oneshot::channel::<bool>();
+        let (tx3, rx3) = tokio::sync::oneshot::channel::<bool>();
+        let (tx_eof, rx_eof) = tokio::sync::oneshot::channel::<bool>();
+        {
+            let pending = server.pending_approvals();
+            let mut map = pending.lock().unwrap();
+            map.insert("appr-1".to_string(), tx1);
+            map.insert("appr-2".to_string(), tx2);
+            map.insert("appr-3".to_string(), tx3);
+            map.insert("appr-eof".to_string(), tx_eof);
+        }
+
+        let input = b"\
+{\"type\":\"extension_ui_response\",\"id\":\"appr-1\",\"confirmed\":true}\n\
+{\"type\":\"extension_ui_response\",\"id\":\"appr-2\",\"confirmed\":false}\n\
+{\"type\":\"extension_ui_response\",\"id\":\"appr-3\",\"cancelled\":true}\n\
+{\"type\":\"get_state\",\"id\":\"chk_ext\"}\n";
+        let cursor = Cursor::new(input);
+
+        let res = server.run_loop_with_input(cursor).await;
+        set_output_sink(None);
+        assert!(res.is_ok());
+
+        assert_eq!(rx1.await.unwrap(), true);
+        assert_eq!(rx2.await.unwrap(), false);
+        assert_eq!(rx3.await.unwrap(), false);
+        assert!(rx_eof.await.is_err());
+
+        let bytes = raw.lock().unwrap().clone();
+        let written = String::from_utf8_lossy(&bytes);
+        assert!(written.contains("chk_ext"));
+        assert!(!written.contains("tidak dikenal"));
+        assert!(!written.contains("extension_ui_response"));
     }
 }
 

@@ -36,8 +36,8 @@ export function decryptPairingBody(bodyHex: string, token: Buffer, sid: string):
 
 export async function pair(env: NodeJS.ProcessEnv, files: HelperFiles): Promise<number> {
   try {
-    const url = env.PIPKIN_URL?.replace(/\/+$/, "");
-    const tokenHex = env.PIPKIN_TOKEN ?? "";
+    const url = (env.OOPBOT_URL || env.PIPKIN_URL)?.replace(/\/+$/, "");
+    const tokenHex = (env.OOPBOT_TOKEN || env.PIPKIN_TOKEN) ?? "";
     if (!url || !/^[0-9a-fA-F]{64}$/.test(tokenHex)) throw new Error("Paste the setup command from Pipkin.");
     const sid = url.slice(url.lastIndexOf("/") + 1);
     let response: Response;

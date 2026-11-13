@@ -12,11 +12,19 @@ fail() {
 
 # 1. Environment.
 [ -n "${PREFIX:-}" ] && [ -n "${HOME:-}" ] || fail "Run this inside Termux."
-[ -n "${OOPBOT_URL:-}" ] && [ -n "${OOPBOT_TOKEN:-}" ] || fail "Copy the setup command in OOPBoT and paste it here."
+OOPBOT_URL=${OOPBOT_URL:-${PIPKIN_URL:-}}
+OOPBOT_TOKEN=${OOPBOT_TOKEN:-${PIPKIN_TOKEN:-}}
+[ -n "$OOPBOT_URL" ] && [ -n "$OOPBOT_TOKEN" ] || fail "Copy the setup command in OOPBoT and paste it here."
+export OOPBOT_URL OOPBOT_TOKEN
+export PIPKIN_URL="$OOPBOT_URL" PIPKIN_TOKEN="$OOPBOT_TOKEN"
 # oopbot for the release, oopbot-dev for the debug build, which keeps its own helper beside the release's.
 name='@PIPKIN_NAME@'
 dir="$HOME/.$name/helper"
 package='@PIPKIN_PACKAGE@'
+expected_ver=${OOPBOT_VERSION:-@OOPBOT_VERSION@}
+case $expected_ver in
+  "" | *@*) expected_ver="" ;;
+esac
 
 # Termux sessions run the shell that ~/.termux/shell links to (chsh sets it), or bash without a usable one; this picks
 # it the way $PREFIX/bin/login does. OOPBoT starts its helper by opening a session, so that shell must run one of the
@@ -53,15 +61,70 @@ write_file() {
   fi
 }
 
-# 2. OOPBoT Native Engine.
+# 2. Termux prerequisites & OOPBoT Native Engine.
 dpkg --configure -a || true
-if [ ! -x "$PREFIX/bin/oopbot" ]; then
-  say "Installing OOPBoT Rust engine..."
-  curl -fsSL -m 60 "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android" \
-    -o "$PREFIX/bin/oopbot.$$.tmp" &&
-    chmod 755 "$PREFIX/bin/oopbot.$$.tmp" &&
-    mv -f "$PREFIX/bin/oopbot.$$.tmp" "$PREFIX/bin/oopbot" ||
-    rm -f "$PREFIX/bin/oopbot.$$.tmp"
+missing_pkgs=()
+command -v curl >/dev/null 2>&1 || missing_pkgs+=(curl)
+command -v node >/dev/null 2>&1 || missing_pkgs+=(nodejs)
+if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+  say "Installing Termux packages (${missing_pkgs[*]})..."
+  { yes | pkg upgrade -y && pkg install -y "${missing_pkgs[@]}"; } ||
+    fail "Couldn't install Termux packages (${missing_pkgs[*]}). Check your internet connection, then paste the command again."
+fi
+command -v curl >/dev/null 2>&1 || fail "curl is missing after installation."
+command -v node >/dev/null 2>&1 || fail "Node.js is missing after installation."
+
+installed_ver=""
+if [ -x "$PREFIX/bin/oopbot" ]; then
+  installed_ver=$("$PREFIX/bin/oopbot" --version 2>/dev/null | awk 'NR==1 && $1=="oopbot" {print $2}')
+fi
+need_oopbot=false
+if [ -z "$installed_ver" ]; then
+  need_oopbot=true
+elif [ -n "$expected_ver" ] && [ "$installed_ver" != "$expected_ver" ]; then
+  need_oopbot=true
+elif [ -z "$expected_ver" ]; then
+  case "$installed_ver" in
+    0.0.* | 0.1.* | 0.2.* | 0.3.* | 0.4.* | 0.5.[0-3] | 0.5.[0-3][-+]*) need_oopbot=true ;;
+  esac
+fi
+
+if [ "$need_oopbot" = true ]; then
+  say "Installing OOPBoT Rust engine${expected_ver:+ v$expected_ver}..."
+  mkdir -p "$PREFIX/bin" || fail "Couldn't create $PREFIX/bin."
+  tmp_bin="$PREFIX/bin/oopbot.$$.tmp"
+  rm -f "$tmp_bin"
+  downloaded=false
+  if [ -n "$expected_ver" ]; then
+    curl -fsSL -m 120 "https://github.com/Ahmadfauzi34/OOPBoT/releases/download/v${expected_ver}/oopbot-aarch64-linux-android" \
+      -o "$tmp_bin" && downloaded=true || rm -f "$tmp_bin"
+  fi
+  if [ "$downloaded" != true ]; then
+    curl -fsSL -m 120 "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android" \
+      -o "$tmp_bin" && downloaded=true || rm -f "$tmp_bin"
+  fi
+  [ "$downloaded" = true ] || fail "Couldn't download OOPBoT engine. Check your internet connection, then paste the command again."
+  chmod 755 "$tmp_bin" || { rm -f "$tmp_bin"; fail "Couldn't mark oopbot executable."; }
+  bin_ver=$("$tmp_bin" --version 2>/dev/null | awk 'NR==1 && $1=="oopbot" {print $2}')
+  [ -n "$bin_ver" ] || { rm -f "$tmp_bin"; fail "Downloaded OOPBoT binary couldn't run."; }
+  if [ -n "$expected_ver" ] && [ "$bin_ver" != "$expected_ver" ]; then
+    rm -f "$tmp_bin"
+    fail "Downloaded oopbot $bin_ver, but OOPBoT needs $expected_ver. Paste the command again once release v$expected_ver is available."
+  fi
+  mv -f "$tmp_bin" "$PREFIX/bin/oopbot" || { rm -f "$tmp_bin"; fail "Couldn't install $PREFIX/bin/oopbot."; }
+  installed_ver=$bin_ver
+fi
+
+# Refresh or drop any stale secondary copy under OOPBOT_ROOT/bin so helper/host paths never pick an older binary.
+root_bin_dir="$HOME/.local/share/$name/bin"
+if [ -e "$root_bin_dir/oopbot" ]; then
+  cp -f "$PREFIX/bin/oopbot" "$root_bin_dir/oopbot.$$.tmp" &&
+    chmod 755 "$root_bin_dir/oopbot.$$.tmp" &&
+    mv -f "$root_bin_dir/oopbot.$$.tmp" "$root_bin_dir/oopbot" ||
+    rm -f "$root_bin_dir/oopbot.$$.tmp"
+fi
+if [ -f "$root_bin_dir/oopbot.version" ] && [ -n "$installed_ver" ]; then
+  printf '%s\n' "$installed_ver" | write_file "$root_bin_dir/oopbot.version" || true
 fi
 
 # 3. The helper's files and ports, the boot script, the shell hooks and <name>-start.
