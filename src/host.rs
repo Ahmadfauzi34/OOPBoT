@@ -3053,11 +3053,18 @@ mod tests {
     #[tokio::test]
     async fn test_rpc_stream_processing() {
         let _sink_guard = crate::rpc::output_sink_test_mutex().lock().await;
+        let temp_dir = std::env::temp_dir().join(format!(
+            "oopbot_host_rpc_test_{}_{}",
+            std::process::id(),
+            epoch_ms()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
         let raw = Arc::new(Mutex::new(Vec::new()));
         let output_buf = Arc::new(Mutex::new(Box::new(SharedBuf(raw.clone())) as Box<dyn Write + Send + Sync>));
         set_output_sink(Some(output_buf));
 
-        let mut server = RpcServer::new(None, None, vec![]).unwrap();
+        let mut server = RpcServer::new_in_dir(temp_dir.clone(), None, None, vec![]).unwrap();
         let input = b"{\"type\":\"get_state\",\"id\":\"test_1\"}\n";
         let cursor = Cursor::new(input);
 
@@ -3065,6 +3072,7 @@ mod tests {
         assert!(res.is_ok());
 
         set_output_sink(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
 
         let bytes = raw.lock().unwrap().clone();
         let written = String::from_utf8_lossy(&bytes);
