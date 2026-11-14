@@ -8,3 +8,4 @@ pub mod plugins;
 pub mod rpc;
 pub mod session;
 pub mod tools;
+pub(crate) mod util;

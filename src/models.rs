@@ -943,13 +943,9 @@ fn build_effort_map(levels: &[String]) -> BTreeMap<String, Option<String>> {
 }
 
 fn parse_price_value(v: &Value) -> Option<f64> {
-    let raw = if let Some(n) = v.as_f64() {
-        n
-    } else if let Some(s) = v.as_str() {
-        s.trim().parse::<f64>().ok()?
-    } else {
-        return None;
-    };
+    let raw = v
+        .as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))?;
     if !raw.is_finite() || raw < 0.0 {
         return None;
     }
