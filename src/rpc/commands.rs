@@ -6,6 +6,7 @@ use super::{
     LoadedSession, QueueMode, QueuedPrompt, RpcRuntime, RpcUiState,
 };
 use crate::agent::{ChatInput, SteerHook};
+use crate::plugins::{TodoPlugin, NO_TODOS_MESSAGE, TODO_STATE_ENTRY};
 use crate::util::epoch_ms;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -432,6 +433,31 @@ impl RpcRuntime {
                 }
                 self.agent.clear_memory_silent();
                 Some("Memori percakapan sesi ini telah dibersihkan.".to_string())
+            }
+            "/todos" => {
+                let Some(plugin) = self.plugins.get_plugin("pipkin-todo") else {
+                    return Some(NO_TODOS_MESSAGE.to_string());
+                };
+                let Some(todo_plugin) = plugin.as_any().and_then(|a| a.downcast_ref::<TodoPlugin>())
+                else {
+                    return Some(NO_TODOS_MESSAGE.to_string());
+                };
+                if parts.get(1).copied() == Some("clear") {
+                    if let Some(details) = todo_plugin.clear_state() {
+                        self.ensure_session_header();
+                        self.append_session_entry(
+                            "custom",
+                            json!({ "customType": TODO_STATE_ENTRY, "data": details }),
+                        );
+                    }
+                    self.emit_active_widgets();
+                    return Some("Daftar tugas pada sesi ini telah dikosongkan.".to_string());
+                }
+                Some(
+                    todo_plugin
+                        .command_text()
+                        .unwrap_or_else(|| NO_TODOS_MESSAGE.to_string()),
+                )
             }
             _ => None,
         }
@@ -961,6 +987,7 @@ impl RpcRuntime {
         let new_id = loaded.session_id.clone();
         let new_name = loaded.session_name.clone();
         let new_file = loaded.session_file.clone();
+        let branch_entries = active_branch_entries(&loaded.entries, loaded.leaf_id.as_deref());
 
         {
             let mut m = self.mutable.lock().unwrap();
@@ -975,8 +1002,10 @@ impl RpcRuntime {
             let mut s = self.ui_state.lock().unwrap();
             *s = RpcUiState::from_loaded_session(loaded);
         }
+        self.plugins.replay_branch(&branch_entries);
         self.agent
             .replace_active_history(&new_id, new_name.as_deref(), llm_history);
+        self.emit_active_widgets();
     }
 
     pub(super) fn handle_session_stats_command(&self, id: &str) {

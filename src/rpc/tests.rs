@@ -2805,3 +2805,164 @@ fn reg005_available_models_empty_scope_and_no_local_duplicate() {
         "empty enabledModels must leave scope unrestricted and local model must appear once"
     );
 }
+
+#[tokio::test]
+async fn todo_plugin_persists_custom_entry_replays_on_resume_and_isolates_sessions() {
+    use crate::plugins::{TodoPlugin, TODO_STATE_ENTRY};
+
+    let tmp = TempConfigGuard::new("todo_session_persist");
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["pipkin-todo".to_string()],
+    )
+    .unwrap();
+
+    server.runtime.ensure_session_header();
+    let session_a_path = server.runtime.mutable.lock().unwrap().session_file.clone();
+
+    let mut tools = ToolRegistry::new();
+    server.runtime.plugins.register_active_tools(&mut tools);
+    let todo_tool = tools.get("todo").expect("todo tool must be registered");
+
+    let created = todo_tool
+        .execute(&json!({
+            "action": "create",
+            "subject": "Simpan state ke branch",
+            "metadata": { "scope": "rpc" }
+        }))
+        .await
+        .unwrap();
+
+    let emitted = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let emitted_ref = Arc::clone(&emitted);
+    let sink = RpcEventSink::with_emitter(
+        Arc::clone(&server.runtime.ui_state),
+        move |val| {
+            emitted_ref.lock().unwrap().push(val.clone());
+        },
+    )
+    .with_plugins(Arc::clone(&server.runtime.plugins));
+
+    sink.on_event(&AgentEvent::ToolCallEnd {
+        step_index: 0,
+        call_id: "call_todo_persist_1".into(),
+        tool_name: "todo".into(),
+        status: ToolStatus::Done,
+        output: created,
+        duration_ms: 2,
+    });
+
+    // Verify tool_execution_end includes details and session JSONL has pipkin-todo-state custom entry
+    {
+        let evs = emitted.lock().unwrap();
+        let exec_end = evs
+            .iter()
+            .find(|v| v["type"] == "tool_execution_end")
+            .unwrap();
+        assert_eq!(exec_end["result"]["details"]["tasks"][0]["id"], 1);
+    }
+    let session_a_raw = std::fs::read_to_string(&session_a_path).unwrap();
+    assert!(
+        session_a_raw.contains(TODO_STATE_ENTRY),
+        "session JSONL must persist pipkin-todo-state custom entry"
+    );
+
+    // Resuming session A into a fresh RpcServer instance restores TodoPlugin state
+    let resumed = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        Some(session_a_path.to_string_lossy().to_string()),
+        None,
+        vec!["pipkin-todo".to_string()],
+    )
+    .unwrap();
+    let resumed_plugin = resumed
+        .runtime
+        .plugins
+        .get_plugin("pipkin-todo")
+        .unwrap();
+    let lines = resumed_plugin
+        .render_widget("todos")
+        .expect("resumed session must restore todos widget lines");
+    assert!(lines[1].contains("Simpan state ke branch"));
+
+    // Starting a new session clears TodoPlugin state so tasks don't leak across sessions
+    resumed.runtime.handle_new_session_command("cmd_new", None);
+    assert!(
+        resumed_plugin.render_widget("todos").is_none(),
+        "new_session must reset TodoPlugin state"
+    );
+
+    // Switching back to session A restores TodoPlugin state again
+    resumed
+        .runtime
+        .handle_switch_session_command("cmd_sw", &session_a_path.to_string_lossy());
+    let restored_lines = resumed_plugin
+        .render_widget("todos")
+        .expect("switch_session back to session A must restore todos");
+    assert!(restored_lines[1].contains("Simpan state ke branch"));
+
+    // Check downcast helper reflects next_id = 2
+    let typed = resumed_plugin
+        .as_any()
+        .and_then(|a| a.downcast_ref::<TodoPlugin>())
+        .unwrap();
+    assert_eq!(typed.snapshot_state().next_id, 2);
+}
+
+#[tokio::test]
+async fn todo_slash_command_lists_and_clears_session_todos() {
+    use crate::plugins::NO_TODOS_MESSAGE;
+
+    let tmp = TempConfigGuard::new("todo_slash_cmd");
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["pipkin-todo".to_string()],
+    )
+    .unwrap();
+
+    let empty_reply = server.runtime.handle_slash_command("/todos").await.unwrap();
+    assert_eq!(empty_reply, NO_TODOS_MESSAGE);
+
+    let mut tools = ToolRegistry::new();
+    server.runtime.plugins.register_active_tools(&mut tools);
+    let todo_tool = tools.get("todo").unwrap();
+    todo_tool
+        .execute(&json!({ "action": "create", "subject": "Langkah satu" }))
+        .await
+        .unwrap();
+    todo_tool
+        .execute(&json!({
+            "action": "update",
+            "id": 1,
+            "status": "in_progress",
+            "activeForm": "mengerjakan"
+        }))
+        .await
+        .unwrap();
+
+    let list_reply = server.runtime.handle_slash_command("/todos").await.unwrap();
+    assert!(list_reply.contains("1 in progress"));
+    assert!(list_reply.contains("◐ #1 Langkah satu (mengerjakan)"));
+
+    let clear_reply = server
+        .runtime
+        .handle_slash_command("/todos clear")
+        .await
+        .unwrap();
+    assert!(clear_reply.contains("dikosongkan"));
+    assert!(server
+        .runtime
+        .plugins
+        .get_plugin("pipkin-todo")
+        .unwrap()
+        .render_widget("todos")
+        .is_none());
+}
+

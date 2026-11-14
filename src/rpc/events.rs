@@ -354,17 +354,24 @@ impl EventSink for RpcEventSink {
                     }
                 };
 
+                let details_opt = output.get("details").filter(|v| !v.is_null()).cloned();
+
+                let mut result_payload = json!({
+                    "content": [{ "type": "text", "text": display_text }]
+                });
+                if let Some(ref details) = details_opt {
+                    result_payload["details"] = details.clone();
+                }
+
                 self.emit(&json!({
                     "type": "tool_execution_end",
                     "toolCallId": call_id,
                     "toolName": ui_tool_name,
                     "isError": is_error,
-                    "result": {
-                        "content": [{ "type": "text", "text": display_text }]
-                    }
+                    "result": result_payload
                 }));
 
-                let tool_result_msg = json!({
+                let mut tool_result_msg = json!({
                     "role": "toolResult",
                     "toolCallId": call_id,
                     "toolName": ui_tool_name,
@@ -372,6 +379,9 @@ impl EventSink for RpcEventSink {
                     "content": [{ "type": "text", "text": display_text }],
                     "timestamp": epoch_ms()
                 });
+                if let Some(details) = details_opt {
+                    tool_result_msg["details"] = details;
+                }
 
                 self.emit(&json!({
                     "type": "message_end",
@@ -382,6 +392,16 @@ impl EventSink for RpcEventSink {
                     let mut state = self.ui_state.lock().unwrap();
                     state.ui_messages.push(tool_result_msg.clone());
                     state.append_session_entry("message", json!({ "message": tool_result_msg }));
+                    if let Some(plugins) = &self.plugins {
+                        for (custom_type, data) in
+                            plugins.collect_state_entries_for_tool(tool_name, output)
+                        {
+                            state.append_session_entry(
+                                "custom",
+                                json!({ "customType": custom_type, "data": data }),
+                            );
+                        }
+                    }
                 }
 
                 if let Some(plugins) = &self.plugins {

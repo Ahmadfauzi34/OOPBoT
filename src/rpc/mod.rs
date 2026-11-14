@@ -342,6 +342,9 @@ impl RpcRuntime {
         let session_name = loaded.session_name.clone();
         let llm_history = loaded.llm_history.clone();
 
+        let branch_entries = active_branch_entries(&loaded.entries, loaded.leaf_id.as_deref());
+        plugins.replay_branch(&branch_entries);
+
         let pending_approvals: PendingApprovals = Arc::new(Mutex::new(HashMap::new()));
         let ui_state = Arc::new(Mutex::new(RpcUiState::from_loaded_session(loaded)));
         let defer_settled = Arc::new(AtomicBool::new(false));
@@ -449,6 +452,14 @@ impl RpcRuntime {
                         "method": "setWidget",
                         "widgetKey": "todos",
                         "widgetLines": lines,
+                        "widgetPlacement": "aboveEditor"
+                    }));
+                } else {
+                    Self::send_line(&json!({
+                        "type": "extension_ui_request",
+                        "id": "todos-widget",
+                        "method": "setWidget",
+                        "widgetKey": "todos",
                         "widgetPlacement": "aboveEditor"
                     }));
                 }
@@ -1023,6 +1034,7 @@ impl RpcRuntime {
                                 { "name": "thinking", "description": "Atur level penalaran (/thinking <off|minimal|low|medium|high|xhigh>)" },
                                 { "name": "provider", "description": "Lihat atau ganti provider aktif (/provider <ID>)" },
                                 { "name": "max-tokens", "description": "Atur batas token output model aktif (/max-tokens <angka>)" },
+                                { "name": "todos", "description": "Tampilkan semua todo pada branch aktif (/todos [clear])" },
                                 { "name": "clear", "description": "Bersihkan memori sesi saat ini" }
                             ]
                         }),

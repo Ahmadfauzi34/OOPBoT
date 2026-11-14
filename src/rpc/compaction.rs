@@ -106,7 +106,7 @@ impl RpcRuntime {
         }
 
         let active_info = self.active_model_info();
-        let (compact_id, rebuilt_after, estimated_after, usage_json) = {
+        let (compact_id, branch_after, rebuilt_after, estimated_after, usage_json) = {
             self.ensure_session_header();
             let mut s = self.ui_state.lock().unwrap();
             let cid = s.next_unique_entry_id();
@@ -168,7 +168,7 @@ impl RpcRuntime {
             s.last_context_tokens = None;
             s.context_unknown = true;
             let est_after = estimate_messages_tokens(&rebuilt.ui_messages).max(1);
-            (cid, rebuilt, est_after, usage_obj)
+            (cid, branch, rebuilt, est_after, usage_obj)
         };
 
         self.agent.replace_active_history(
@@ -176,6 +176,8 @@ impl RpcRuntime {
             session_name.as_deref(),
             rebuilt_after.llm_history,
         );
+        self.plugins.replay_branch(&branch_after);
+        self.emit_active_widgets();
 
         let first_kept_id = {
             let s = self.ui_state.lock().unwrap();

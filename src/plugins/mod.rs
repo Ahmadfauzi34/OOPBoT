@@ -8,11 +8,19 @@
 //! - Memungkinkan reverse engineering dan integrasi mudah dari ekstensi Pi-Agent
 //!   maupun plugin agen AI open source lainnya (AutoGPT, LangChain, CrewAI).
 
+pub mod todo;
+
+pub use todo::{
+    NO_TODOS_MESSAGE, TODO_STATE_ENTRY, TODO_WIDGET_KEY, TaskItem, TaskStatus, TodoDetails,
+    TodoPlugin, TodoState, TodoTool,
+};
+
 use crate::gemini::BoxError;
 use crate::tools::{truncate, Tool, ToolRegistry};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -57,6 +65,20 @@ pub trait Plugin: Send + Sync {
         Ok(())
     }
 
+    /// Replay status internal plugin dari daftar entri branch sesi aktif
+    /// (dipanggil saat startup/resume, switch_session, new_session, fork, clone, dan compaction).
+    fn on_branch_replay(&self, _branch_entries: &[Value]) {}
+
+    /// Jika pemanggilan tool mengubah state plugin dan perlu disimpan ke branch sesi JSONL
+    /// sebagai custom entry, kembalikan `(customType, data)`.
+    fn state_entry_for_tool(
+        &self,
+        _tool_name: &str,
+        _tool_output: &Value,
+    ) -> Option<(&'static str, Value)> {
+        None
+    }
+
     /// Jika plugin memiliki representasi visual widget di UI Android (misal Todo),
     /// kembalikan baris-baris tampilan teks widget.
     fn render_widget(&self, _widget_key: &str) -> Option<Vec<String>> {
@@ -65,6 +87,11 @@ pub trait Plugin: Send + Sync {
 
     /// Status channel real-time plugin untuk topik `pipkin_channel` (misal `"background": { "active": N }`).
     fn channel_status(&self) -> Option<(&'static str, Value)> {
+        None
+    }
+
+    /// Downcast opsional untuk pemanggilan khusus dari slash command/runtime.
+    fn as_any(&self) -> Option<&dyn Any> {
         None
     }
 }
@@ -111,7 +138,7 @@ impl PluginRegistry {
     /// Contoh: "pipkin-todo", "todo", atau "/path/to/extensions/pipkin-todo/index.js".
     pub fn activate(&mut self, identifier: &str) -> bool {
         let clean_id = extract_plugin_id(identifier);
-        
+
         // Cocokkan langsung dengan ID terdaftar
         for (id, plugin) in &self.plugins {
             if id.eq_ignore_ascii_case(&clean_id) {
@@ -180,6 +207,25 @@ impl PluginRegistry {
         }
         appends.join("\n\n")
     }
+
+    /// Replay seluruh plugin terhadap entri branch sesi yang sedang dibuka.
+    pub fn replay_branch(&self, branch_entries: &[Value]) {
+        for plugin in self.plugins.values() {
+            plugin.on_branch_replay(branch_entries);
+        }
+    }
+
+    /// Kumpulkan custom state entry yang harus dipersist ke JSONL sesi setelah eksekusi tool.
+    pub fn collect_state_entries_for_tool(
+        &self,
+        tool_name: &str,
+        tool_output: &Value,
+    ) -> Vec<(&'static str, Value)> {
+        self.active_plugins()
+            .into_iter()
+            .filter_map(|p| p.state_entry_for_tool(tool_name, tool_output))
+            .collect()
+    }
 }
 
 /// Mengekstrak nama plugin dari path file atau identifier.
@@ -197,422 +243,6 @@ pub fn extract_plugin_id(identifier: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or(identifier)
         .to_string()
-}
-
-// ===========================================================================
-// 1. TodoPlugin (Reverse Engineered dari Pipkin Todo & rpiv-todo)
-// ===========================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum TaskStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "in_progress")]
-    InProgress,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(rename = "deleted")]
-    Deleted,
-}
-
-impl TaskStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::InProgress => "in_progress",
-            Self::Completed => "completed",
-            Self::Deleted => "deleted",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "pending" => Some(Self::Pending),
-            "in_progress" => Some(Self::InProgress),
-            "completed" => Some(Self::Completed),
-            "deleted" => Some(Self::Deleted),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskItem {
-    pub id: u32,
-    pub subject: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(rename = "activeForm", skip_serializing_if = "Option::is_none")]
-    pub active_form: Option<String>,
-    pub status: TaskStatus,
-    #[serde(rename = "blockedBy", default, skip_serializing_if = "Vec::is_empty")]
-    pub blocked_by: Vec<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct TodoState {
-    pub tasks: Vec<TaskItem>,
-    pub next_id: u32,
-}
-
-impl TodoState {
-    pub fn new() -> Self {
-        Self {
-            tasks: Vec::new(),
-            next_id: 1,
-        }
-    }
-
-    pub fn visible_tasks(&self) -> Vec<&TaskItem> {
-        self.tasks.iter().filter(|t| t.status != TaskStatus::Deleted).collect()
-    }
-}
-
-pub struct TodoPlugin {
-    pub state: Arc<Mutex<TodoState>>,
-}
-
-impl Default for TodoPlugin {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TodoPlugin {
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(TodoState::new())),
-        }
-    }
-
-    pub fn with_state(state: Arc<Mutex<TodoState>>) -> Self {
-        Self { state }
-    }
-
-    pub fn get_widget_lines(&self) -> Option<Vec<String>> {
-        let state = self.state.lock().ok()?;
-        let visible = state.visible_tasks();
-        if visible.is_empty() {
-            return None;
-        }
-
-        let total = visible.len();
-        let completed = visible.iter().filter(|t| t.status == TaskStatus::Completed).count();
-        let active = completed < total;
-        let show_ids = visible.iter().any(|t| !t.blocked_by.is_empty());
-
-        let mut lines = Vec::new();
-        // Sesuai format widget Pipkin (`pipkin-todo/todo.ts`)
-        let header_glyph = if active { "●" } else { "○" };
-        lines.push(format!("{} Todos ({}/{})", header_glyph, completed, total));
-
-        for (idx, task) in visible.iter().enumerate() {
-            let branch = if idx == total - 1 { "└─" } else { "├─" };
-            let glyph = match task.status {
-                TaskStatus::Pending => "○",
-                TaskStatus::InProgress => "◐",
-                TaskStatus::Completed => "✓",
-                TaskStatus::Deleted => "✕",
-            };
-
-            let mut task_line = format!("{} {} {}", branch, glyph, task.subject);
-            if show_ids {
-                task_line.push_str(&format!(" #{}", task.id));
-            }
-            if task.status == TaskStatus::InProgress {
-                if let Some(active_form) = &task.active_form {
-                    task_line.push_str(&format!(" ({})", active_form));
-                }
-            }
-            if !task.blocked_by.is_empty() {
-                let deps: Vec<String> = task.blocked_by.iter().map(|id| format!("#{}", id)).collect();
-                task_line.push_str(&format!(" ⛓ [{}]", deps.join(",")));
-            }
-            lines.push(task_line);
-        }
-
-        Some(lines)
-    }
-}
-
-#[async_trait]
-impl Plugin for TodoPlugin {
-    fn id(&self) -> &str {
-        "pipkin-todo"
-    }
-
-    fn aliases(&self) -> Vec<&'static str> {
-        vec!["oopbot-todo", "todo", "rpiv-todo"]
-    }
-
-    fn name(&self) -> &str {
-        "OOPBoT Todo Manager"
-    }
-
-    fn description(&self) -> &str {
-        "Manajemen checklist task & todo dengan pelacak visual di composer widget Android."
-    }
-
-    fn register_tools(&self, registry: &mut ToolRegistry) {
-        registry.register(Box::new(TodoTool {
-            state: Arc::clone(&self.state),
-        }));
-    }
-
-    fn system_prompt_append(&self) -> Option<String> {
-        Some(
-            "## Todo & Task Management Guidelines\n\
-            - Gunakan tool `todo` untuk pekerjaan multi-langkah (3+ langkah) atau ketika user meminta rencana tindakan.\n\
-            - Status task: pending -> in_progress -> completed (atau deleted).\n\
-            - Saat memulai task, ubah status menjadi `in_progress` dengan `activeForm` (misal 'menulis kode').\n\
-            - Segera tandai `completed` saat langkah selesai. Hanya boleh satu task yang `in_progress` secara bersamaan.\n\
-            - Perubahan pada todo secara otomatis memperbarui panel widget di UI Android pengguna."
-                .to_string(),
-        )
-    }
-
-    fn render_widget(&self, widget_key: &str) -> Option<Vec<String>> {
-        if widget_key == "todos" {
-            self.get_widget_lines()
-        } else {
-            None
-        }
-    }
-}
-
-pub struct TodoTool {
-    state: Arc<Mutex<TodoState>>,
-}
-
-#[async_trait]
-impl Tool for TodoTool {
-    fn name(&self) -> &'static str {
-        "todo"
-    }
-
-    fn description(&self) -> &'static str {
-        "Kelola daftar tugas (task/todo) untuk melacak kemajuan multi-langkah. \
-        Aksi: create (buat tugas baru), update (ubah status/isi tugas), list (lihat tugas), \
-        get (lihat detail 1 tugas), delete (hapus tugas), clear (kosongkan semua tugas). \
-        Status: pending, in_progress, completed, deleted."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["create", "update", "list", "get", "delete", "clear"],
-                    "description": "Aksi operasi todo yang ingin dijalankan"
-                },
-                "id": {
-                    "type": "number",
-                    "description": "ID tugas (wajib untuk aksi update, get, delete)"
-                },
-                "subject": {
-                    "type": "string",
-                    "description": "Judul/ringkasan tugas singkat (wajib untuk create)"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Keterangan detail instruksi tugas"
-                },
-                "activeForm": {
-                    "type": "string",
-                    "description": "Label aktif bentuk sedang berlangsung (misal: 'menulis unit test')"
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "completed", "deleted"],
-                    "description": "Status tugas baru (pada aksi update) atau filter (pada aksi list)"
-                },
-                "blockedBy": {
-                    "type": "array",
-                    "items": { "type": "number" },
-                    "description": "Daftar ID tugas yang memblokir tugas ini (pada create)"
-                },
-                "includeDeleted": {
-                    "type": "boolean",
-                    "description": "Jika true pada aksi list, tugas yang dihapus juga ditampilkan"
-                }
-            },
-            "required": ["action"]
-        })
-    }
-
-    fn preview(&self, args: &Value) -> String {
-        let action = args["action"].as_str().unwrap_or("unknown");
-        let id = args["id"].as_u64();
-        let subject = args["subject"].as_str().unwrap_or("");
-        match (action, id, subject) {
-            ("create", _, s) => format!("todo create: {}", s),
-            ("update", Some(i), _) => format!("todo update #{}", i),
-            ("delete", Some(i), _) => format!("todo delete #{}", i),
-            ("list", _, _) => "todo list".to_string(),
-            _ => format!("todo {}", action),
-        }
-    }
-
-    async fn execute(&self, args: &Value) -> Result<Value, String> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| "argumen 'action' wajib diisi".to_string())?;
-
-        let mut state = self.state.lock().map_err(|e| e.to_string())?;
-
-        match action {
-            "create" => {
-                let subject = args["subject"]
-                    .as_str()
-                    .filter(|s| !s.trim().is_empty())
-                    .ok_or_else(|| "argumen 'subject' wajib diisi untuk aksi create".to_string())?;
-
-                let id = state.next_id;
-                state.next_id += 1;
-
-                let description = args["description"].as_str().map(|s| s.to_string());
-                let active_form = args["activeForm"].as_str().map(|s| s.to_string());
-                let blocked_by = args["blockedBy"]
-                    .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u32)).collect())
-                    .unwrap_or_default();
-
-                let task = TaskItem {
-                    id,
-                    subject: subject.to_string(),
-                    description,
-                    active_form,
-                    status: TaskStatus::Pending,
-                    blocked_by,
-                    owner: None,
-                };
-
-                state.tasks.push(task.clone());
-
-                Ok(json!({
-                    "status": "success",
-                    "action": "create",
-                    "task": task,
-                    "message": format!("Tugas #{} '{}' berhasil dibuat", id, subject)
-                }))
-            }
-            "update" => {
-                let id = args["id"]
-                    .as_u64()
-                    .map(|n| n as u32)
-                    .ok_or_else(|| "argumen 'id' (angka) wajib diisi untuk aksi update".to_string())?;
-
-                let task = state
-                    .tasks
-                    .iter_mut()
-                    .find(|t| t.id == id)
-                    .ok_or_else(|| format!("Tugas dengan ID #{} tidak ditemukan", id))?;
-
-                if let Some(s) = args["subject"].as_str() {
-                    task.subject = s.to_string();
-                }
-                if let Some(d) = args["description"].as_str() {
-                    task.description = Some(d.to_string());
-                }
-                if let Some(af) = args["activeForm"].as_str() {
-                    task.active_form = Some(af.to_string());
-                }
-                if let Some(st_str) = args["status"].as_str() {
-                    if let Some(st) = TaskStatus::parse(st_str) {
-                        task.status = st;
-                    }
-                }
-
-                Ok(json!({
-                    "status": "success",
-                    "action": "update",
-                    "task": task.clone(),
-                    "message": format!("Tugas #{} berhasil diperbarui ke status '{:?}'", id, task.status)
-                }))
-            }
-            "list" => {
-                let include_deleted = args["includeDeleted"].as_bool().unwrap_or(false);
-                let status_filter = args["status"].as_str().and_then(TaskStatus::parse);
-
-                let filtered: Vec<&TaskItem> = state
-                    .tasks
-                    .iter()
-                    .filter(|t| {
-                        if !include_deleted && t.status == TaskStatus::Deleted {
-                            return false;
-                        }
-                        if let Some(ref st) = status_filter {
-                            if &t.status != st {
-                                return false;
-                            }
-                        }
-                        true
-                    })
-                    .collect();
-
-                Ok(json!({
-                    "status": "success",
-                    "action": "list",
-                    "total": filtered.len(),
-                    "tasks": filtered
-                }))
-            }
-            "get" => {
-                let id = args["id"]
-                    .as_u64()
-                    .map(|n| n as u32)
-                    .ok_or_else(|| "argumen 'id' wajib diisi untuk aksi get".to_string())?;
-
-                let task = state
-                    .tasks
-                    .iter()
-                    .find(|t| t.id == id)
-                    .ok_or_else(|| format!("Tugas dengan ID #{} tidak ditemukan", id))?;
-
-                Ok(json!({
-                    "status": "success",
-                    "action": "get",
-                    "task": task
-                }))
-            }
-            "delete" => {
-                let id = args["id"]
-                    .as_u64()
-                    .map(|n| n as u32)
-                    .ok_or_else(|| "argumen 'id' wajib diisi untuk aksi delete".to_string())?;
-
-                let task = state
-                    .tasks
-                    .iter_mut()
-                    .find(|t| t.id == id)
-                    .ok_or_else(|| format!("Tugas dengan ID #{} tidak ditemukan", id))?;
-
-                task.status = TaskStatus::Deleted;
-
-                Ok(json!({
-                    "status": "success",
-                    "action": "delete",
-                    "id": id,
-                    "message": format!("Tugas #{} berhasil dihapus (tombstone)", id)
-                }))
-            }
-            "clear" => {
-                let count = state.tasks.len();
-                state.tasks.clear();
-                state.next_id = 1;
-                Ok(json!({
-                    "status": "success",
-                    "action": "clear",
-                    "cleared_count": count,
-                    "message": "Seluruh daftar tugas telah dikosongkan"
-                }))
-            }
-            other => Err(format!("Aksi '{}' tidak dikenal untuk tool todo", other)),
-        }
-    }
 }
 
 // ===========================================================================
@@ -1330,57 +960,6 @@ mod tests {
         assert!(tools.get("web_search").is_some());
         assert!(tools.get("fetch_page").is_some());
         assert!(tools.get("background").is_none()); // Tidak diaktifkan
-    }
-
-    #[tokio::test]
-    async fn test_todo_tool_lifecycle() {
-        let plugin = TodoPlugin::new();
-        let tool = TodoTool {
-            state: Arc::clone(&plugin.state),
-        };
-
-        // Create
-        let res = tool
-            .execute(&json!({
-                "action": "create",
-                "subject": "Desain Arsitektur OOP"
-            }))
-            .await
-            .unwrap();
-        assert_eq!(res["status"], "success");
-        assert_eq!(res["task"]["id"], 1);
-
-        // Update in_progress
-        let update_res = tool
-            .execute(&json!({
-                "action": "update",
-                "id": 1,
-                "status": "in_progress",
-                "activeForm": "mengoding plugin.rs"
-            }))
-            .await
-            .unwrap();
-        assert_eq!(update_res["status"], "success");
-
-        // Periksa widget lines
-        let lines = plugin.get_widget_lines().expect("harus ada widget");
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("Todos (0/1)"));
-        assert!(lines[1].contains("◐ Desain Arsitektur OOP"));
-        assert!(lines[1].contains("(mengoding plugin.rs)"));
-
-        // Mark completed
-        tool.execute(&json!({
-            "action": "update",
-            "id": 1,
-            "status": "completed"
-        }))
-        .await
-        .unwrap();
-
-        let lines_done = plugin.get_widget_lines().expect("harus ada widget");
-        assert!(lines_done[0].contains("Todos (1/1)"));
-        assert!(lines_done[1].contains("✓ Desain Arsitektur OOP"));
     }
 
     #[tokio::test]
