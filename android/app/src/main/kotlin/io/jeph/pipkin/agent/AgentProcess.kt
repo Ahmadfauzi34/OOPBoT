@@ -82,6 +82,7 @@ internal sealed interface UiAnswer {
  * Pi stops when the channel closes. Command wrappers throw [RpcError].
  */
 @Suppress(
+  "LargeClass", // Single-owner Pi process lifecycle, RPC dispatch, and state machine live together by design.
   "TooManyFunctions", // One typed wrapper per Pi RPC command, beside the connection they share.
   "LongParameterList", // AppGraph wires each dependency in by hand, as the app has no DI container.
 )

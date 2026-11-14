@@ -92,9 +92,7 @@ class HostResultReceiver : BroadcastReceiver() {
     }
 
     /** A host that exited before connecting with no Termux-side error, as Pipkin's helper reports it. */
-    fun exitFailure(
-      exitCode: Int,
-      expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION,
-    ): HostFailure = failureFor(exitCode, ERRNO_SUCCESS, "", expectedVersion)
+    fun exitFailure(exitCode: Int, expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION): HostFailure =
+      failureFor(exitCode, ERRNO_SUCCESS, "", expectedVersion)
   }
 }

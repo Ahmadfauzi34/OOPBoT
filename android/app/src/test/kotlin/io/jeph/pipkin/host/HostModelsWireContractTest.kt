@@ -69,10 +69,11 @@ class HostModelsWireContractTest {
         .put("name", "corrupt.tar.gz")
         .put("size", 12)
         .put("createdAt", "not-an-iso-timestamp")
-        .put("error", JSONObject().put("key", "backup_corrupt")),
+        .put("error", "Backup archive is unreadable")
+        .put("errorI18n", JSONObject().put("key", "backup_unreadable")),
     )
     assertEquals(0L, corruptBackup.createdAt)
-    assertEquals("backup_corrupt", corruptBackup.error?.key)
+    assertEquals("backup_unreadable", corruptBackup.error?.key)
 
     val subagent = SubagentSession.from(
       JSONObject()
@@ -126,11 +127,12 @@ class HostModelsWireContractTest {
         )
         .put("custom", JSONArray())
         .put("scope", JSONArray().put("openai/gpt-5"))
-        .put("modelsError", JSONObject().put("key", "models_corrupt")),
+        .put("modelsError", "models.json is invalid")
+        .put("modelsErrorI18n", JSONObject().put("key", "models_invalid")),
     )
     assertEquals(setOf("openai/gpt-5"), scoped.scope)
     assertEquals(listOf("gpt-5"), scoped.builtin.single().enabled)
-    assertEquals("models_corrupt", scoped.modelsError?.key)
+    assertEquals("models_invalid", scoped.modelsError?.key)
   }
 
   @Test
@@ -168,7 +170,8 @@ class HostModelsWireContractTest {
 
     val progress = JSONObject()
       .put("type", HostProtocol.PROGRESS)
-      .put("text", JSONObject().put("key", "starting"))
+      .put("text", "Starting host...")
+      .put("textI18n", JSONObject().put("key", "starting"))
     val result = JSONObject()
       .put("type", HostProtocol.RESULT)
       .put("ok", true)

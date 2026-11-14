@@ -119,7 +119,8 @@ class HostFailureTest {
     } else {
       "    printf '#!/bin/sh\\necho \"oopbot $tagVersion\"\\n' > \"${'$'}out\"\n"
     }
-    return """
+    val script =
+      """
       #!/bin/sh
       out=""
       url=""
@@ -142,6 +143,7 @@ class HostFailureTest {
           ;;
       esac
       """.trimIndent() + "\n"
+    return script
   }
 
   private fun writeFakeBinary(path: Path, version: String) {
