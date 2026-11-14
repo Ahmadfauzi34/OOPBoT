@@ -96,11 +96,17 @@ abstract class PinnedSources : DefaultTask() {
           val (owner, repo, tag, asset) = releaseMatch.destructured
           try {
             val pb = ProcessBuilder(
-              "gh", "release", "download", tag,
-              "-R", "$owner/$repo",
-              "-p", asset,
-              "-O", archive.absolutePath,
-              "--clobber"
+              "gh",
+              "release",
+              "download",
+              tag,
+              "-R",
+              "$owner/$repo",
+              "-p",
+              asset,
+              "-O",
+              archive.absolutePath,
+              "--clobber",
             )
             val proc = pb.start()
             if (proc.waitFor() == 0 && archive.exists() && archive.length() > 0) {

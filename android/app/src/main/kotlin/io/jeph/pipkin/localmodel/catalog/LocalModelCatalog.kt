@@ -202,7 +202,6 @@ internal object LocalModelCatalog {
   fun isLocalProvider(id: String?): Boolean = id == PROVIDER_ID
 }
 
-
 /**
  * What a model's attention cache takes per token of context at 16 bits: a key and a value for each of its [layers] that
  * attend to the whole conversation. Layers that keep a fixed-size state (Qwen3.5) or attend to a fixed window (Gemma 4)

@@ -23,8 +23,7 @@ internal object TermuxSetup {
   private const val RELEASE_ASSET = "oopbot-aarch64-linux-android"
   private val SAFE_VERSION = Regex("""^\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z._+-]+)?$""")
 
-  internal fun sanitizeVersion(raw: String): String =
-    raw.trim().takeIf(SAFE_VERSION::matches) ?: DEFAULT_OOPBOT_VERSION
+  internal fun sanitizeVersion(raw: String): String = raw.trim().takeIf(SAFE_VERSION::matches) ?: DEFAULT_OOPBOT_VERSION
 
   fun expectedOopbotVersion(context: Context): String = runCatching {
     val raw = context.assets.open("pi/package.json").bufferedReader(Charsets.UTF_8).use { it.readText() }

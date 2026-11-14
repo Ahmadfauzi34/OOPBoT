@@ -69,11 +69,8 @@ internal sealed class HostFailure(
 
   class NodeMissing : HostFailure(Kind.NodeMissing, R.string.host_failure_node_missing)
 
-  class NodeTooOld(expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION) : HostFailure(
-    Kind.NodeTooOld,
-    R.string.host_failure_node_too_old,
-    upgradeCommand(expectedVersion),
-  ) {
+  class NodeTooOld(expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION) :
+    HostFailure(Kind.NodeTooOld, R.string.host_failure_node_too_old, upgradeCommand(expectedVersion)) {
     override val message: String get() = AppStrings.get(messageRes, checkNotNull(command))
   }
 

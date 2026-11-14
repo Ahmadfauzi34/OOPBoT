@@ -13,5 +13,3 @@ internal object TermuxBuild {
   /** The loopback port Pi reaches Pipkin's local models on, just past the helper's. */
   const val LOCAL_MODEL_PORT = 47325
 }
-
-

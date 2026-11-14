@@ -42,4 +42,3 @@ internal object OopbotBridge {
   @JvmStatic
   external fun engineFree(handle: Long)
 }
-

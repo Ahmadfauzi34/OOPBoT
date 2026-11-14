@@ -108,6 +108,7 @@ internal object HelperAssets {
 }
 
 /** One copied setup command: its id, its token, the pairing key it hands out and the files it serves. */
+@Suppress("LongParameterList") // Setup session identity, key material, files, and pinned version.
 internal class SetupSession(
   val sid: String,
   val token: ByteArray,

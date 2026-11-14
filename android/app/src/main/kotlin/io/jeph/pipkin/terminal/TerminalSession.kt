@@ -169,7 +169,8 @@ internal class TerminalSession(
 
             type == "busy" -> busyFlow.value = line.optBoolean("busy")
 
-            HostProtocol.isResult(type) -> HostRejected.from(line)?.let { stateFlow.value = TerminalState.Failed(it.error) }
+            HostProtocol.isResult(type) ->
+              HostRejected.from(line)?.let { stateFlow.value = TerminalState.Failed(it.error) }
           }
         }
       }
