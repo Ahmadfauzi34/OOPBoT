@@ -72,11 +72,11 @@ jobs:
         with:
           gradle-version: '9.8.2'
 
-      - name: Run Android JVM unit tests
+      - name: Run Android ktlint & JVM unit tests
         working-directory: android
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+        run: gradle :app:ktlintCheck :app:testDebugUnitTest --no-daemon --stacktrace
 
       - name: Upload Android unit test reports
         if: always()
