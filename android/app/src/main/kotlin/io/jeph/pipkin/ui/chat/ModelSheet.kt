@@ -7,7 +7,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -32,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -165,6 +170,49 @@ private fun ThinkingLevels(controller: ChatController, model: JSONObject?, curre
   }
 }
 
+/** A model row ready for display in [ModelList], with [subtitle] set when its [label] collides inside [provider]. */
+internal data class ModelSheetEntry(
+  val model: JSONObject,
+  val provider: String,
+  val id: String,
+  val label: String,
+  val subtitle: String?,
+)
+
+/** One provider heading and its visible [entries] in [ModelList]. */
+internal data class ModelSheetGroup(val provider: String, val entries: List<ModelSheetEntry>)
+
+/**
+ * Deduplicates [models] by `(provider, id)`, checks per-provider display-name collisions across the full scoped list,
+ * and returns the entries matching [query] grouped by provider with disambiguating `id` subtitles where needed.
+ */
+internal fun buildModelGroups(models: List<JSONObject>, query: String): List<ModelSheetGroup> {
+  val trimmed = query.trim()
+  val unique = models.distinctBy { it.optString("provider") to it.optString("id") }
+  val labelCountsByProvider = unique
+    .groupBy { it.optString("provider") }
+    .mapValues { (_, items) -> items.groupingBy { modelLabel(it).orEmpty().trim().lowercase() }.eachCount() }
+  return unique
+    .filter { matches(it, trimmed) }
+    .groupBy { it.optString("provider") }
+    .map { (provider, providerModels) ->
+      val counts = labelCountsByProvider[provider].orEmpty()
+      val entries = providerModels.map { entry ->
+        val id = entry.optString("id")
+        val label = modelLabel(entry).orEmpty()
+        val duplicated = (counts[label.trim().lowercase()] ?: 0) > 1
+        ModelSheetEntry(
+          model = entry,
+          provider = provider,
+          id = id,
+          label = label,
+          subtitle = id.takeIf { duplicated && it.isNotBlank() && it != label },
+        )
+      }
+      ModelSheetGroup(provider = provider, entries = entries)
+    }
+}
+
 /** Models matching [query], grouped by provider under a muted label; the current model is checked. */
 @Composable
 private fun ModelList(
@@ -178,31 +226,59 @@ private fun ModelList(
     Loading()
     return
   }
-  val groups = remember(models, query) {
-    models.filter { matches(it, query) }.groupBy { it.optString("provider") }.toList()
-  }
+  val groups = remember(models, query) { buildModelGroups(models, query) }
   if (groups.isEmpty()) {
     val empty = if (models.isEmpty()) R.string.chat_no_model else R.string.chat_model_search_empty
     SheetRow(label = stringResource(empty), labelColor = pipkinColors.foregroundMuted)
     return
   }
   LazyColumn(modifier = modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s4)) {
-    groups.forEach { (provider, providerModels) ->
-      item(key = "provider:$provider") { SectionLabel(provider) }
-      items(providerModels, key = { "model:$provider/${it.optString("id")}" }) { entry ->
-        SheetRow(
-          label = modelLabel(entry).orEmpty(),
-          onClick = { onSelect(entry) },
-          trailing = {
-            AnimatedVisibility(
-              visible = isSameModel(entry, current),
-              enter = fadeIn(tween(PICK_MILLIS)) + scaleIn(tween(PICK_MILLIS)),
-              exit = fadeOut(tween(PICK_MILLIS)),
-            ) { CheckIcon() }
-          },
+    groups.forEach { group ->
+      item(key = "provider:${group.provider}") { SectionLabel(group.provider) }
+      items(group.entries, key = { "model:${group.provider}/${it.id}" }) { entry ->
+        ModelRow(
+          entry = entry,
+          selected = isSameModel(entry.model, current),
+          onClick = { onSelect(entry.model) },
         )
       }
     }
+  }
+}
+
+@Composable
+private fun ModelRow(entry: ModelSheetEntry, selected: Boolean, onClick: () -> Unit) {
+  val colors = pipkinColors
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .heightIn(min = 44.dp)
+      .clickable(onClick = onClick)
+      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Text(
+        text = entry.label,
+        color = colors.foreground,
+        fontSize = PipkinTokens.FontSize.base,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+      )
+      if (entry.subtitle != null) {
+        Text(
+          text = entry.subtitle,
+          color = colors.foregroundMuted,
+          fontSize = PipkinTokens.FontSize.sm,
+        )
+      }
+    }
+    AnimatedVisibility(
+      visible = selected,
+      enter = fadeIn(tween(PICK_MILLIS)) + scaleIn(tween(PICK_MILLIS)),
+      exit = fadeOut(tween(PICK_MILLIS)),
+    ) { CheckIcon() }
   }
 }
 
