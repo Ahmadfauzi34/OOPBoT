@@ -26,7 +26,6 @@ import org.json.JSONObject
 internal class Preferences(context: Context) {
   private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-
   /**
    * Android's build and when Pipkin was last installed or updated, which [localModelFailedBuilds] are kept for. The
    * install time rather than the version, since every development build has the same version.
