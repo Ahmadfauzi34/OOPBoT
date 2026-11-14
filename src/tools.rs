@@ -46,6 +46,12 @@ pub struct ToolRegistry {
     tools: Vec<Box<dyn Tool>>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self { tools: Vec::new() }

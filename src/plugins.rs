@@ -78,6 +78,12 @@ pub struct PluginRegistry {
     active_ids: HashSet<String>,
 }
 
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
@@ -219,7 +225,7 @@ impl TaskStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "pending" => Some(Self::Pending),
             "in_progress" => Some(Self::InProgress),
@@ -266,6 +272,12 @@ impl TodoState {
 
 pub struct TodoPlugin {
     pub state: Arc<Mutex<TodoState>>,
+}
+
+impl Default for TodoPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TodoPlugin {
@@ -509,7 +521,7 @@ impl Tool for TodoTool {
                     task.active_form = Some(af.to_string());
                 }
                 if let Some(st_str) = args["status"].as_str() {
-                    if let Some(st) = TaskStatus::from_str(st_str) {
+                    if let Some(st) = TaskStatus::parse(st_str) {
                         task.status = st;
                     }
                 }
@@ -523,7 +535,7 @@ impl Tool for TodoTool {
             }
             "list" => {
                 let include_deleted = args["includeDeleted"].as_bool().unwrap_or(false);
-                let status_filter = args["status"].as_str().and_then(TaskStatus::from_str);
+                let status_filter = args["status"].as_str().and_then(TaskStatus::parse);
 
                 let filtered: Vec<&TaskItem> = state
                     .tasks
@@ -609,6 +621,12 @@ impl Tool for TodoTool {
 
 pub struct WebAccessPlugin {
     client: reqwest::Client,
+}
+
+impl Default for WebAccessPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebAccessPlugin {
@@ -821,6 +839,12 @@ pub struct BackgroundPlugin {
     tasks: Arc<Mutex<HashMap<u32, BgTaskInfo>>>,
     kill_handles: Arc<Mutex<HashMap<u32, tokio::sync::oneshot::Sender<()>>>>,
     next_id: Arc<AtomicU32>,
+}
+
+impl Default for BackgroundPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BackgroundPlugin {
@@ -1108,6 +1132,12 @@ impl Tool for BackgroundTool {
 // ===========================================================================
 
 pub struct SubagentsPlugin;
+
+impl Default for SubagentsPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SubagentsPlugin {
     pub fn new() -> Self {

@@ -348,6 +348,9 @@ unsafe fn rust_to_jstring(env: JniEnv, text: &str) -> JString {
 }
 
 /// `OopbotBridge.version(): String`
+///
+/// # Safety
+/// `env` must be a valid JNI `JNIEnv*` pointer for the calling thread.
 #[no_mangle]
 pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
     env: JniEnv,
@@ -357,6 +360,9 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
 }
 
 /// `OopbotBridge.referenceCatalog(): String`
+///
+/// # Safety
+/// `env` must be a valid JNI `JNIEnv*` pointer for the calling thread.
 #[no_mangle]
 pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_referenceCatalog(
     env: JniEnv,
@@ -366,6 +372,9 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_referenceCatalog(
 }
 
 /// `OopbotBridge.engineNew(apiKey: String, defaultModel: String, autoApprove: Boolean): Long`
+///
+/// # Safety
+/// `env` must be a valid JNI `JNIEnv*` pointer, and `api_key` / `default_model` must be valid JNI string references (or null).
 #[no_mangle]
 pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
     env: JniEnv,
@@ -382,6 +391,9 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
 }
 
 /// `OopbotBridge.engineRequest(handle: Long, requestJson: String): String`
+///
+/// # Safety
+/// `env` must be a valid JNI `JNIEnv*`, `handle` must be a non-freed pointer from `engineNew` (or `0`), and `request_json` must be a valid JNI string reference (or null).
 #[no_mangle]
 pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
     env: JniEnv,
@@ -404,6 +416,9 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
 }
 
 /// `OopbotBridge.engineFree(handle: Long)`
+///
+/// # Safety
+/// `handle` must be `0` or a live pointer previously returned by `engineNew` that has not yet been freed.
 #[no_mangle]
 pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineFree(
     _env: JniEnv,
