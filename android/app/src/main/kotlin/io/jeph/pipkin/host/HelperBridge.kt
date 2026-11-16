@@ -77,7 +77,7 @@ internal object HelperBridge {
     stdin: String,
     onFailure: (HostFailure) -> Unit,
   ): StartedHost {
-    val expectedVersion = TermuxSetup.expectedOopbotVersion(context)
+    val expectedVersion = TermuxSetup.DEFAULT_OOPBOT_VERSION
     val connection = open(context)
     val request = JSONObject().put("type", "launch").put("args", JSONArray(arguments)).put("stdin", stdin)
     try {

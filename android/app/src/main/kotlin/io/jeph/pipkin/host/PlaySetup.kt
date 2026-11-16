@@ -44,7 +44,7 @@ internal object PlaySetup {
       packageName = app.packageName,
       expiresAt = System.currentTimeMillis() + SESSION_MILLIS,
       onKeyServed = { HelperPairing.storePending(app, it) },
-      expectedVersion = TermuxSetup.expectedOopbotVersion(app),
+      expectedVersion = TermuxSetup.DEFAULT_OOPBOT_VERSION,
     )
     open(session)
     synchronized(this) {

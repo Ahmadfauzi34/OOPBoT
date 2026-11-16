@@ -7,17 +7,17 @@ import type { TestProject } from "vitest/node";
 
 declare module "vitest" {
   export interface ProvidedContext {
-    hostBundle: string;
+    helperBundle: string;
   }
 }
 
-/** Tests run the production bundle (`pnpm run build`) as a child process, as Termux would. */
+/** Tests run the production helper bundle (`pnpm run build`) as a child process, as Termux would. */
 export default async function setup(project: TestProject): Promise<() => Promise<void>> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "pipkin-host-bundle-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "oopbot-helper-bundle-"));
   await promisify(execFile)("pnpm", ["run", "--silent", "build"], {
     cwd: path.join(import.meta.dirname, ".."),
     env: { ...process.env, OUT: dir },
   });
-  project.provide("hostBundle", path.join(dir, "pipkin-host.mjs"));
+  project.provide("helperBundle", path.join(dir, "pipkin-helper.mjs"));
   return () => rm(dir, { recursive: true, force: true });
 }

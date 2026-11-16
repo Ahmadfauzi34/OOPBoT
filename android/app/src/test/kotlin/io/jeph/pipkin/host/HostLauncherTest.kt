@@ -101,7 +101,7 @@ class HostLauncherTest {
         "--norc",
         "-c",
         HostLauncher.BOOTSTRAP,
-        "pipkin-host",
+        "oopbot-host",
         mode,
         port.toString(),
       )

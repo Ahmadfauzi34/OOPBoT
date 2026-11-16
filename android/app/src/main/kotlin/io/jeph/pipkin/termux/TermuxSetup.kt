@@ -11,7 +11,6 @@ import io.jeph.pipkin.agent.KeepAlive
 import io.jeph.pipkin.host.HostLauncher
 import io.jeph.pipkin.host.PlaySetup
 import io.jeph.pipkin.host.TermuxBuild
-import org.json.JSONObject
 
 /**
  * One-paste Termux preparation. Every part checks before it acts, so pasting a command again after a failure (no
@@ -24,16 +23,6 @@ internal object TermuxSetup {
   private val SAFE_VERSION = Regex("""^\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z._+-]+)?$""")
 
   internal fun sanitizeVersion(raw: String): String = raw.trim().takeIf(SAFE_VERSION::matches) ?: DEFAULT_OOPBOT_VERSION
-
-  fun expectedOopbotVersion(context: Context): String = runCatching {
-    val raw = context.assets.open("pi/package.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
-    val deps = JSONObject(raw).getJSONObject("dependencies")
-    val configured = deps.optString(
-      "oopbot",
-      deps.optString("@earendil-works/pi-coding-agent", DEFAULT_OOPBOT_VERSION),
-    )
-    sanitizeVersion(configured)
-  }.getOrDefault(DEFAULT_OOPBOT_VERSION)
 
   /**
    * F-Droid: OOPBoT native binary, allow-external-apps, then back to Pipkin, the build with [packageName]: the debug
@@ -95,7 +84,7 @@ internal object TermuxSetup {
    */
   fun command(context: Context, keepAlive: KeepAlive): String = when {
     TermuxInstall.status(context).isPlay -> PlaySetup.newCommand(context, keepAlive)
-    else -> fdroidCommand(context.packageName, expectedOopbotVersion(context))
+    else -> fdroidCommand(context.packageName, DEFAULT_OOPBOT_VERSION)
   }
 
   /** Puts [command] on the clipboard and opens Termux so the user can paste it. */

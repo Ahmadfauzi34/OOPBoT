@@ -6,7 +6,6 @@ import io.jeph.pipkin.data.BundledExtension
 import io.jeph.pipkin.termux.TermuxIdentity
 import io.jeph.pipkin.termux.TermuxSetup
 import java.io.IOException
-import java.security.MessageDigest
 import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,31 +50,10 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     scope.launch { foreground.collect { visible -> if (!visible) utility.retire() } }
   }
 
-  /**
-   * The bundled `pi/package.json`: Pi and the packages Pipkin's extensions import; `ensure` installs it, `rpc` requires
-   * it.
-   */
-  private val packageJson: String by lazy { asset(PACKAGE_JSON) }
+  /** The pinned OOPBoT engine version. */
+  val expectedPiVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION
 
-  /**
-   * The SHA-256 of each bundled extension's source, which [openRpc] sends so the host can check the copy [ensure]
-   * installed without Pipkin sending the source every time.
-   */
-  private val extensionFingerprints: Map<BundledExtension, String> by lazy {
-    BundledExtension.entries.associateWith { extension ->
-      val source = context.assets.open(extension.asset).use { it.readBytes() }
-      MessageDigest.getInstance("SHA-256").digest(source).toHexString()
-    }
-  }
-
-  /** The agent version the bundled `pi/package.json` pins (OOPBoT engine version). */
-  val expectedPiVersion: String by lazy {
-    val deps = JSONObject(packageJson).getJSONObject("dependencies")
-    deps.optString(OOPBOT_PACKAGE, deps.optString(PI_PACKAGE, TermuxSetup.DEFAULT_OOPBOT_VERSION))
-      .ifBlank { TermuxSetup.DEFAULT_OOPBOT_VERSION }
-  }
-
-  /** Hello of the most recent host that connected; Pi's version is updated after [ensure]. */
+  /** Hello of the most recent host that connected; agent version is updated after [ensure]. */
   val lastHello: StateFlow<HostHello?> = helloState.asStateFlow()
 
   /** Launch failure of the most recent operation; cleared by the next host that connects. */
@@ -90,28 +68,15 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   }
 
   /**
-   * Installs the pinned Pi runtime if it isn't installed in full, or always when [reinstall] is true, and every bundled
-   * extension, and returns the installed version. One install runs at a time: two `npm ci` runs in the same folder
-   * would wreck each other's tree, and a call that waited finds the runtime installed and skips npm.
+   * Ensures the pinned native OOPBoT binary is installed (or reinstalls it when [reinstall] is true) and returns the
+   * installed version. One ensure runs at a time.
    */
   suspend fun ensure(reinstall: Boolean = false, onProgress: (String) -> Unit): String = installLock.withLock {
     installingState.value = true
     try {
-      val params = withContext(Dispatchers.IO) {
-        // Every extension, including the ones the user turned off, so turning one on never needs an install.
-        val extensions = BundledExtension.entries.map { extension ->
-          JSONObject()
-            .put("name", extension.id)
-            .put("source", asset(extension.asset))
-            .put("usesRuntimePackages", extension.usesRuntimePackages)
-        }
-        JSONObject()
-          .put("packageJson", packageJson)
-          .put("packageLock", asset(PACKAGE_LOCK))
-          .put("expectedVersion", expectedPiVersion)
-          .put("pipkinExtensions", JSONArray(extensions))
-          .put("reinstall", reinstall)
-      }
+      val params = JSONObject()
+        .put("expectedVersion", expectedPiVersion)
+        .put("reinstall", reinstall)
       val data = call("ensure", params, ENSURE_TIMEOUT_MILLIS, progress(onProgress))
       // The utility host keeps the Pi it imported first, which may be the one this install replaced.
       withContext(Dispatchers.Main.immediate) { utility.retire() }
@@ -382,23 +347,14 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
    * [io.jeph.pipkin.data.BundledExtension.id]s, and always the ones Settings has no switch for.
    */
   suspend fun openRpc(cwd: String, sessionPath: String?, disabledExtensions: Set<String>): HostChannel {
-    // The first call reads every extension's source to fingerprint it.
-    val params = withContext(Dispatchers.IO) {
-      // The host loads pipkin-remote, the one without a switch, only in a remote workspace, so every chat sends it.
-      val extensions = extensionFingerprints.filterKeys { it.switch == null || it.id !in disabledExtensions }
-        .map { (extension, sha256) ->
-          JSONObject()
-            .put("name", extension.id)
-            .put("sha256", sha256)
-            .put("usesRuntimePackages", extension.usesRuntimePackages)
-        }
-      JSONObject()
-        .put("cwd", cwd)
-        .put("sessionPath", sessionPath ?: JSONObject.NULL)
-        .put("expectedVersion", expectedPiVersion)
-        .put("packageJson", packageJson)
-        .put("pipkinExtensions", JSONArray(extensions))
-    }
+    val extensions = BundledExtension.entries
+      .filter { it.switch == null || it.id !in disabledExtensions }
+      .map { extension -> JSONObject().put("name", extension.id) }
+    val params = JSONObject()
+      .put("cwd", cwd)
+      .put("sessionPath", sessionPath ?: JSONObject.NULL)
+      .put("expectedVersion", expectedPiVersion)
+      .put("pipkinExtensions", JSONArray(extensions))
     val channel = connect("rpc")
     var sent = false
     try {
@@ -516,15 +472,8 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     }
   }
 
-  private fun asset(name: String): String =
-    context.assets.open(name).bufferedReader(Charsets.UTF_8).use { it.readText() }
-
   private companion object {
     const val TAG = "PipkinHost"
-    const val PACKAGE_JSON = "pi/package.json"
-    const val PACKAGE_LOCK = "pi/package-lock.json"
-    const val OOPBOT_PACKAGE = "oopbot"
-    const val PI_PACKAGE = "@earendil-works/pi-coding-agent"
     const val DEFAULT_TIMEOUT_MILLIS = 60_000L
     const val ENSURE_TIMEOUT_MILLIS = 15 * 60_000L
     const val BACKUP_TIMEOUT_MILLIS = 15 * 60_000L

@@ -16,36 +16,20 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Starts one short-lived `host.mjs` in Termux and waits for it to connect back to [HostServer]: through Termux's
- * RUN_COMMAND service in the F-Droid build, through Pipkin's helper ([HelperBridge]) in the Play build. Either way
- * the host script travels as bash arguments and the token only on stdin.
+ * Starts one short-lived `oopbot host` in Termux and waits for it to connect back to [HostServer]: through Termux's
+ * RUN_COMMAND service in the F-Droid build, through OOPBoT's helper ([HelperBridge]) in the Play build. The auth
+ * token travels only on stdin.
  */
 internal object HostLauncher {
   @Suppress("SdCardPath") // Termux's own prefix, not this app's storage.
   private const val BASH = "/data/data/com.termux/files/usr/bin/bash"
   private val SERVICE = ComponentName("com.termux", "com.termux.app.RunCommandService")
-  private const val HOST_ASSET = "pipkin-host.mjs"
-
-  /**
-   * Most UTF-16 units of host script the Intent carries: Android delivers it in one binder transaction capped near
-   * 512 KiB, two bytes per unit in a Parcel, with room left for the other extras. `host/build.ts` fails the build past it.
-   */
-  private const val SCRIPT_UNIT_LIMIT = 200 * 1024
-
-  /**
-   * Linux refuses to exec a command with any one argument over 128 KiB (`MAX_ARG_STRLEN`), so the script travels in
-   * pieces of at most this many UTF-16 units: three UTF-8 bytes each at most, well under that cap.
-   */
-  private const val PIECE_CHARS = 32 * 1024
   private const val CONNECT_TIMEOUT_MILLIS = 30_000L
   private const val TOKEN_BYTES = 32
   private const val INTERRUPTED_RETRIES = 2
   private const val RETRY_DELAY_MILLIS = 300L
 
   private val random = SecureRandom()
-
-  @Volatile
-  private var hostScript: List<String>? = null
 
   /**
    * Retries a launch that Termux cancelled while stopping its service (its last command just exited);
@@ -70,7 +54,7 @@ internal object HostLauncher {
     TermuxIdentity.verify(context)
     val server = HostServer.shared
     val token = ByteArray(TOKEN_BYTES).also(random::nextBytes).toHexString()
-    val arguments = arguments(context, mode, server.port)
+    val arguments = arguments(mode, server.port)
     val stdin = token + "\n"
     val connected = server.register(token)
     val onFailure: (HostFailure) -> Unit = { connected.completeExceptionally(it) }
@@ -94,9 +78,9 @@ internal object HostLauncher {
     }
   }
 
-  /** `bash` arguments for one host: [BOOTSTRAP], `<mode> <port>`, then the host script in pieces. */
-  private fun arguments(context: Context, mode: String, port: Int): List<String> =
-    listOf("--noprofile", "--norc", "-c", BOOTSTRAP, "pipkin-host", mode, port.toString()) + script(context)
+  /** `bash` arguments for one host: [BOOTSTRAP], `<mode> <port>`. */
+  private fun arguments(mode: String, port: Int): List<String> =
+    listOf("--noprofile", "--norc", "-c", BOOTSTRAP, "oopbot-host", mode, port.toString())
 
   /** Termux reports the command's exit to [HostResultReceiver] through a one-shot PendingIntent. */
   private fun runCommand(
@@ -107,7 +91,7 @@ internal object HostLauncher {
     onFailure: (HostFailure) -> Unit,
   ): StartedHost {
     val id = UUID.randomUUID().toString()
-    HostResultReceiver.register(id, TermuxSetup.expectedOopbotVersion(context), onFailure)
+    HostResultReceiver.register(id, TermuxSetup.DEFAULT_OOPBOT_VERSION, onFailure)
     var sent = false
     try {
       start(context, mode, arguments, stdin, resultIntent(context, id))
@@ -170,27 +154,8 @@ internal object HostLauncher {
     }
   }
 
-  /** The host script in the pieces it travels in, joined again by [BOOTSTRAP]. */
-  private fun script(context: Context): List<String> {
-    hostScript?.let { return it }
-    val text = context.assets.open(HOST_ASSET).bufferedReader(Charsets.UTF_8).use { it.readText() }
-    check(text.length <= SCRIPT_UNIT_LIMIT) { "$HOST_ASSET exceeds the Intent size limit" }
-    val pieces = buildList {
-      var start = 0
-      while (start < text.length) {
-        var end = minOf(start + PIECE_CHARS, text.length)
-        // A surrogate pair stays in one piece, so each piece is valid UTF-16 on its own.
-        if (end < text.length && text[end - 1].isHighSurrogate()) end -= 1
-        add(text.substring(start, end))
-        start = end
-      }
-    }
-    hostScript = pieces
-    return pieces
-  }
-
   /**
-   * `<mode> <port>` for native `oopbot host` or fallback `host.mjs`; the token is the one stdin line.
+   * `<mode> <port>` for native `oopbot host`; the token is the one stdin line.
    * Exit codes: 70 Termux env, 72 engine missing, 73 engine too old, 80 token missing.
    */
   internal val BOOTSTRAP = $$$"""
@@ -199,12 +164,9 @@ internal object HostLauncher {
     IFS= read -r OOPBOT_TOKEN || exit 80
     [ -n "$OOPBOT_TOKEN" ] || exit 80
     export OOPBOT_TOKEN
-    export PIPKIN_TOKEN="$OOPBOT_TOKEN"
     exec </dev/null
     export OOPBOT_ROOT="$HOME/.local/share/$$${TermuxBuild.NAME}"
     export OOPBOT_CONFIG_DIR="$HOME/.oopbot"
-    export PIPKIN_ROOT="$OOPBOT_ROOT"
-    export PI_CODING_AGENT_DIR="$OOPBOT_CONFIG_DIR"
     mkdir -p "$OOPBOT_ROOT" "$OOPBOT_CONFIG_DIR"
 
     mode=$1
@@ -223,13 +185,6 @@ internal object HostLauncher {
           exit 73
           ;;
       esac
-    elif command -v node >/dev/null 2>&1; then
-      host="$OOPBOT_ROOT/host.mjs"
-      if [ ! -f "$host" ] || ! printf '%s' "$@" 2>/dev/null | cmp -s - "$host"; then
-        printf '%s' "$@" > "$host.$$.tmp" && mv -f "$host.$$.tmp" "$host"
-      fi
-      exec node "$host" "$mode" "$port"
-
     else
       exit 72
     fi

@@ -36,7 +36,7 @@ val hostInstall = tasks.register<Exec>("hostInstall") {
 }
 
 val hostBuild = tasks.register<HostBundle>("hostBuild") {
-  description = "Bundles the Termux host into the pipkin-host.mjs APK asset, and the Pi extensions Pipkin ships."
+  description = "Bundles the Termux helper daemon and setup scripts into APK assets."
   dependsOn(hostInstall)
   workingDir = hostDir.asFile
   inputs.dir(hostDir.dir("src"))
@@ -45,8 +45,6 @@ val hostBuild = tasks.register<HostBundle>("hostBuild") {
     hostDir.file("pnpm-lock.yaml"),
     hostDir.file("tsconfig.json"),
     hostDir.file("build.ts"),
-    // build.ts leaves the runtime's packages out of the extensions it bundles.
-    layout.projectDirectory.file("src/main/assets/pi/package.json"),
   )
   commandLine("pnpm", "run", "build")
 }

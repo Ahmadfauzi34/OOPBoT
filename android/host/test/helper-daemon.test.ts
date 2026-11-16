@@ -18,7 +18,7 @@ import {
   sessionKeys,
 } from "../src/helper/protocol.js";
 
-const bundle = path.join(path.dirname(inject("hostBundle")), "pipkin-helper.mjs");
+const bundle = inject("helperBundle");
 const KEY = randomBytes(32);
 
 interface Env {
