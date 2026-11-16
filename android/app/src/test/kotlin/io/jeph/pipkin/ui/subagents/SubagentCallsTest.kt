@@ -130,7 +130,7 @@ class SubagentCallsTest {
     assertEquals("fix it", interrupted.description)
 
     // A start failure's result names no run: its subagent never began, so there's no file.
-    val startFailed = JSONObject().put("extension", "pipkin-subagents").put("status", "failed")
+    val startFailed = JSONObject().put("extension", "oopbot-subagents").put("status", "failed")
     val refused = subagentFacts("c6", call("c6", "Unknown agent", true, startFailed), ChatSubagents.None, "/s/p.jsonl")
     assertEquals(TranscriptSource.StartFailed("Unknown agent"), refused.source)
     assertEquals(SubagentPhase.Failed, refused.phase)
@@ -157,7 +157,7 @@ class SubagentCallsTest {
     val stoppedQueued = queued.copy(status = SubagentStatus.Stopped)
     assertEquals(TranscriptSource.NeverStarted, source(listing(stoppedQueued, working = false)))
     // Once the run is dropped, its result says the same.
-    val neverRan = JSONObject().put("extension", "pipkin-subagents").put("id", "r1").put("status", "stopped")
+    val neverRan = JSONObject().put("extension", "oopbot-subagents").put("id", "r1").put("status", "stopped")
       .put("startedAt", JSONObject.NULL)
     assertEquals(TranscriptSource.NeverStarted, source(ChatSubagents.None, call("c1", "stopped", details = neverRan)))
 
@@ -233,9 +233,9 @@ class SubagentCallsTest {
     // Standing aside, Pipkin's own calls from before the user installed another `subagent` tool stay subagents.
     val other = ChatSubagents(emptyList(), SubagentAsker.Unknown, working = true, tool = SubagentTool.Other)
     for (subagents in listOf(live, ChatSubagents.None, other)) {
-      val marked = JSONObject().put("extension", "pipkin-subagents").put("status", "done")
+      val marked = JSONObject().put("extension", "oopbot-subagents").put("status", "done")
       assertTrue(subagents.startsSubagent(call("c1", output = "found it", details = marked)))
-      val failed = JSONObject().put("extension", "pipkin-subagents").put("status", "failed")
+      val failed = JSONObject().put("extension", "oopbot-subagents").put("status", "failed")
       assertTrue(subagents.startsSubagent(call("c1", output = "Unknown agent", isError = true, details = failed)))
       // Another extension's result, as one made before the user replaced Pipkin's tool and reloaded or one made while
       // Pipkin stands aside: no details, or details of its own, even ones naming a run or a transcript; a call refused

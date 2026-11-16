@@ -273,11 +273,11 @@ impl WebAccessPlugin {
 #[async_trait]
 impl Plugin for WebAccessPlugin {
     fn id(&self) -> &str {
-        "pipkin-web-access"
+        "oopbot-web-access"
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["oopbot-web-access", "web-access", "web_access", "web_search", "browser"]
+        vec!["web-access", "web_access", "web_search", "browser"]
     }
 
     fn name(&self) -> &str {
@@ -497,11 +497,11 @@ impl BackgroundPlugin {
 #[async_trait]
 impl Plugin for BackgroundPlugin {
     fn id(&self) -> &str {
-        "pipkin-background"
+        "oopbot-background"
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["oopbot-background", "oopbot_background", "background", "pipkin_background", "tasks"]
+        vec!["oopbot_background", "background", "tasks"]
     }
 
     fn name(&self) -> &str {
@@ -778,11 +778,11 @@ impl SubagentsPlugin {
 #[async_trait]
 impl Plugin for SubagentsPlugin {
     fn id(&self) -> &str {
-        "pipkin-subagents"
+        "oopbot-subagents"
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["oopbot-subagents", "oopbot_subagents", "subagents", "subagent", "multi-agent"]
+        vec!["oopbot_subagents", "subagents", "subagent", "multi-agent"]
     }
 
     fn name(&self) -> &str {
@@ -925,32 +925,29 @@ mod tests {
     #[test]
     fn test_extract_plugin_id() {
         assert_eq!(
-            extract_plugin_id("/data/data/com.termux/files/home/.pipkin/extensions/pipkin-todo/index.js"),
-            "pipkin-todo"
+            extract_plugin_id("/data/data/com.termux/files/home/.oopbot/extensions/oopbot-todo/index.js"),
+            "oopbot-todo"
         );
-        assert_eq!(extract_plugin_id("pipkin-web-access"), "pipkin-web-access");
+        assert_eq!(extract_plugin_id("oopbot-web-access"), "oopbot-web-access");
         assert_eq!(extract_plugin_id("todo"), "todo");
     }
 
     #[test]
     fn test_plugin_registry_activation() {
         let mut registry = PluginRegistry::with_defaults();
-        assert!(!registry.is_active("pipkin-todo"));
+        assert!(!registry.is_active("oopbot-todo"));
 
         // Aktivasi via path ekstensi Android
-        assert!(registry.activate("/home/user/.pipkin/extensions/pipkin-todo/index.js"));
-        assert!(registry.is_active("pipkin-todo"));
+        assert!(registry.activate("/home/user/.oopbot/extensions/oopbot-todo/index.js"));
         assert!(registry.is_active("oopbot-todo"));
 
-        // Aktivasi via alias oopbot
+        // Aktivasi via nama oopbot
         assert!(!registry.is_active("oopbot-subagents"));
         assert!(registry.activate("oopbot-subagents"));
         assert!(registry.is_active("oopbot-subagents"));
-        assert!(registry.is_active("pipkin-subagents"));
 
-        // Aktivasi via alias legacy
+        // Aktivasi via alias pendek
         assert!(registry.activate("web-access"));
-        assert!(registry.is_active("pipkin-web-access"));
         assert!(registry.is_active("oopbot-web-access"));
 
         let mut tools = ToolRegistry::new();

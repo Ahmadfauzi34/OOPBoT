@@ -157,7 +157,7 @@ private const val POLL_MILLIS = 1_000L
 internal data class OnboardingState(
   val checks: DeviceChecks,
   val hello: HostHello?,
-  val expectedPiVersion: String,
+  val expectedOopbotVersion: String,
   val setupComplete: Boolean,
   val commandCopied: Boolean,
   /** [SetupStep] names (and [WELCOME]) the user moved past without finishing; onboarding doesn't reopen them. */
@@ -180,7 +180,7 @@ internal data class OnboardingState(
   /** A hello counts only from the installed Termux: removing or replacing it took Pi and its setup with it. */
   private val currentHello: HostHello? get() = hello.takeIf { checks.termux.isTrusted && !checks.termuxChanged }
 
-  val piReady: Boolean get() = currentHello?.piVersion == expectedPiVersion
+  val agentReady: Boolean get() = currentHello?.oopbotVersion == expectedOopbotVersion
 
   /** The host can be launched at all: F-Droid's Termux with the RUN_COMMAND grant, or Play's with a paired helper. */
   val canLaunchHost: Boolean
@@ -202,7 +202,7 @@ internal data class OnboardingState(
    * proves the setup command ran.
    */
   val shouldAutoInstall: Boolean
-    get() = canLaunchHost && !piReady && !installing &&
+    get() = canLaunchHost && !agentReady && !installing &&
       (commandCopied || currentHello != null || (setupComplete && !checks.termuxChanged))
 
   /** The setup command was copied and Termux hasn't reported back yet. */
@@ -291,7 +291,7 @@ internal data class OnboardingState(
 
   private fun installPiStatus(): StepStatus = when {
     installing -> StepStatus.Running
-    piReady -> StepStatus.Done
+    agentReady -> StepStatus.Done
     errorFor(SetupStep.InstallPi) != null -> StepStatus.Failed
     else -> StepStatus.Pending
   }
@@ -319,7 +319,7 @@ internal fun rememberOnboardingState(graph: AppGraph, checks: DeviceChecks): Onb
   return OnboardingState(
     checks = checks,
     hello = hello,
-    expectedPiVersion = graph.hostClient.expectedPiVersion,
+    expectedOopbotVersion = graph.hostClient.expectedOopbotVersion,
     setupComplete = setupComplete,
     commandCopied = copiedFor != null && copiedFor == checks.termuxInstallation,
     passedPages = passedPages,
@@ -351,7 +351,7 @@ internal fun AutoInstall(graph: AppGraph, state: OnboardingState) {
   LaunchedEffect(state.storageUnconfirmed) {
     if (state.storageUnconfirmed) SetupProgress.recheckStorage(graph)
   }
-  LaunchedEffect(state.piReady) {
-    if (state.piReady && graph.accountRepository.status.value == null) graph.accountRepository.refresh()
+  LaunchedEffect(state.agentReady) {
+    if (state.agentReady && graph.accountRepository.status.value == null) graph.accountRepository.refresh()
   }
 }

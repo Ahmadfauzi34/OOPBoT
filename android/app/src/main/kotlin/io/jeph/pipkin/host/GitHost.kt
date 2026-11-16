@@ -125,10 +125,10 @@ internal class GitHost(hostClient: HostClient, scope: CoroutineScope) {
   }
 
   private companion object {
-    const val DETECT = "pipkin_git_detect"
-    const val CHANGES = "pipkin_git_changes"
-    const val COMMITS = "pipkin_git_commits"
-    const val COMMIT_DIFF = "pipkin_git_commit_diff"
+    const val DETECT = "oopbot_git_detect"
+    const val CHANGES = "oopbot_git_changes"
+    const val COMMITS = "oopbot_git_commits"
+    const val COMMIT_DIFF = "oopbot_git_commit_diff"
 
     /** Detection runs at most one `git rev-parse`, which the host gives 30 seconds. */
     const val DETECT_TIMEOUT = 40_000L

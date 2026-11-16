@@ -551,7 +551,7 @@ async fn main() -> Result<(), BoxError> {
             let client = GeminiClient::new_with_base_url(api_key.clone(), "default".to_string(), base_url)?;
             match client.scan_models().await {
                 Ok(scanned) => {
-                    let models: Vec<_> = scanned.iter().map(|m| m.to_pipkin_json(None)).collect();
+                    let models: Vec<_> = scanned.iter().map(|m| m.to_oopbot_json(None)).collect();
                     println!("{}", json!({ "ok": true, "models": models }));
                 }
                 Err(e) => {

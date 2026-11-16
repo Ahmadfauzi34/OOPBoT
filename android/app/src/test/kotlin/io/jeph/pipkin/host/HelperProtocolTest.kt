@@ -179,7 +179,7 @@ class HelperProtocolTest {
         check(opening[0] == 1.toByte())
         val nonceC = opening.copyOfRange(1, 33)
         val output = socket.getOutputStream()
-        output.write("PKH1".toByteArray() + NONCE_S + HelperProtocol.serverMac(key, nonceC, NONCE_S))
+        output.write("OBH1".toByteArray() + NONCE_S + HelperProtocol.serverMac(key, nonceC, NONCE_S))
         output.flush()
         val macC = ByteArray(32)
         try {
@@ -237,13 +237,13 @@ class HelperProtocolTest {
     val NONCE_S = ByteArray(32) { 0xbb.toByte() }
     val HELLO = """{"type":"hello"}""".toByteArray()
     const val S2C_HELLO = """{"type":"hello","version":"x"}"""
-    const val MAC_S = "c92c57837f8549ddfb5a965ace997642ce25f3e3b136a6bf561433663f3a1461"
-    const val MAC_C = "9fb54e8cc24ecc55dea53d1287d19d3bcfb851c899430f38410a4df7a93503ab"
-    const val C2S = "eb0b435f5cf0a7eb2819992de866100bbfc6a262e919e47e01853e37d871fab7"
-    const val S2C = "3a4ec171786f7ad7f37d65dfa5744436aab39444b5c7823744a1225b0e36f487"
-    const val C2S_FRAME_0 = "d63a72ad9216ab54d318f274debda5af6abd7a1a6216a23ca62b049800c61723"
-    const val C2S_FRAME_1 = "740b781b9f3a35201158d88e92de83752160aa8dfd430a4c5ae8f2520ca20250"
+    const val MAC_S = "7af9b89ac35c5bb1313a2ab8d01d3ca7e2b243cfcbf21cbedc00d52382a974cc"
+    const val MAC_C = "8de01dbdf2d3f926a6ee8f0e3db8357437d2706ab10f930ed1d9eda80bb17c49"
+    const val C2S = "db3a7b81f9befeb674eb0ecadf12d5c13752cd44050c57c4e3887393fd4f468c"
+    const val S2C = "ee8b812f140b381dd81757e979ce9b072e03061e7994182e3b9a8423a76134a4"
+    const val C2S_FRAME_0 = "6df8de77a014b0cdf50b69ddfe674dbb926daec86e508bc51747045f0e909de4"
+    const val C2S_FRAME_1 = "34716c399ab769820eaa79750db9087c88d8cba8323a4dcc1ae00afb9fc09542"
     const val S2C_FRAME_0 =
-      "a916a91721dc194149655fc1fa133d8a8a5746ae372aaa1199edd92cc04ab9340a0d56b15a8f2a0ba991c0bf6156"
+      "f29768b7cb5ae0d0e7a53985c69d905e7c002be1b8a713ed5e2e6e76b64b9122af39463ef5f03de812ce15f06068"
   }
 }

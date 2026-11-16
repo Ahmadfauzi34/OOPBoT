@@ -90,8 +90,8 @@ internal object PlaySetup {
 
 /** The APK assets Termux's Play build gets: the helper bundle and the scripts around it. */
 internal object HelperAssets {
-  const val HELPER = "pipkin-helper.mjs"
-  const val INSTALLER = "termux-helper/pipkin-setup.sh"
+  const val HELPER = "oopbot-helper.mjs"
+  const val INSTALLER = "termux-helper/oopbot-setup.sh"
   const val RUN = "termux-helper/run.sh"
   const val START = "termux-helper/start.sh"
 
@@ -129,7 +129,7 @@ internal class SetupSession(
   fun complete() = completed.set(true)
 
   /**
-   * Serving the key makes it Pipkin's pending key; the installer may fetch it again after a failure, and gets the
+   * Serving the key makes it OOPBoT's pending key; the installer may fetch it again after a failure, and gets the
    * same key under a fresh nonce, until a helper pairs with it.
    */
   fun serve(name: String): HttpResponse {
@@ -179,8 +179,8 @@ internal class SetupSession(
         .replace("@HELPER_SHA256@", HelperAssets.sha256Hex(helper))
         .replace("@RUN_SHA256@", HelperAssets.sha256Hex(run))
         .replace("@START_SHA256@", HelperAssets.sha256Hex(start))
-        .replace("@PIPKIN_PACKAGE@", packageName)
-        .replace("@PIPKIN_NAME@", TermuxBuild.NAME)
+        .replace("@OOPBOT_PACKAGE@", packageName)
+        .replace("@OOPBOT_NAME@", TermuxBuild.NAME)
         .replace("@HELPER_PORTS@", HelperProtocol.PORTS.joinToString(","))
         .replace("@OOPBOT_VERSION@", expectedVersion)
       return SetupSession(
@@ -200,17 +200,17 @@ internal class SetupSession(
     }
 
     /**
-     * hex(nonce || AES-256-GCM(pk, nonce, key, aad = "pipkin-pair|" + sid) || tag), where
-     * pk = HMAC(token, "pipkin-pair-key").
+     * hex(nonce || AES-256-GCM(pk, nonce, key, aad = "oopbot-pair|" + sid) || tag), where
+     * pk = HMAC(token, "oopbot-pair-key").
      */
     fun pairingBody(token: ByteArray, sid: String, key: ByteArray, nonce: ByteArray): ByteArray {
       val cipher = Cipher.getInstance("AES/GCM/NoPadding")
       cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(pairingKey(token), "AES"), GCMParameterSpec(TAG_BITS, nonce))
-      cipher.updateAAD("pipkin-pair|$sid".toByteArray(Charsets.US_ASCII))
+      cipher.updateAAD("oopbot-pair|$sid".toByteArray(Charsets.US_ASCII))
       return (nonce + cipher.doFinal(key)).toHexString().toByteArray(Charsets.US_ASCII)
     }
 
-    fun pairingKey(token: ByteArray): ByteArray = HelperProtocol.hmac(token, "pipkin-pair-key")
+    fun pairingKey(token: ByteArray): ByteArray = HelperProtocol.hmac(token, "oopbot-pair-key")
   }
 }
 

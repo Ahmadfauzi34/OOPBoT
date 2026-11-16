@@ -18,6 +18,6 @@ export default async function setup(project: TestProject): Promise<() => Promise
     cwd: path.join(import.meta.dirname, ".."),
     env: { ...process.env, OUT: dir },
   });
-  project.provide("helperBundle", path.join(dir, "pipkin-helper.mjs"));
+  project.provide("helperBundle", path.join(dir, "oopbot-helper.mjs"));
   return () => rm(dir, { recursive: true, force: true });
 }

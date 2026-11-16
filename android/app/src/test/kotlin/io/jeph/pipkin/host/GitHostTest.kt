@@ -70,7 +70,7 @@ class GitHostTest {
   fun `an error reply has only its error and code`() {
     val reply =
       parseGitChanges(
-        JSONObject("""{"type":"pipkin_git_changes_result","id":3,"error":"fatal: bad","code":"failed"}"""),
+        JSONObject("""{"type":"oopbot_git_changes_result","id":3,"error":"fatal: bad","code":"failed"}"""),
       )
 
     val failed = reply as GitReply.Failed

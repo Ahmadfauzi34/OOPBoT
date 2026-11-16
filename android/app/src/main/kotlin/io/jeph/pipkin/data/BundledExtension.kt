@@ -12,25 +12,25 @@ internal enum class BundledExtension(
   val switch: Switch?,
 ) {
   Todo(
-    "pipkin-todo",
+    "oopbot-todo",
     Switch(R.string.settings_extension_todo, R.string.settings_extension_todo_summary),
   ),
 
   /** Runs shell commands past the agent's turn; it tells the app over the host channel while they run. */
   Background(
-    "pipkin-background",
+    "oopbot-background",
     Switch(R.string.settings_extension_background, R.string.settings_extension_background_summary),
   ),
 
   /** Web search and content extraction tools. */
   WebAccess(
-    "pipkin-web-access",
+    "oopbot-web-access",
     Switch(R.string.settings_extension_web_access, R.string.settings_extension_web_access_summary),
   ),
 
   /** Hands the agent's tasks to subagents in the same engine; it tells the app about their runs over the channel. */
   Subagents(
-    "pipkin-subagents",
+    "oopbot-subagents",
     Switch(R.string.settings_extension_subagents, R.string.settings_extension_subagents_summary),
   ),
 
@@ -38,7 +38,7 @@ internal enum class BundledExtension(
    * Remote workspace mode indicator; sent only when needed by remote workspaces, so there's no switch.
    */
   Remote(
-    "pipkin-remote",
+    "oopbot-remote",
     switch = null,
   ),
   ;

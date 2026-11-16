@@ -10,12 +10,11 @@ import org.junit.Test
 
 class HostClientVersionGuardTest {
   @Test
-  fun verifiedEnsureVersionAcceptsMatchingOopbotOrPiVersion() {
+  fun verifiedEnsureVersionAcceptsMatchingOopbotVersion() {
     assertEquals(
       "0.5.5",
-      verifiedEnsureVersion(JSONObject().put("oopbotVersion", "0.5.5").put("piVersion", "0.5.5"), "0.5.5"),
+      verifiedEnsureVersion(JSONObject().put("oopbotVersion", "0.5.5"), "0.5.5"),
     )
-    assertEquals("0.5.5", verifiedEnsureVersion(JSONObject().put("piVersion", "0.5.5"), "0.5.5"))
   }
 
   @Test
@@ -24,9 +23,8 @@ class HostClientVersionGuardTest {
       JSONObject(),
       JSONObject().put("oopbotVersion", ""),
       JSONObject().put("oopbotVersion", JSONObject.NULL),
-      JSONObject().put("piVersion", JSONObject.NULL),
-      JSONObject().put("oopbotVersion", "0.5.4").put("piVersion", "0.5.4"),
-      JSONObject().put("piVersion", "0.5.2"),
+      JSONObject().put("piVersion", "0.5.5"),
+      JSONObject().put("oopbotVersion", "0.5.4"),
       JSONObject().put("oopbotVersion", "0.5.6"),
     )
     for (payload in invalidPayloads) {
@@ -40,23 +38,17 @@ class HostClientVersionGuardTest {
 
   @Test
   fun extractEnsureVersionDoesNotTurnJsonNullIntoLiteralNullString() {
-    val payload = JSONObject()
-      .put("oopbotVersion", JSONObject.NULL)
-      .put("piVersion", JSONObject.NULL)
+    val payload = JSONObject().put("oopbotVersion", JSONObject.NULL)
     assertNull(extractEnsureVersion(payload))
   }
 
   @Test
-  fun helloVersionMismatchReturnsPiVersionRejectionOnlyOnMismatch() {
+  fun helloVersionMismatchReturnsOopbotVersionRejectionOnlyOnMismatch() {
     assertNull(helloVersionMismatch(JSONObject().put("oopbotVersion", "0.5.5"), "0.5.5"))
-    assertNull(helloVersionMismatch(JSONObject().put("piVersion", "0.5.5"), "0.5.5"))
     assertNull(helloVersionMismatch(JSONObject(), "0.5.5"))
     assertNull(helloVersionMismatch(JSONObject().put("oopbotVersion", JSONObject.NULL), "0.5.5"))
 
     val stale = helloVersionMismatch(JSONObject().put("oopbotVersion", "0.5.4"), "0.5.5")
-    assertEquals("pi_version", stale?.code)
-
-    val staleLegacy = helloVersionMismatch(JSONObject().put("piVersion", "0.5.2"), "0.5.5")
-    assertEquals("pi_version", staleLegacy?.code)
+    assertEquals("oopbot_version", stale?.code)
   }
 }

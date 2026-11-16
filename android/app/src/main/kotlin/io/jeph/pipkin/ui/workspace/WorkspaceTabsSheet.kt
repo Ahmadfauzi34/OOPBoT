@@ -436,4 +436,4 @@ private class TabArchiving(private val actions: ShellActions) {
 private val PINNED_ACTIONS_MIN_HEIGHT = 600.dp
 
 /** The list key of the tiles when they scroll at the end of the tabs. */
-private const val FOOTER_KEY = "pipkin:tab-actions"
+private const val FOOTER_KEY = "oopbot:tab-actions"

@@ -630,7 +630,7 @@ pub(super) fn run_git_loop<R: BufRead, W: Write>(
     mut reader: R,
     mut writer: W,
 ) -> Result<(), BoxError> {
-    let ready = json!({ "type": "pipkin_git_ready" });
+    let ready = json!({ "type": "oopbot_git_ready" });
     writeln!(writer, "{}", serde_json::to_string(&ready)?)?;
     writer.flush()?;
 
@@ -654,11 +654,11 @@ pub(super) fn run_git_loop<R: BufRead, W: Write>(
         let root = req["root"].as_str().unwrap_or(".");
 
         match req["type"].as_str() {
-            Some("pipkin_git_detect") | Some("oopbot_git_detect") => {
+            Some("oopbot_git_detect") => {
                 let trusted = req["trusted"].as_bool().unwrap_or(false);
                 let (repo, git) = git_detect(root, trusted);
                 let reply = json!({
-                    "type": "pipkin_git_detected",
+                    "type": "oopbot_git_detected",
                     "id": id,
                     "repo": repo,
                     "git": git
@@ -666,34 +666,34 @@ pub(super) fn run_git_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_git_changes") | Some("oopbot_git_changes") => {
+            Some("oopbot_git_changes") => {
                 let mode = req["mode"].as_str().unwrap_or("uncommitted");
                 let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
                 let known = req["known"].as_str();
                 let mut data = handle_git_changes(root, mode, ignore_whitespace, known);
                 if let Some(obj) = data.as_object_mut() {
-                    obj.insert("type".to_string(), json!("pipkin_git_changes_result"));
+                    obj.insert("type".to_string(), json!("oopbot_git_changes_result"));
                     obj.insert("id".to_string(), json!(id));
                 }
                 writeln!(writer, "{}", serde_json::to_string(&data)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_git_commits") | Some("oopbot_git_commits") => {
+            Some("oopbot_git_commits") => {
                 let known = req["known"].as_str();
                 let mut data = handle_git_commits(root, known);
                 if let Some(obj) = data.as_object_mut() {
-                    obj.insert("type".to_string(), json!("pipkin_git_commits_result"));
+                    obj.insert("type".to_string(), json!("oopbot_git_commits_result"));
                     obj.insert("id".to_string(), json!(id));
                 }
                 writeln!(writer, "{}", serde_json::to_string(&data)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_git_commit_diff") | Some("oopbot_git_commit_diff") => {
+            Some("oopbot_git_commit_diff") => {
                 let sha = req["sha"].as_str().unwrap_or("");
                 let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
                 let mut data = handle_git_commit_diff(root, sha, ignore_whitespace);
                 if let Some(obj) = data.as_object_mut() {
-                    obj.insert("type".to_string(), json!("pipkin_git_commit_diff_result"));
+                    obj.insert("type".to_string(), json!("oopbot_git_commit_diff_result"));
                     obj.insert("id".to_string(), json!(id));
                 }
                 writeln!(writer, "{}", serde_json::to_string(&data)?)?;

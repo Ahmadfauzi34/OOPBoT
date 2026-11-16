@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Konversi nama & argumen tool internal `oopbot` ke format tampilan `ChatTimeline.kt` & `StepFigure.kt`.
-pub(super) fn map_tool_for_pipkin_ui(tool_name: &str, args: &Value) -> (String, Value) {
+pub(super) fn map_tool_for_oopbot_ui(tool_name: &str, args: &Value) -> (String, Value) {
     match tool_name {
         "run_shell" => ("bash".to_string(), args.clone()),
         "read_file" => ("read".to_string(), args.clone()),
@@ -243,7 +243,7 @@ impl EventSink for RpcEventSink {
                 preview: _,
                 requires_confirmation: _,
             } => {
-                let (ui_tool_name, ui_args) = map_tool_for_pipkin_ui(tool_name, args);
+                let (ui_tool_name, ui_args) = map_tool_for_oopbot_ui(tool_name, args);
                 let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                 if !internal.assistant_msg_started {
                     self.emit(&json!({
@@ -330,7 +330,7 @@ impl EventSink for RpcEventSink {
                 let (ui_tool_name, _) = internal
                     .pending_tool_calls
                     .remove(call_id)
-                    .unwrap_or_else(|| map_tool_for_pipkin_ui(tool_name, &Value::Null));
+                    .unwrap_or_else(|| map_tool_for_oopbot_ui(tool_name, &Value::Null));
 
                 let (display_text, is_error) = match status {
                     ToolStatus::Rejected => {
@@ -407,7 +407,7 @@ impl EventSink for RpcEventSink {
                 if let Some(plugins) = &self.plugins {
                     match tool_name.as_str() {
                         "todo" => {
-                            if let Some(plugin) = plugins.get_plugin("pipkin-todo") {
+                            if let Some(plugin) = plugins.get_plugin("oopbot-todo") {
                                 if let Some(lines) = plugin.render_widget("todos") {
                                     self.emit(&json!({
                                         "type": "extension_ui_request",
@@ -429,10 +429,10 @@ impl EventSink for RpcEventSink {
                             }
                         }
                         "background" => {
-                            if let Some(plugin) = plugins.get_plugin("pipkin-background") {
+                            if let Some(plugin) = plugins.get_plugin("oopbot-background") {
                                 if let Some((topic, data)) = plugin.channel_status() {
                                     self.emit(&json!({
-                                        "type": "pipkin_channel",
+                                        "type": "oopbot_channel",
                                         "topic": topic,
                                         "data": data
                                     }));

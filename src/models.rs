@@ -50,7 +50,7 @@ pub struct ModelInfo {
     pub id: String,
     /// Nama tampilan ramah UI.
     pub label: String,
-    /// Nama provider (misal: `google`, `openrouter`, `pipkin-local`).
+    /// Nama provider (misal: `google`, `openrouter`, `oopbot-local`).
     pub provider: String,
     /// Apakah mendukung tool/function calling.
     #[serde(default = "default_true")]
@@ -84,13 +84,8 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
-    /// Alias ramah OOPBoT untuk `to_pipkin_json`.
+    /// Konversi ke objek JSON standar protokol OOPBoT (`AgentProcess.kt`).
     pub fn to_oopbot_json(&self, provider_override: Option<&str>) -> Value {
-        self.to_pipkin_json(provider_override)
-    }
-
-    /// Konversi ke objek JSON standar protokol Pipkin (`AgentProcess.kt` & `oopbot-sdk.ts`).
-    pub fn to_pipkin_json(&self, provider_override: Option<&str>) -> Value {
         let provider = provider_override.unwrap_or(&self.provider);
         let input = if self.input.is_empty() {
             vec!["text".to_string(), "image".to_string()]
@@ -208,13 +203,8 @@ impl ModelInfo {
         }
     }
 
-    /// Alias ramah OOPBoT untuk `from_pipkin_json`.
-    pub fn from_oopbot_json(item: &Value, default_provider: &str, default_api: &str) -> Option<Self> {
-        Self::from_pipkin_json(item, default_provider, default_api)
-    }
-
     /// Bangun `ModelInfo` dari item `models` di `models.json` (baik string ID maupun objek penuh).
-    pub fn from_pipkin_json(item: &Value, default_provider: &str, default_api: &str) -> Option<Self> {
+    pub fn from_oopbot_json(item: &Value, default_provider: &str, default_api: &str) -> Option<Self> {
         if let Some(id) = item.as_str().filter(|s| !s.trim().is_empty()) {
             return Some(Self {
                 id: id.to_string(),
@@ -339,16 +329,11 @@ pub struct ProviderCatalogEntry {
 }
 
 impl ProviderCatalogEntry {
-    /// Alias ramah OOPBoT untuk `to_pipkin_json`.
     pub fn to_oopbot_json(&self) -> Value {
-        self.to_pipkin_json()
-    }
-
-    pub fn to_pipkin_json(&self) -> Value {
         let models: Vec<Value> = self
             .models
             .iter()
-            .map(|m| m.to_pipkin_json(Some(&self.id)))
+            .map(|m| m.to_oopbot_json(Some(&self.id)))
             .collect();
         json!({
             "id": self.id,
@@ -715,11 +700,11 @@ pub fn builtin_providers() -> Vec<ProviderCatalogEntry> {
     ]
 }
 
-/// Ekspor katalog referensi provider & model bawaan dalam format JSON Pipkin.
+/// Ekspor katalog referensi provider & model bawaan dalam format JSON OOPBoT.
 pub fn builtin_catalog_json() -> Value {
     let providers: Vec<Value> = builtin_providers()
         .iter()
-        .map(ProviderCatalogEntry::to_pipkin_json)
+        .map(ProviderCatalogEntry::to_oopbot_json)
         .collect();
     json!({
         "version": env!("CARGO_PKG_VERSION"),

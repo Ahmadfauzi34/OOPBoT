@@ -21,28 +21,28 @@ const nonceC = Buffer.alloc(32, 0xaa);
 const nonceS = Buffer.alloc(32, 0xbb);
 const { c2s, s2c } = sessionKeys(K, nonceC, nonceS);
 
-describe("pipkin-helper/1 vectors", () => {
+describe("oopbot-helper/1 vectors", () => {
   it("derives the handshake MACs and session keys", () => {
     expect(serverMac(K, nonceC, nonceS).toString("hex")).toBe(
-      "c92c57837f8549ddfb5a965ace997642ce25f3e3b136a6bf561433663f3a1461",
+      "7af9b89ac35c5bb1313a2ab8d01d3ca7e2b243cfcbf21cbedc00d52382a974cc",
     );
     expect(clientMac(K, nonceC, nonceS).toString("hex")).toBe(
-      "9fb54e8cc24ecc55dea53d1287d19d3bcfb851c899430f38410a4df7a93503ab",
+      "8de01dbdf2d3f926a6ee8f0e3db8357437d2706ab10f930ed1d9eda80bb17c49",
     );
-    expect(c2s.toString("hex")).toBe("eb0b435f5cf0a7eb2819992de866100bbfc6a262e919e47e01853e37d871fab7");
-    expect(s2c.toString("hex")).toBe("3a4ec171786f7ad7f37d65dfa5744436aab39444b5c7823744a1225b0e36f487");
+    expect(c2s.toString("hex")).toBe("db3a7b81f9befeb674eb0ecadf12d5c13752cd44050c57c4e3887393fd4f468c");
+    expect(s2c.toString("hex")).toBe("ee8b812f140b381dd81757e979ce9b072e03061e7994182e3b9a8423a76134a4");
   });
 
   it("seals frames with a per-direction counter", () => {
     const client = new FrameSealer(c2s);
     expect(client.sealBody({ type: "hello" }).toString("hex")).toBe(
-      "d63a72ad9216ab54d318f274debda5af6abd7a1a6216a23ca62b049800c61723",
+      "6df8de77a014b0cdf50b69ddfe674dbb926daec86e508bc51747045f0e909de4",
     );
     expect(client.sealBody({ type: "hello" }).toString("hex")).toBe(
-      "740b781b9f3a35201158d88e92de83752160aa8dfd430a4c5ae8f2520ca20250",
+      "34716c399ab769820eaa79750db9087c88d8cba8323a4dcc1ae00afb9fc09542",
     );
     expect(new FrameSealer(s2c).sealBody({ type: "hello", version: "x" }).toString("hex")).toBe(
-      "a916a91721dc194149655fc1fa133d8a8a5746ae372aaa1199edd92cc04ab9340a0d56b15a8f2a0ba991c0bf6156",
+      "f29768b7cb5ae0d0e7a53985c69d905e7c002be1b8a713ed5e2e6e76b64b9122af39463ef5f03de812ce15f06068",
     );
   });
 
@@ -79,22 +79,21 @@ describe("pairing vector", () => {
   const token = Buffer.alloc(32, 0x11);
   const sid = "00112233445566778899aabbccddeeff";
   const body =
-    "222222222222222222222222319d2a307af21c87b8dbc08698713d1eca98a06961f19086e5b493fa03650cce9202f9300b110c5b7284c10e82768b8e";
+    "222222222222222222222222aa7ecbd8e22b36928599e2b343d73b0ede989399a42852de7d1a85ae54a33ead63d625268421e196cc26929d9a4d623c";
 
   it("derives pk and decrypts the key body", () => {
-    expect(pairingKey(token).toString("hex")).toBe("5f0176d40fe08c42eb95805e16f536883a652dc2778578b27bb197ccf0d9e34c");
+    expect(pairingKey(token).toString("hex")).toBe("820c287eadee847ce6a8273d681e378e10982b67cb5cc40651a9400797005b0a");
     expect(decryptPairingBody(body, token, sid)).toEqual(K);
   });
 
   it("rejects a body for another session", () => {
     expect(() => decryptPairingBody(body, token, "ffeeddccbbaa99887766554433221100")).toThrow(
-      "The key from Pipkin didn't match this setup command.",
+      "The key from OOPBoT didn't match this setup command.",
     );
   });
 
   it.each([
     ["OOPBOT_URL and OOPBOT_TOKEN", (url: string, hex: string) => ({ OOPBOT_URL: url, OOPBOT_TOKEN: hex })],
-    ["PIPKIN_URL and PIPKIN_TOKEN", (url: string, hex: string) => ({ PIPKIN_URL: url, PIPKIN_TOKEN: hex })],
   ])("pairs via %s", async (_, buildEnv) => {
     const server = createServer((req, res) => {
       if (req.url === `/oopbot/${sid}/key`) {

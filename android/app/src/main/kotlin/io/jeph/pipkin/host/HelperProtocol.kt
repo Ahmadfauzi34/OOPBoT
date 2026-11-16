@@ -40,7 +40,7 @@ internal object HelperProtocol {
   private const val VERSION: Byte = 1
   private const val NONCE_BYTES = 32
   private const val MAC_BYTES = 32
-  private val MAGIC = "PKH1".toByteArray(Charsets.US_ASCII)
+  private val MAGIC = "OBH1".toByteArray(Charsets.US_ASCII)
   private val REPLY_BYTES = MAGIC.size + NONCE_BYTES + MAC_BYTES
 
   private val random = SecureRandom()
@@ -49,10 +49,10 @@ internal object HelperProtocol {
     /** [key] is the pairing key the helper proved it holds; [connection] is ready for frames. */
     class Authenticated(val key: ByteArray, val connection: HelperConnection) : Handshake
 
-    /** No `PKH1` reply in time: the port belongs to something else. */
+    /** No `OBH1` reply in time: the port belongs to something else. */
     data object Foreign : Handshake
 
-    /** Pipkin's helper, paired with a key Pipkin doesn't hold. */
+    /** OOPBoT's helper, paired with a key OOPBoT doesn't hold. */
     data object KeyMismatch : Handshake
   }
 
@@ -80,14 +80,14 @@ internal object HelperProtocol {
   }
 
   fun serverMac(key: ByteArray, nonceC: ByteArray, nonceS: ByteArray): ByteArray =
-    hmac(key, "pipkin-helper-server", nonceC, nonceS)
+    hmac(key, "oopbot-helper-server", nonceC, nonceS)
 
   fun clientMac(key: ByteArray, nonceC: ByteArray, nonceS: ByteArray): ByteArray =
-    hmac(key, "pipkin-helper-client", nonceC, nonceS)
+    hmac(key, "oopbot-helper-client", nonceC, nonceS)
 
   fun sessionKeys(key: ByteArray, nonceC: ByteArray, nonceS: ByteArray) = SessionKeys(
-    clientToServer = hmac(key, "pipkin-helper-c2s", nonceC, nonceS),
-    serverToClient = hmac(key, "pipkin-helper-s2c", nonceC, nonceS),
+    clientToServer = hmac(key, "oopbot-helper-c2s", nonceC, nonceS),
+    serverToClient = hmac(key, "oopbot-helper-s2c", nonceC, nonceS),
   )
 
   fun hmac(key: ByteArray, label: String, vararg parts: ByteArray): ByteArray {

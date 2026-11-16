@@ -526,7 +526,7 @@ internal class AgentProcess(
   }
 
   /**
-   * Connects; a `pi_version` refusal installs the pinned Pi once and retries once, and a remote host that isn't signed
+   * Connects; an `oopbot_version` refusal installs the pinned engine once and retries once, and a remote host that isn't signed
    * in is signed in again with its saved password, if it has one, and tried once more.
    */
   private suspend fun connect() {
@@ -539,10 +539,10 @@ internal class AgentProcess(
         reconnected = true
         if (remoteOutages.reconnect()) continue
       }
-      if (rejection.code != PI_VERSION || installed) {
+      if (rejection.code != OOPBOT_VERSION || installed) {
         val remote = remoteOutages.refused(rejection)
-        val failure = if (rejection.code == PI_VERSION) {
-          HostFailure.NodeTooOld(hostClient.expectedPiVersion).also(hostClient::reportFailure)
+        val failure = if (rejection.code == OOPBOT_VERSION) {
+          HostFailure.NodeTooOld(hostClient.expectedOopbotVersion).also(hostClient::reportFailure)
         } else {
           null
         }
@@ -584,7 +584,7 @@ internal class AgentProcess(
       stateFlow.value = AgentProcessState.Failed(failure.message, failure)
       return null
     }
-    val mismatch = helloVersionMismatch(channel.hello, hostClient.expectedPiVersion)
+    val mismatch = helloVersionMismatch(channel.hello, hostClient.expectedOopbotVersion)
     if (mismatch != null) {
       channel.close()
       return mismatch
@@ -906,10 +906,10 @@ internal class AgentProcess(
   private companion object {
     const val TAG = "PipkinAgent"
 
-    /** The `pipkin-background` extension's topic on Pipkin's channel. */
+    /** The `oopbot-background` extension's topic on OOPBoT's channel. */
     const val BACKGROUND_TOPIC = "background"
 
-    /** How long [holdsPi] stays true once nothing holds Pi; Pipkin's channel and Pi's output arrive milliseconds apart. */
+    /** How long [holdsPi] stays true once nothing holds Pi; OOPBoT's channel and Pi's output arrive milliseconds apart. */
     const val HOLD_GRACE_MILLIS = 2_000L
 
     const val RESYNC_TIMEOUT_MILLIS = 15_000L
@@ -917,12 +917,12 @@ internal class AgentProcess(
   }
 }
 
-private const val PI_VERSION = "pi_version"
+private const val OOPBOT_VERSION = "oopbot_version"
 
 internal fun helloVersionMismatch(hello: JSONObject, expectedVersion: String): HostRejected? {
-  val reported = HostHello.from(hello).piVersion?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+  val reported = HostHello.from(hello).oopbotVersion?.trim()?.takeIf { it.isNotEmpty() } ?: return null
   if (reported == expectedVersion) return null
-  return HostRejected(PI_VERSION, "OOPBoT engine $reported does not match required $expectedVersion.")
+  return HostRejected(OOPBOT_VERSION, "OOPBoT engine $reported does not match required $expectedVersion.")
 }
 
 /** The `message` and `images` of Pi's `prompt` and `steer`. */

@@ -1,9 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Keeps Pipkin's helper running as a Termux background task. Started by start.sh and the boot script.
+# Keeps OOPBoT's helper running as a Termux background task. Started by start.sh and the boot script.
 # Helper exit codes: 0 another helper runs or it was stopped, 75 restart with fresh code and key,
 # 76 every port is taken (the helper wrote status), 78 no key (nothing to do until setup runs again).
 set -u
-# The folder this script is in: ~/.pipkin/helper for the release, ~/.pipkin-dev/helper for the debug build.
+# The folder this script is in: ~/.oopbot/helper for the release, ~/.oopbot-dev/helper for the debug build.
 dir=$(dirname "$(readlink -f "$0")")
 
 alive() { # $1 = pid file, $2 = text the process's command line must contain

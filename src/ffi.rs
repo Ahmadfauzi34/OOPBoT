@@ -167,7 +167,7 @@ pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
             json!({
                 "ok": true,
                 "active_model": h.agent.model(),
-                "model": info.to_pipkin_json(None),
+                "model": info.to_oopbot_json(None),
                 "thinking_level": h.agent.thinking_level(),
                 "available_thinking_levels": info.available_thinking_levels(),
             })
@@ -213,7 +213,7 @@ pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
                 "ok": true,
                 "active_model": active,
                 "thinking_level": clamped_level,
-                "model": info.to_pipkin_json(None),
+                "model": info.to_oopbot_json(None),
             })
         }
         "set_thinking_level" => {
@@ -237,7 +237,7 @@ pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
             let clamped = h.agent.set_thinking_level(&h.agent.thinking_level());
             json!({
                 "ok": true,
-                "model": updated.to_pipkin_json(None),
+                "model": updated.to_oopbot_json(None),
                 "thinking_level": clamped,
             })
         }

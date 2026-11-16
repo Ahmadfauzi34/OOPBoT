@@ -33,7 +33,7 @@ internal class LlamaEngine : InferenceEngine {
       throw EngineException("backend_unsupported", "llama.cpp runs on the GPU only with an Adreno GPU's OpenCL driver")
     }
     // Read by the OpenCL loader (app/src/main/cpp/opencl) before ggml first asks it for a platform.
-    if (config.backend == Backend.CPU) Os.setenv("PIPKIN_OPENCL", "off", true)
+    if (config.backend == Backend.CPU) Os.setenv("OOPBOT_OPENCL", "off", true)
     val exitStatus = AtomicInteger(RUNNING)
     val server = Thread(
       null,

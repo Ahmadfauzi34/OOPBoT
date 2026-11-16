@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # OOPBoT's Termux setup for the Google Play build of Termux. OOPBoT fills in the @…@ values and serves this
-# from its setup command, with OOPBOT_URL/PIPKIN_URL and OOPBOT_TOKEN/PIPKIN_TOKEN in the environment. Every step checks before it
+# from its setup command, with OOPBOT_URL and OOPBOT_TOKEN in the environment. Every step checks before it
 # acts, so running the command again after a failure finishes the setup.
 set -u
 
@@ -12,15 +12,14 @@ fail() {
 
 # 1. Environment.
 [ -n "${PREFIX:-}" ] && [ -n "${HOME:-}" ] || fail "Run this inside Termux."
-OOPBOT_URL=${OOPBOT_URL:-${PIPKIN_URL:-}}
-OOPBOT_TOKEN=${OOPBOT_TOKEN:-${PIPKIN_TOKEN:-}}
+OOPBOT_URL=${OOPBOT_URL:-}
+OOPBOT_TOKEN=${OOPBOT_TOKEN:-}
 [ -n "$OOPBOT_URL" ] && [ -n "$OOPBOT_TOKEN" ] || fail "Copy the setup command in OOPBoT and paste it here."
 export OOPBOT_URL OOPBOT_TOKEN
-export PIPKIN_URL="$OOPBOT_URL" PIPKIN_TOKEN="$OOPBOT_TOKEN"
 # oopbot for the release, oopbot-dev for the debug build, which keeps its own helper beside the release's.
-name='@PIPKIN_NAME@'
+name='@OOPBOT_NAME@'
 dir="$HOME/.$name/helper"
-package='@PIPKIN_PACKAGE@'
+package='@OOPBOT_PACKAGE@'
 expected_ver=${OOPBOT_VERSION:-@OOPBOT_VERSION@}
 case $expected_ver in
   "" | *@*) expected_ver="" ;;

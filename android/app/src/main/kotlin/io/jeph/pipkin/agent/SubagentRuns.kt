@@ -133,17 +133,17 @@ internal fun questionsStopCancels(asker: SubagentAsker, runId: String?, queued: 
   return if (ends) queued else emptyList()
 }
 
-/** The tool the `pipkin-subagents` extension registers. */
+/** The tool the `oopbot-subagents` extension registers. */
 internal const val SUBAGENT_TOOL = "subagent"
 
-/** The Pipkin channel topic the `pipkin-subagents` extension and the app talk on. */
+/** The channel topic the `oopbot-subagents` extension and the app talk on. */
 internal const val SUBAGENTS_TOPIC = "subagents"
 
 /**
- * What `details` of every result the `pipkin-subagents` extension returns carry in `extension`, a call that never
+ * What `details` of every result the `oopbot-subagents` extension returns carry in `extension`, a call that never
  * became a run included, so its results can be told from another extension's `subagent` tool's.
  */
-internal const val SUBAGENT_DETAILS_EXTENSION = "pipkin-subagents"
+internal const val SUBAGENT_DETAILS_EXTENSION = "oopbot-subagents"
 
 /**
  * What a finished `subagent` tool call's result `details` say about its run: the run's [id], [agent] and

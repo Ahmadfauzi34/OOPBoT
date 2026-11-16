@@ -27,7 +27,7 @@ import org.json.JSONObject
 /**
  * Suspend API over `host.mjs` modes. The one-off operations go to one shared `utility` host ([utilityCall]), which
  * stays up until none has come for [UTILITY_IDLE_MILLIS]. Every other call launches a host process of its own,
- * sends one `pipkin_request` and, except for [openRpc], reads lines until `pipkin_result`.
+ * sends one `oopbot_request` and, except for [openRpc], reads lines until `oopbot_result`.
  * Throws [HostFailure] when the host could not run and [HostRejected] when it refused.
  *
  * A launch waits until Pipkin is in the [foreground]. In the background Android may refuse to start Termux, and in
@@ -51,7 +51,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   }
 
   /** The pinned OOPBoT engine version. */
-  val expectedPiVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION
+  val expectedOopbotVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION
 
   /** Hello of the most recent host that connected; agent version is updated after [ensure]. */
   val lastHello: StateFlow<HostHello?> = helloState.asStateFlow()
@@ -75,20 +75,20 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     installingState.value = true
     try {
       val params = JSONObject()
-        .put("expectedVersion", expectedPiVersion)
+        .put("expectedVersion", expectedOopbotVersion)
         .put("reinstall", reinstall)
       val data = call("ensure", params, ENSURE_TIMEOUT_MILLIS, progress(onProgress))
       // The utility host keeps the Pi it imported first, which may be the one this install replaced.
       withContext(Dispatchers.Main.immediate) { utility.retire() }
       val version = try {
-        verifiedEnsureVersion(data, expectedPiVersion)
+        verifiedEnsureVersion(data, expectedOopbotVersion)
       } catch (failure: HostFailure.NodeTooOld) {
         val reported = extractEnsureVersion(data)
-        helloState.update { it?.copy(piVersion = reported) }
+        helloState.update { it?.copy(oopbotVersion = reported) }
         failureState.value = failure
         throw failure
       }
-      helloState.update { it?.copy(piVersion = version) }
+      helloState.update { it?.copy(oopbotVersion = version) }
       version
     } finally {
       installingState.value = false
@@ -331,18 +331,18 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
    * Starts a `files` host for [FileHost] and returns its channel once the host is ready for requests; closing the
    * channel ends the host. Cancelling the caller closes it too.
    */
-  suspend fun openFiles(): HostChannel = openRequestHost("files", "pipkin_files_ready")
+  suspend fun openFiles(): HostChannel = openRequestHost("files", "oopbot_files_ready")
 
   /**
    * Starts a `git` host for [GitHost] and returns its channel once the host is ready for requests; closing the
    * channel ends the host. Cancelling the caller closes it too.
    */
-  suspend fun openGit(): HostChannel = openRequestHost("git", "pipkin_git_ready")
+  suspend fun openGit(): HostChannel = openRequestHost("git", "oopbot_git_ready")
 
   /**
    * Starts `pi --mode rpc` and returns its channel: Pi's RPC JSONL both ways, ended by a
-   * `pipkin_exit` line. A refusal (`pi_version`, `cwd_missing`) arrives instead as a
-   * `pipkin_result` line; see [HostRejected.from], which is `pi_version` when an extension [ensure] installed is out of
+   * `oopbot_exit` line. A refusal (`oopbot_version`, `cwd_missing`) arrives instead as a
+   * `oopbot_result` line; see [HostRejected.from], which is `oopbot_version` when an extension [ensure] installed is out of
    * date too. Pi loads the bundled extensions not in [disabledExtensions], which are
    * [io.jeph.pipkin.data.BundledExtension.id]s, and always the ones Settings has no switch for.
    */
@@ -353,8 +353,8 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     val params = JSONObject()
       .put("cwd", cwd)
       .put("sessionPath", sessionPath ?: JSONObject.NULL)
-      .put("expectedVersion", expectedPiVersion)
-      .put("pipkinExtensions", JSONArray(extensions))
+      .put("expectedVersion", expectedOopbotVersion)
+      .put("oopbotExtensions", JSONArray(extensions))
     val channel = connect("rpc")
     var sent = false
     try {
@@ -369,8 +369,8 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
 
   /**
    * Starts a login shell on a pseudo-terminal in [cwd], [rows] by [cols], and returns its channel: `output` lines
-   * carry base64 bytes until a `pipkin_exit` line; send `input` and `resize` lines. A refusal (`cwd_missing`) arrives
-   * instead as a `pipkin_result` line. Closing the channel ends the shell.
+   * carry base64 bytes until a `oopbot_exit` line; send `input` and `resize` lines. A refusal (`cwd_missing`) arrives
+   * instead as a `oopbot_result` line. Closing the channel ends the shell.
    */
   suspend fun openTerminal(cwd: String, rows: Int, cols: Int): HostChannel {
     val channel = connect("terminal")
@@ -386,18 +386,17 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
 
   /**
    * Starts [mode], a host that serves id-matched requests until it is closed, and returns its channel once it sends
-   * [readyType]; a `pipkin_result` in its place refuses the request.
+   * [readyType]; a `oopbot_result` in its place refuses the request.
    */
   private suspend fun openRequestHost(mode: String, readyType: String): HostChannel {
     val channel = connect(mode)
     var started = false
-    val altReadyType = "oopbot_" + readyType.removePrefix("pipkin_")
     try {
       sendRequest(channel, JSONObject())
       val line = withTimeoutOrNull(REQUEST_HOST_START_TIMEOUT_MILLIS) {
         channel.lines.firstOrNull {
           val type = it.optString("type")
-          type == readyType || type == altReadyType || HostProtocol.isResult(type)
+          type == readyType || HostProtocol.isResult(type)
         } ?: throw HostFailure.Disconnected()
       } ?: throw HostFailure.Timeout()
       if (HostProtocol.isResult(line.optString("type"))) throw HostRejected.from(line) ?: HostFailure.Disconnected()
@@ -409,7 +408,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   }
 
   /** Starts the `utility` host that answers [utilityCall]s, and returns its channel once it is ready for requests. */
-  private suspend fun openUtility(): HostChannel = openRequestHost("utility", "pipkin_utility_ready")
+  private suspend fun openUtility(): HostChannel = openRequestHost("utility", "oopbot_utility_ready")
 
   private suspend fun connect(mode: String): HostChannel {
     if (!foreground.first()) {
@@ -473,7 +472,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   }
 
   private companion object {
-    const val TAG = "PipkinHost"
+    const val TAG = "OopbotHost"
     const val DEFAULT_TIMEOUT_MILLIS = 60_000L
     const val ENSURE_TIMEOUT_MILLIS = 15 * 60_000L
     const val BACKUP_TIMEOUT_MILLIS = 15 * 60_000L
@@ -482,18 +481,15 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     const val LOGIN_TIMEOUT_MILLIS = 10 * 60_000L
     const val REMOTE_CONNECT_TIMEOUT_MILLIS = 10 * 60_000L
     const val REQUEST_HOST_START_TIMEOUT_MILLIS = 15_000L
-    const val UTILITY_REQUEST = "pipkin_utility_request"
+    const val UTILITY_REQUEST = "oopbot_utility_request"
 
     /** Long enough that a visit to the chat list or Settings reuses one host, as the file browser's does. */
     const val UTILITY_IDLE_MILLIS = 120_000L
   }
 }
 
-internal fun extractEnsureVersion(data: JSONObject): String? {
-  val oopbot = (data.opt("oopbotVersion") as? String)?.trim()?.takeIf { it.isNotEmpty() }
-  if (oopbot != null) return oopbot
-  return (data.opt("piVersion") as? String)?.trim()?.takeIf { it.isNotEmpty() }
-}
+internal fun extractEnsureVersion(data: JSONObject): String? =
+  (data.opt("oopbotVersion") as? String)?.trim()?.takeIf { it.isNotEmpty() }
 
 internal fun verifiedEnsureVersion(data: JSONObject, expectedVersion: String): String {
   val reported = extractEnsureVersion(data)

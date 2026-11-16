@@ -339,7 +339,7 @@ pub(super) async fn handle_ensure_mode(
         &release_urls,
         |line| {
             let progress = json!({
-                "type": "pipkin_progress",
+                "type": "oopbot_progress",
                 "line": line
             });
             if let Ok(s) = serde_json::to_string(&progress) {
@@ -352,16 +352,15 @@ pub(super) async fn handle_ensure_mode(
 
     let response = match result {
         Ok(ver) => json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": {
-                "oopbotVersion": ver,
-                "piVersion": ver
+                "oopbotVersion": ver
             }
         }),
         Err(err) => {
             let mut obj = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "error": err.message,
                 "code": err.code
@@ -381,10 +380,10 @@ pub(super) fn check_rpc_expected_version(params: &Value, installed_version: &str
     let expected = params["expectedVersion"].as_str().unwrap_or("").trim();
     if !expected.is_empty() && expected != installed_version {
         Some(json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "error": format!("Agent {} is installed; OOPBoT needs {}", installed_version, expected),
-            "code": "pi_version",
+            "code": "oopbot_version",
             "i18n": {
                 "key": "agent_version_mismatch",
                 "args": {

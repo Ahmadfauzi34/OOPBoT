@@ -10,31 +10,31 @@ internal object HostProtocol {
   /** The hello comes from an unauthenticated peer; bound it far below [MAX_LINE_BYTES]. */
   const val MAX_HELLO_BYTES = 64 * 1024
 
-  const val HELLO = "pipkin_hello"
-  const val REQUEST = "pipkin_request"
-  const val RESULT = "pipkin_result"
-  const val PROGRESS = "pipkin_progress"
-  const val EXIT = "pipkin_exit"
+  const val HELLO = "oopbot_hello"
+  const val REQUEST = "oopbot_request"
+  const val RESULT = "oopbot_result"
+  const val PROGRESS = "oopbot_progress"
+  const val EXIT = "oopbot_exit"
 
   /**
-   * A line on Pipkin's channel between the app and the extensions it bundles, `{"type":…,"topic":…,"data":…}`. The
-   * host routes the app's lines by their first bytes, so [type] must come first (see `host/src/channel.ts`).
+   * A line on OOPBoT's channel between the app and the extensions it bundles, `{"type":…,"topic":…,"data":…}`. The
+   * host routes the app's lines by their first bytes, so [type] must come first.
    */
-  const val CHANNEL = "pipkin_channel"
-  const val AUTH_EVENT = "pipkin_auth_event"
-  const val AUTH_PROMPT = "pipkin_auth_prompt"
-  const val AUTH_RESPONSE = "pipkin_auth_response"
-  const val AUTH_CANCEL = "pipkin_auth_cancel"
-  const val AUTH_PROMPT_DISMISS = "pipkin_auth_prompt_dismiss"
-  const val REMOTE_PROMPT = "pipkin_remote_prompt"
-  const val REMOTE_ANSWER = "pipkin_remote_answer"
+  const val CHANNEL = "oopbot_channel"
+  const val AUTH_EVENT = "oopbot_auth_event"
+  const val AUTH_PROMPT = "oopbot_auth_prompt"
+  const val AUTH_RESPONSE = "oopbot_auth_response"
+  const val AUTH_CANCEL = "oopbot_auth_cancel"
+  const val AUTH_PROMPT_DISMISS = "oopbot_auth_prompt_dismiss"
+  const val REMOTE_PROMPT = "oopbot_remote_prompt"
+  const val REMOTE_ANSWER = "oopbot_remote_answer"
 
-  fun isHello(type: String?): Boolean = type == HELLO || type == "oopbot_hello"
-  fun isResult(type: String?): Boolean = type == RESULT || type == "oopbot_result"
-  fun isProgress(type: String?): Boolean = type == PROGRESS || type == "oopbot_progress"
-  fun isExit(type: String?): Boolean = type == EXIT || type == "oopbot_exit"
-  fun isChannel(type: String?): Boolean = type == CHANNEL || type == "oopbot_channel"
-  fun isAuthEvent(type: String?): Boolean = type == AUTH_EVENT || type == "oopbot_auth_event"
-  fun isAuthPrompt(type: String?): Boolean = type == AUTH_PROMPT || type == "oopbot_auth_prompt"
-  fun isAuthDismiss(type: String?): Boolean = type == AUTH_PROMPT_DISMISS || type == "oopbot_auth_prompt_dismiss"
+  fun isHello(type: String?): Boolean = type == HELLO
+  fun isResult(type: String?): Boolean = type == RESULT
+  fun isProgress(type: String?): Boolean = type == PROGRESS
+  fun isExit(type: String?): Boolean = type == EXIT
+  fun isChannel(type: String?): Boolean = type == CHANNEL
+  fun isAuthEvent(type: String?): Boolean = type == AUTH_EVENT
+  fun isAuthPrompt(type: String?): Boolean = type == AUTH_PROMPT
+  fun isAuthDismiss(type: String?): Boolean = type == AUTH_PROMPT_DISMISS
 }

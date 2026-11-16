@@ -45,7 +45,7 @@ internal fun AgentSection(graph: AppGraph, onOpenRunningAgents: () -> Unit, onOp
     listOfNotNull(
       termuxVersion ?: stringResource(R.string.settings_termux_not_installed),
       hello?.let { current ->
-        current.piVersion?.let { stringResource(R.string.settings_pi_version, it) }
+        current.oopbotVersion?.let { stringResource(R.string.settings_oopbot_version, it) }
           ?: stringResource(R.string.settings_pi_missing)
       },
     ).joinToString(stringResource(R.string.separator_dot))
@@ -86,7 +86,7 @@ internal fun AgentSection(graph: AppGraph, onOpenRunningAgents: () -> Unit, onOp
     SettingsDivider()
     ReinstallRow(
       installing = installing,
-      expectedVersion = hostClient.expectedPiVersion,
+      expectedVersion = hostClient.expectedOopbotVersion,
       progressLine = progressLine,
       outcome = outcome,
       onReinstall = { reinstall() },

@@ -36,7 +36,7 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
     }
 
     let places_msg = json!({
-        "type": "pipkin_places",
+        "type": "oopbot_places",
         "places": places
     });
     writeln!(writer, "{}", serde_json::to_string(&places_msg)?)?;
@@ -61,11 +61,11 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
 
         let id = req["id"].as_i64().unwrap_or(0);
         match req["type"].as_str() {
-            Some("pipkin_list") | Some("oopbot_list") => {
+            Some("oopbot_list") => {
                 let raw_path = req["path"].as_str().unwrap_or(home);
                 let reply = match resolve_browse_path_checked(raw_path, home) {
                     None => json!({
-                        "type": "pipkin_listing",
+                        "type": "oopbot_listing",
                         "id": id,
                         "path": raw_path,
                         "parent": Value::Null,
@@ -87,7 +87,7 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
                             Err(e) => {
                                 let (msg, i18n) = describe_browse_io_error(&e);
                                 json!({
-                                    "type": "pipkin_listing",
+                                    "type": "oopbot_listing",
                                     "id": id,
                                     "path": resolved.to_string_lossy(),
                                     "parent": parent,
@@ -116,7 +116,7 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
                                 });
 
                                 json!({
-                                    "type": "pipkin_listing",
+                                    "type": "oopbot_listing",
                                     "id": id,
                                     "path": resolved.to_string_lossy(),
                                     "parent": parent,
@@ -129,7 +129,7 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_search") | Some("oopbot_search") => {
+            Some("oopbot_search") => {
                 let query = req["query"].as_str().unwrap_or("").trim();
                 let mut matched_paths = Vec::new();
                 if !query.is_empty() {
@@ -141,7 +141,7 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
                     }
                 }
                 let reply = json!({
-                    "type": "pipkin_search_results",
+                    "type": "oopbot_search_results",
                     "id": id,
                     "paths": matched_paths
                 });
@@ -390,7 +390,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
     mut writer: W,
 ) -> Result<(), BoxError> {
     // 1. Kirim sinyal siap
-    let ready = json!({ "type": "pipkin_files_ready" });
+    let ready = json!({ "type": "oopbot_files_ready" });
     writeln!(writer, "{}", serde_json::to_string(&ready)?)?;
     writer.flush()?;
 
@@ -416,14 +416,14 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
         let path = req["path"].as_str().unwrap_or(".");
 
         match req["type"].as_str() {
-            Some("pipkin_files_list") | Some("oopbot_files_list") => {
+            Some("oopbot_files_list") => {
                 let reply = match resolve_scoped_path(root, path) {
-                    Err(ferr) => files_err_reply("pipkin_files_listing", id, Some(path), &ferr, true),
+                    Err(ferr) => files_err_reply("oopbot_files_listing", id, Some(path), &ferr, true),
                     Ok((canonical_root, target_dir)) => {
                         match std::fs::read_dir(&target_dir) {
                             Err(e) => {
                                 let ferr = describe_files_io_error(&e);
-                                files_err_reply("pipkin_files_listing", id, Some(path), &ferr, true)
+                                files_err_reply("oopbot_files_listing", id, Some(path), &ferr, true)
                             }
                             Ok(dir_entries) => {
                                 let mut entries = Vec::new();
@@ -480,7 +480,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                 });
 
                                 json!({
-                                    "type": "pipkin_files_listing",
+                                    "type": "oopbot_files_listing",
                                     "id": id,
                                     "path": path,
                                     "entries": entries
@@ -492,9 +492,9 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_files_read") | Some("oopbot_files_read") => {
+            Some("oopbot_files_read") => {
                 let reply = match resolve_scoped_path(root, path) {
-                    Err(ferr) => files_err_reply("pipkin_files_file", id, Some(path), &ferr, false),
+                    Err(ferr) => files_err_reply("oopbot_files_file", id, Some(path), &ferr, false),
                     Ok((_canonical_root, file_path)) => {
                         const TEXT_LIMIT: u64 = 2 * 1024 * 1024; // 2 MiB
                         const IMAGE_LIMIT: u64 = 8 * 1024 * 1024; // 8 MiB
@@ -514,7 +514,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                         let meta = std::fs::metadata(&file_path);
                         match meta {
                             Ok(m) if m.is_dir() => files_err_reply(
-                                "pipkin_files_file",
+                                "oopbot_files_file",
                                 id,
                                 Some(path),
                                 &FilesErr::simple(
@@ -525,7 +525,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                 false,
                             ),
                             Ok(m) if !m.is_file() => files_err_reply(
-                                "pipkin_files_file",
+                                "oopbot_files_file",
                                 id,
                                 Some(path),
                                 &FilesErr::simple(
@@ -540,7 +540,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                 if is_image {
                                     if size > IMAGE_LIMIT {
                                         json!({
-                                            "type": "pipkin_files_file",
+                                            "type": "oopbot_files_file",
                                             "id": id,
                                             "path": path,
                                             "size": size,
@@ -551,7 +551,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                             Ok(bytes) => {
                                                 let b64 = encode_base64(&bytes);
                                                 json!({
-                                                    "type": "pipkin_files_file",
+                                                    "type": "oopbot_files_file",
                                                     "id": id,
                                                     "path": path,
                                                     "size": size,
@@ -561,7 +561,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                             }
                                             Err(e) => {
                                                 let ferr = describe_files_io_error(&e);
-                                                files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                                files_err_reply("oopbot_files_file", id, Some(path), &ferr, false)
                                             }
                                         }
                                     }
@@ -575,7 +575,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                         Ok(sniff_buf) => {
                                             let is_text = is_probably_text(&sniff_buf);
                                             json!({
-                                                "type": "pipkin_files_file",
+                                                "type": "oopbot_files_file",
                                                 "id": id,
                                                 "path": path,
                                                 "size": size,
@@ -584,7 +584,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                         }
                                         Err(e) => {
                                             let ferr = describe_files_io_error(&e);
-                                            files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                            files_err_reply("oopbot_files_file", id, Some(path), &ferr, false)
                                         }
                                     }
                                 } else {
@@ -592,7 +592,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                         Ok(bytes) => {
                                             if let Ok(text) = String::from_utf8(bytes) {
                                                 json!({
-                                                    "type": "pipkin_files_file",
+                                                    "type": "oopbot_files_file",
                                                     "id": id,
                                                     "path": path,
                                                     "size": size,
@@ -601,7 +601,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                                 })
                                             } else {
                                                 json!({
-                                                    "type": "pipkin_files_file",
+                                                    "type": "oopbot_files_file",
                                                     "id": id,
                                                     "path": path,
                                                     "size": size,
@@ -611,14 +611,14 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                         }
                                         Err(e) => {
                                             let ferr = describe_files_io_error(&e);
-                                            files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                            files_err_reply("oopbot_files_file", id, Some(path), &ferr, false)
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
                                 let ferr = describe_files_io_error(&e);
-                                files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                files_err_reply("oopbot_files_file", id, Some(path), &ferr, false)
                             }
                         }
                     }
@@ -626,7 +626,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
-            Some("pipkin_files_mkdir") | Some("oopbot_files_mkdir") => {
+            Some("oopbot_files_mkdir") => {
                 let name = req["name"].as_str().unwrap_or("").trim();
                 let reply = if name.is_empty()
                     || name == "."
@@ -640,10 +640,10 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                         "files_folder_name_invalid",
                         "Folder names cannot be empty, contain / or be . or ..",
                     );
-                    files_err_reply("pipkin_files_made", id, None, &ferr, false)
+                    files_err_reply("oopbot_files_made", id, None, &ferr, false)
                 } else {
                     match resolve_scoped_path(root, path) {
-                        Err(ferr) => files_err_reply("pipkin_files_made", id, None, &ferr, false),
+                        Err(ferr) => files_err_reply("oopbot_files_made", id, None, &ferr, false),
                         Ok((_canonical_root, target_parent)) => {
                             let new_folder = target_parent.join(name);
                             let created_rel = if path == "." || path.is_empty() {
@@ -653,7 +653,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                             };
                             match std::fs::create_dir(&new_folder) {
                                 Ok(()) => json!({
-                                    "type": "pipkin_files_made",
+                                    "type": "oopbot_files_made",
                                     "id": id,
                                     "path": created_rel
                                 }),
@@ -666,11 +666,11 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                             "args": { "name": name }
                                         }),
                                     };
-                                    files_err_reply("pipkin_files_made", id, None, &ferr, false)
+                                    files_err_reply("oopbot_files_made", id, None, &ferr, false)
                                 }
                                 Err(e) => {
                                     let ferr = describe_files_io_error(&e);
-                                    files_err_reply("pipkin_files_made", id, None, &ferr, false)
+                                    files_err_reply("oopbot_files_made", id, None, &ferr, false)
                                 }
                             }
                         }

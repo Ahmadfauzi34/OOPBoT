@@ -7,7 +7,7 @@ import org.json.JSONObject
 
 /** What the last connecting `host.mjs` reported about its Termux environment. */
 internal data class HostHello(
-  val piVersion: String?,
+  val oopbotVersion: String?,
   val nodeVersion: String,
   val configDir: String,
   val home: String,
@@ -16,7 +16,7 @@ internal data class HostHello(
 ) {
   companion object {
     fun from(hello: JSONObject) = HostHello(
-      piVersion = (hello.opt("oopbotVersion") ?: hello.opt("piVersion")) as? String,
+      oopbotVersion = hello.opt("oopbotVersion") as? String,
       nodeVersion = hello.optString("nodeVersion"),
       configDir = hello.optString("configDir"),
       home = hello.optString("home"),
@@ -33,7 +33,7 @@ internal data class BackupInfo(
   val name: String,
   val size: Long,
   val createdAt: Long,
-  val piVersion: String?,
+  val oopbotVersion: String?,
   val error: HostText?,
 ) {
   companion object {
@@ -41,7 +41,7 @@ internal data class BackupInfo(
       name = json.getString("name"),
       size = json.optLong("size"),
       createdAt = runCatching { Instant.parse(json.optString("createdAt")).toEpochMilli() }.getOrDefault(0L),
-      piVersion = json.opt("piVersion") as? String,
+      oopbotVersion = json.opt("oopbotVersion") as? String,
       error = HostText.field(json, "error"),
     )
   }

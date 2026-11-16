@@ -60,7 +60,7 @@ class PlaySetupTest {
       SecretKeySpec(SetupSession.pairingKey(session.token), "AES"),
       GCMParameterSpec(128, sealed.copyOfRange(0, 12)),
     )
-    cipher.updateAAD("pipkin-pair|${session.sid}".toByteArray())
+    cipher.updateAAD("oopbot-pair|${session.sid}".toByteArray())
     assertArrayEquals(session.key, cipher.doFinal(sealed.copyOfRange(12, sealed.size)))
     assertEquals(1, servedKeys.size)
     assertArrayEquals(session.key, servedKeys.single())
@@ -145,7 +145,7 @@ class PlaySetupTest {
       HelperAssets.RUN to "run",
       HelperAssets.START to "start",
       HelperAssets.INSTALLER to
-        "h=@HELPER_SHA256@ r=@RUN_SHA256@ s=@START_SHA256@ p=@PIPKIN_PACKAGE@ n=@PIPKIN_NAME@ ports=@HELPER_PORTS@\n",
+        "h=@HELPER_SHA256@ r=@RUN_SHA256@ s=@START_SHA256@ p=@OOPBOT_PACKAGE@ n=@OOPBOT_NAME@ ports=@HELPER_PORTS@\n",
     )
     val session = SetupSession.create(
       read = { files.getValue(it).toByteArray() },
@@ -165,8 +165,8 @@ class PlaySetupTest {
     const val SID = "00112233445566778899aabbccddeeff"
     val TOKEN = ByteArray(32) { 0x11 }
     val KEY = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".hexToByteArray()
-    const val PAIRING_KEY = "5f0176d40fe08c42eb95805e16f536883a652dc2778578b27bb197ccf0d9e34c"
-    const val PAIRING_BODY = "222222222222222222222222319d2a307af21c87b8dbc08698713d1eca98a069" +
-      "61f19086e5b493fa03650cce9202f9300b110c5b7284c10e82768b8e"
+    const val PAIRING_KEY = "820c287eadee847ce6a8273d681e378e10982b67cb5cc40651a9400797005b0a"
+    const val PAIRING_BODY = "222222222222222222222222aa7ecbd8e22b36928599e2b343d73b0ede989399" +
+      "a42852de7d1a85ae54a33ead63d625268421e196cc26929d9a4d623c"
   }
 }

@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/** The `runs` message of the `pipkin-subagents` extension, and telling whose question the chat's card shows. */
+/** The `runs` message of the `oopbot-subagents` extension, and telling whose question the chat's card shows. */
 class SubagentRunsTest {
   @Test
   fun aRunIsReadWithEveryField() {

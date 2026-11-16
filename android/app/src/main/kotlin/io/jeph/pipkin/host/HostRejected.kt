@@ -5,7 +5,7 @@ import io.jeph.pipkin.R
 import org.json.JSONObject
 
 /**
- * The host ran the operation and refused it; [code] is the host's machine code (`pi_version`, `bad_id`, …) and
+ * The host ran the operation and refused it; [code] is the host's machine code (`oopbot_version`, `bad_id`, …) and
  * [englishError] its reason as the host wrote it, for logs. [error] is that reason in the app's language, read when
  * it's shown so it follows a change of language; [message] is the same. [text] is null when the host gave no reason;
  * its arguments may say more, such as the form field a validation failure is about.
@@ -17,7 +17,7 @@ internal class HostRejected(val code: String, val englishError: String, val text
   override val message: String get() = error
 
   companion object {
-    /** Null for an `ok:true` `pipkin_result`. */
+    /** Null for an `ok:true` `oopbot_result`. */
     fun from(result: JSONObject): HostRejected? {
       if (result.optBoolean("ok")) return null
       val code = result.optString("code", "error")

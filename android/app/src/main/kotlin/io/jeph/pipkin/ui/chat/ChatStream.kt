@@ -80,7 +80,7 @@ private const val FOLLOW_OFFSET = 1_000_000
  */
 private const val MAX_HOLD_MILLIS = 500L
 
-private const val BANNER_KEY = "pipkin:banner"
+private const val BANNER_KEY = "oopbot:banner"
 
 private val EMPTY_STATE_ICON_SIZE = 72.dp
 

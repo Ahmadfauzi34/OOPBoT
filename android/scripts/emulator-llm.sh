@@ -89,7 +89,7 @@ run_through_helper() {
 	# Pipkin Dev's helper ports; the release's are 47310-47314.
 	for port in 47320 47321 47322 47323 47324; do
 		local_port=$(adb -s "$serial" forward tcp:0 "tcp:$port")
-		if node "$work/pipkin-helper.mjs" client --port "$local_port" --key-file "$work/key" \
+		if node "$work/oopbot-helper.mjs" client --port "$local_port" --key-file "$work/key" \
 			-- -c "exec $TERMUX_BIN/node \"\$1\" \"\$2\"" pipkin-llm "$stage/merge.mjs" "$name" </dev/null >/dev/null 2>"$work/error"; then
 			adb -s "$serial" forward --remove "tcp:$local_port"
 			return 0

@@ -86,12 +86,9 @@ fn spawn_host(
         .current_dir(&env_dir.workspace)
         .env("HOME", &env_dir.home)
         .env("OOPBOT_CONFIG_DIR", &env_dir.config)
-        .env("PI_CODING_AGENT_DIR", &env_dir.config)
         .env("PREFIX", &env_dir.prefix)
         .env("OOPBOT_TOKEN", token)
-        .env_remove("PIPKIN_TOKEN")
         .env_remove("OOPBOT_API_KEY")
-        .env_remove("PIPKIN_API_KEY")
         .env_remove("GEMINI_API_KEY")
         .env_remove("OPENAI_API_KEY")
         .env_remove("ANTHROPIC_API_KEY")
@@ -121,10 +118,10 @@ fn accept_wire(
     let writer = BufWriter::new(write_stream);
 
     let mut line = String::new();
-    let n = reader.read_line(&mut line).expect("read pipkin_hello");
-    assert!(n > 0, "expected pipkin_hello line");
-    let hello: Value = serde_json::from_str(line.trim()).expect("parse pipkin_hello JSON");
-    assert_eq!(hello["type"], "pipkin_hello");
+    let n = reader.read_line(&mut line).expect("read oopbot_hello");
+    assert!(n > 0, "expected oopbot_hello line");
+    let hello: Value = serde_json::from_str(line.trim()).expect("parse oopbot_hello JSON");
+    assert_eq!(hello["type"], "oopbot_hello");
     assert_eq!(hello["protocol"], 1);
     assert_eq!(hello["mode"], expected_mode);
     assert_eq!(hello["token"], expected_token);
@@ -167,7 +164,7 @@ fn reg012_binary_wire_ensure_and_unsupported_modes() {
     write_json_line(
         &mut writer,
         &json!({
-            "type": "pipkin_request",
+            "type": "oopbot_request",
             "params": { "expectedVersion": env!("CARGO_PKG_VERSION") }
         }),
     );
@@ -175,7 +172,7 @@ fn reg012_binary_wire_ensure_and_unsupported_modes() {
     let mut result_msg = Value::Null;
     for _ in 0..8 {
         let msg = read_json_line(&mut reader);
-        if msg["type"] == "pipkin_result" {
+        if msg["type"] == "oopbot_result" {
             result_msg = msg;
             break;
         }
@@ -191,9 +188,9 @@ fn reg012_binary_wire_ensure_and_unsupported_modes() {
     let port2 = listener2.local_addr().unwrap().port();
     let child2 = spawn_host(&env_dir, "package_install", port2, "tok-pkg");
     let (_hello2, mut reader2, mut writer2) = accept_wire(&listener2, "package_install", "tok-pkg");
-    write_json_line(&mut writer2, &json!({ "type": "pipkin_request", "params": {} }));
+    write_json_line(&mut writer2, &json!({ "type": "oopbot_request", "params": {} }));
     let res2 = read_json_line(&mut reader2);
-    assert_eq!(res2["type"], "pipkin_result");
+    assert_eq!(res2["type"], "oopbot_result");
     assert_eq!(res2["ok"], false);
     assert_eq!(res2["code"], "unsupported");
     drop(writer2);
@@ -209,15 +206,15 @@ fn reg012_binary_wire_utility_auth_backups_and_unknown_op() {
     let child = spawn_host(&env_dir, "utility", port, "tok-util");
 
     let (_hello, mut reader, mut writer) = accept_wire(&listener, "utility", "tok-util");
-    write_json_line(&mut writer, &json!({ "type": "pipkin_request", "params": {} }));
+    write_json_line(&mut writer, &json!({ "type": "oopbot_request", "params": {} }));
 
     let ready = read_json_line(&mut reader);
-    assert_eq!(ready["type"], "pipkin_utility_ready");
+    assert_eq!(ready["type"], "oopbot_utility_ready");
 
     // 1. auth_status on clean config
     write_json_line(
         &mut writer,
-        &json!({ "type": "pipkin_utility_request", "id": 1, "op": "auth_status", "params": {} }),
+        &json!({ "type": "oopbot_utility_request", "id": 1, "op": "auth_status", "params": {} }),
     );
     let auth_res = read_json_line(&mut reader);
     assert_eq!(auth_res["id"], 1);
@@ -227,7 +224,7 @@ fn reg012_binary_wire_utility_auth_backups_and_unknown_op() {
     // 2. backups on clean config -> empty list
     write_json_line(
         &mut writer,
-        &json!({ "type": "pipkin_utility_request", "id": 2, "op": "backups", "params": {} }),
+        &json!({ "type": "oopbot_utility_request", "id": 2, "op": "backups", "params": {} }),
     );
     let backups_res = read_json_line(&mut reader);
     assert_eq!(backups_res["id"], 2);
@@ -237,7 +234,7 @@ fn reg012_binary_wire_utility_auth_backups_and_unknown_op() {
     // 3. unknown_op must fail closed
     write_json_line(
         &mut writer,
-        &json!({ "type": "pipkin_utility_request", "id": 3, "op": "nonexistent_op", "params": {} }),
+        &json!({ "type": "oopbot_utility_request", "id": 3, "op": "nonexistent_op", "params": {} }),
     );
     let unk_res = read_json_line(&mut reader);
     assert_eq!(unk_res["id"], 3);
@@ -261,17 +258,17 @@ fn reg012_binary_wire_files_and_git_handshakes() {
     let port = listener.local_addr().unwrap().port();
     let child = spawn_host(&env_dir, "files", port, "tok-files");
     let (_hello, mut reader, mut writer) = accept_wire(&listener, "files", "tok-files");
-    write_json_line(&mut writer, &json!({ "type": "pipkin_request", "params": {} }));
+    write_json_line(&mut writer, &json!({ "type": "oopbot_request", "params": {} }));
 
     let ready = read_json_line(&mut reader);
-    assert_eq!(ready["type"], "pipkin_files_ready");
+    assert_eq!(ready["type"], "oopbot_files_ready");
 
     write_json_line(
         &mut writer,
-        &json!({ "type": "pipkin_files_list", "id": 10, "root": root_str, "path": "." }),
+        &json!({ "type": "oopbot_files_list", "id": 10, "root": root_str, "path": "." }),
     );
     let listing = read_json_line(&mut reader);
-    assert_eq!(listing["type"], "pipkin_files_listing");
+    assert_eq!(listing["type"], "oopbot_files_listing");
     assert_eq!(listing["id"], 10);
     assert!(listing["entries"]
         .as_array()
@@ -281,20 +278,20 @@ fn reg012_binary_wire_files_and_git_handshakes() {
 
     write_json_line(
         &mut writer,
-        &json!({ "type": "pipkin_files_read", "id": 11, "root": root_str, "path": "hello.txt" }),
+        &json!({ "type": "oopbot_files_read", "id": 11, "root": root_str, "path": "hello.txt" }),
     );
     let read_res = read_json_line(&mut reader);
-    assert_eq!(read_res["type"], "pipkin_files_file");
+    assert_eq!(read_res["type"], "oopbot_files_file");
     assert_eq!(read_res["id"], 11);
     assert_eq!(read_res["kind"], "text");
     assert_eq!(read_res["content"], "wire-file-body");
 
     write_json_line(
         &mut writer,
-        &json!({ "type": "pipkin_files_read", "id": 12, "root": root_str, "path": "../../etc/passwd" }),
+        &json!({ "type": "oopbot_files_read", "id": 12, "root": root_str, "path": "../../etc/passwd" }),
     );
     let bad_res = read_json_line(&mut reader);
-    assert_eq!(bad_res["type"], "pipkin_files_file");
+    assert_eq!(bad_res["type"], "oopbot_files_file");
     assert_eq!(bad_res["id"], 12);
     assert_eq!(bad_res["errorCode"], "outside_workspace");
 
@@ -308,17 +305,17 @@ fn reg012_binary_wire_files_and_git_handshakes() {
     let port_git = listener_git.local_addr().unwrap().port();
     let child_git = spawn_host(&env_dir, "git", port_git, "tok-git");
     let (_hello_g, mut reader_g, mut writer_g) = accept_wire(&listener_git, "git", "tok-git");
-    write_json_line(&mut writer_g, &json!({ "type": "pipkin_request", "params": {} }));
+    write_json_line(&mut writer_g, &json!({ "type": "oopbot_request", "params": {} }));
 
     let ready_g = read_json_line(&mut reader_g);
-    assert_eq!(ready_g["type"], "pipkin_git_ready");
+    assert_eq!(ready_g["type"], "oopbot_git_ready");
 
     write_json_line(
         &mut writer_g,
-        &json!({ "type": "pipkin_git_detect", "id": 20, "root": root_str, "trusted": true }),
+        &json!({ "type": "oopbot_git_detect", "id": 20, "root": root_str, "trusted": true }),
     );
     let det = read_json_line(&mut reader_g);
-    assert_eq!(det["type"], "pipkin_git_detected");
+    assert_eq!(det["type"], "oopbot_git_detected");
     assert_eq!(det["id"], 20);
     assert!(det.get("git").is_some());
 
@@ -339,25 +336,25 @@ fn reg012_binary_wire_rpc_get_state_abort_and_clean_exit() {
     write_json_line(
         &mut writer,
         &json!({
-            "type": "pipkin_request",
+            "type": "oopbot_request",
             "params": {
                 "cwd": env_dir.workspace.to_string_lossy(),
-                "pipkinExtensions": [{ "name": "pipkin-todo" }]
+                "oopbotExtensions": [{ "name": "oopbot-todo" }]
             }
         }),
     );
 
-    // Wait for pipkin:hello channel banner emitted by RpcServer::run_loop
+    // Wait for oopbot:hello channel banner emitted by RpcServer::run_loop
     let mut saw_hello = false;
     for _ in 0..8 {
         let msg = read_json_line(&mut reader);
-        if msg["type"] == "pipkin_channel" && msg["topic"] == "pipkin:hello" {
+        if msg["type"] == "oopbot_channel" && msg["topic"] == "oopbot:hello" {
             saw_hello = true;
             assert_eq!(msg["data"]["oopbotVersion"], env!("CARGO_PKG_VERSION"));
             break;
         }
     }
-    assert!(saw_hello, "expected pipkin:hello banner in RPC mode");
+    assert!(saw_hello, "expected oopbot:hello banner in RPC mode");
 
     write_json_line(
         &mut writer,
@@ -400,14 +397,14 @@ fn reg012_binary_wire_rpc_get_state_abort_and_clean_exit() {
             break;
         }
         if let Ok(v) = serde_json::from_str::<Value>(line.trim()) {
-            if v["type"] == "pipkin_exit" {
+            if v["type"] == "oopbot_exit" {
                 assert_eq!(v["code"], 0);
                 saw_exit = true;
                 break;
             }
         }
     }
-    assert!(saw_exit, "expected pipkin_exit upon socket EOF");
+    assert!(saw_exit, "expected oopbot_exit upon socket EOF");
     drop(reader);
     assert!(child.wait_clean().success());
 }

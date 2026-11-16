@@ -134,8 +134,8 @@ private val templates: Map<String, Template> = mapOf(
 
   "backup_progress_backed_up" to Template.Plural(R.plurals.host_backup_progress_backed_up),
   "backup_progress_restored" to Template.Plural(R.plurals.host_backup_progress_restored),
-  "backup_not_pipkin" to Template.Text(R.string.host_backup_not_pipkin),
-  "backup_from_newer_pipkin" to Template.Text(R.string.host_backup_from_newer_pipkin),
+  "backup_not_oopbot" to Template.Text(R.string.host_backup_not_oopbot),
+  "backup_from_newer_oopbot" to Template.Text(R.string.host_backup_from_newer_oopbot),
   "backup_unreadable" to Template.Text(R.string.host_backup_unreadable),
   "backup_missing" to Template.Text(R.string.host_backup_missing),
   "backup_path_outside_config" to Template.Text(R.string.host_backup_path_outside_config, listOf("path")),

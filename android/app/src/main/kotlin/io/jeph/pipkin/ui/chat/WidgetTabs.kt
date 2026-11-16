@@ -295,7 +295,7 @@ private fun SubagentsTabChip(tab: SubagentsTab, modifier: Modifier) {
 }
 
 /** The Subagents tab's key among the widgets' in the strip; no widget key starts with Pipkin's own prefix. */
-private const val SUBAGENTS_TAB_KEY = "pipkin:subagents"
+private const val SUBAGENTS_TAB_KEY = "oopbot:subagents"
 
 /**
  * One tab: a pill with an icon for its edge, the label, and a chevron while it's open or a yellow dot when the widget

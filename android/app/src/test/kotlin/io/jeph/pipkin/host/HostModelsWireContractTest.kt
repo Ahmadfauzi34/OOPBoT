@@ -31,7 +31,7 @@ class HostModelsWireContractTest {
   }
 
   @Test
-  fun hostHelloParsesOopbotAndLegacyPiVersion() {
+  fun hostHelloParsesOopbotVersion() {
     val modern = HostHello.from(
       JSONObject()
         .put("oopbotVersion", "0.5.5")
@@ -40,13 +40,13 @@ class HostModelsWireContractTest {
         .put("home", "/data/data/com.termux/files/home")
         .put("sharedStorage", true),
     )
-    assertEquals("0.5.5", modern.piVersion)
+    assertEquals("0.5.5", modern.oopbotVersion)
     assertEquals("oopbot-native", modern.nodeVersion)
     assertTrue(modern.sharedStorage)
 
-    val legacy = HostHello.from(JSONObject().put("piVersion", "0.5.4"))
-    assertEquals("0.5.4", legacy.piVersion)
-    assertFalse(legacy.sharedStorage)
+    val empty = HostHello.from(JSONObject().put("piVersion", "0.5.4"))
+    assertNull(empty.oopbotVersion)
+    assertFalse(empty.sharedStorage)
   }
 
   @Test
@@ -56,12 +56,12 @@ class HostModelsWireContractTest {
         .put("name", "backup-2026-11-13.tar.gz")
         .put("size", 4096)
         .put("createdAt", "2026-11-13T10:00:00Z")
-        .put("piVersion", "0.5.5"),
+        .put("oopbotVersion", "0.5.5"),
     )
     assertEquals("backup-2026-11-13.tar.gz", validBackup.name)
     assertEquals(4096L, validBackup.size)
     assertTrue(validBackup.createdAt > 0L)
-    assertEquals("0.5.5", validBackup.piVersion)
+    assertEquals("0.5.5", validBackup.oopbotVersion)
     assertNull(validBackup.error)
 
     val corruptBackup = BackupInfo.from(
@@ -156,7 +156,7 @@ class HostModelsWireContractTest {
     out.flush()
 
     val channel = withTimeout(TIMEOUT) { deferred.await() }
-    assertEquals("0.5.5", HostHello.from(channel.hello).piVersion)
+    assertEquals("0.5.5", HostHello.from(channel.hello).oopbotVersion)
 
     channel.send(
       JSONObject()

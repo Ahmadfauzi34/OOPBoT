@@ -36,10 +36,10 @@ const children: ChildProcess[] = [];
 const servers: Server[] = [];
 
 beforeEach(async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pipkin-helper-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "oopbot-helper-"));
   const prefix = path.join(root, "usr");
   const home = path.join(root, "home");
-  const dir = path.join(home, ".pipkin", "helper");
+  const dir = path.join(home, ".oopbot", "helper");
   const amLog = path.join(root, "am.log");
   await mkdir(path.join(prefix, "bin"), { recursive: true });
   await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -396,19 +396,19 @@ describe("helper pair", () => {
   const sid = "00112233445566778899aabbccddeeff";
   const token = "11".repeat(32);
   const body =
-    "222222222222222222222222319d2a307af21c87b8dbc08698713d1eca98a06961f19086e5b493fa03650cce9202f9300b110c5b7284c10e82768b8e";
+    "222222222222222222222222aa7ecbd8e22b36928599e2b343d73b0ede989399a42852de7d1a85ae54a33ead63d625268421e196cc26929d9a4d623c";
   const vectorKey = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
   async function pairWith(status: number): Promise<{ code: number | null; stderr: string }> {
     const server = createHttpServer((request, response) => {
-      response.writeHead(request.url === `/pipkin/${sid}/key` ? status : 404, { "Cache-Control": "no-store" });
+      response.writeHead(request.url === `/oopbot/${sid}/key` ? status : 404, { "Cache-Control": "no-store" });
       response.end(status === 200 ? body : "");
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     try {
-      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/pipkin/${sid}`;
-      const child = runHelper(["pair"], { PIPKIN_URL: url, PIPKIN_TOKEN: token });
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/oopbot/${sid}`;
+      const child = runHelper(["pair"], { OOPBOT_URL: url, OOPBOT_TOKEN: token });
       let stderr = "";
       child.stderr?.on("data", (chunk: Buffer) => {
         stderr += chunk.toString();
@@ -420,7 +420,7 @@ describe("helper pair", () => {
     }
   }
 
-  it("writes the key from Pipkin", async () => {
+  it("writes the key from OOPBoT", async () => {
     await rm(file("key"));
     expect(await pairWith(200)).toEqual({ code: 0, stderr: "" });
     expect(await readFile(file("key"), "utf8")).toBe(`${vectorKey}\n`);
@@ -432,9 +432,9 @@ describe("helper pair", () => {
     expect(await readFile(file("key"), "utf8")).toBe(`${KEY.toString("hex")}\n`);
   });
 
-  it("fails with a Pipkin message on other answers", async () => {
+  it("fails with an OOPBoT message on other answers", async () => {
     const { code, stderr } = await pairWith(500);
     expect(code).toBe(1);
-    expect(stderr).toMatch(/^Pipkin: .+\n$/);
+    expect(stderr).toMatch(/^OOPBoT: .+\n$/);
   });
 });

@@ -67,11 +67,9 @@ internal class FolderBrowser(
     } catch (error: IOException) {
       throw HostFailure.Disconnected(error)
     }
-    val altReplyType = "oopbot_" + replyType.removePrefix("pipkin_")
     withTimeoutOrNull(timeoutMillis) {
       channel.lines.firstOrNull {
-        val type = it.optString("type")
-        (type == replyType || type == altReplyType) && it.optLong("id") == id
+        it.optString("type") == replyType && it.optLong("id") == id
       } ?: throw HostFailure.Disconnected()
     } ?: throw HostFailure.Timeout()
   }
@@ -79,11 +77,11 @@ internal class FolderBrowser(
   override fun close() = channel.close()
 
   companion object {
-    private const val LIST = "pipkin_list"
-    private const val LISTING = "pipkin_listing"
-    private const val PLACES = "pipkin_places"
-    private const val SEARCH = "pipkin_search"
-    private const val SEARCH_RESULTS = "pipkin_search_results"
+    private const val LIST = "oopbot_list"
+    private const val LISTING = "oopbot_listing"
+    private const val PLACES = "oopbot_places"
+    private const val SEARCH = "oopbot_search"
+    private const val SEARCH_RESULTS = "oopbot_search_results"
     private const val LIST_TIMEOUT_MILLIS = 15_000L
 
     /** Past `ssh`'s 15-second connect timeout, so a host that doesn't answer is reported by `ssh` rather than by this. */
@@ -92,13 +90,13 @@ internal class FolderBrowser(
     /** A search walks up to 20,000 folders per place, which takes a while on shared storage. */
     private const val SEARCH_TIMEOUT_MILLIS = 60_000L
 
-    /** Waits for the host's `pipkin_places`; a refusal arrives as `pipkin_result` instead. */
+    /** Waits for the host's `oopbot_places`; a refusal arrives as `oopbot_result` instead. */
     suspend fun start(channel: HostChannel, remote: Boolean): FolderBrowser {
       val timeoutMillis = if (remote) REMOTE_LIST_TIMEOUT_MILLIS else LIST_TIMEOUT_MILLIS
       val line = withTimeoutOrNull(timeoutMillis) {
         channel.lines.firstOrNull {
           val type = it.optString("type")
-          type == PLACES || type == "oopbot_places" || HostProtocol.isResult(type)
+          type == PLACES || HostProtocol.isResult(type)
         } ?: throw HostFailure.Disconnected()
       } ?: throw HostFailure.Timeout()
       if (HostProtocol.isResult(line.optString("type"))) throw HostRejected.from(line) ?: HostFailure.Disconnected()

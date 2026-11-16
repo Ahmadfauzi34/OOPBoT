@@ -277,7 +277,7 @@ private fun termuxSetupSpec(state: OnboardingState, onAction: (SetupAction) -> U
 @Composable
 private fun installPiSpec(state: OnboardingState, onAction: (SetupAction) -> Unit): StepSpec {
   val status = state.status(SetupStep.InstallPi)
-  val version = state.expectedPiVersion
+  val version = state.expectedOopbotVersion
   val install = StepButton(stringResource(R.string.onboarding_install_action), state.canLaunchHost) {
     onAction(SetupAction.InstallPi)
   }
@@ -312,7 +312,7 @@ private fun installPiSpec(state: OnboardingState, onAction: (SetupAction) -> Uni
 
 @Composable
 private fun signInSpec(state: OnboardingState, onAction: (SetupAction) -> Unit): StepSpec {
-  val enabled = state.piReady
+  val enabled = state.agentReady
   return StepSpec(
     step = SetupStep.SignIn,
     icon = R.drawable.ic_lucide_key_round,

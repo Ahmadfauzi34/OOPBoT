@@ -225,7 +225,7 @@ private fun BackupRow(backup: BackupInfo, enabled: Boolean, onRestore: () -> Uni
   val subtitle =
     when {
       backup.error != null -> stringResource(R.string.backups_unreadable, backup.name, backup.error.localized())
-      backup.piVersion != null -> "$size · ${stringResource(R.string.settings_pi_version, backup.piVersion)}"
+      backup.oopbotVersion != null -> "$size · ${stringResource(R.string.settings_oopbot_version, backup.oopbotVersion)}"
       else -> size
     }
   SettingsRow(title = backupTime(context, backup), subtitle = subtitle) {

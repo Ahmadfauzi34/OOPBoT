@@ -77,12 +77,12 @@ class OnboardingStateTest {
 
   @Test
   fun anEarlierHostDoesNotCountOnceTermuxIsRemovedOrReplaced() {
-    assertTrue(state(fdroid(runCommand = true), hello = READY).piReady)
+    assertTrue(state(fdroid(runCommand = true), hello = READY).agentReady)
     val removed = checks(Status.NotInstalled)
     assertEquals(StepStatus.Pending, state(removed, hello = READY).status(SetupStep.TermuxSetup))
     assertEquals(StepStatus.Pending, state(removed, hello = READY).status(SetupStep.InstallPi))
     val replaced = fdroid(runCommand = true).copy(termuxChanged = true)
-    assertFalse(state(replaced, hello = READY).piReady)
+    assertFalse(state(replaced, hello = READY).agentReady)
     // Setup finished for the old Termux; the new one waits for the command to be copied for it.
     assertFalse(state(replaced, complete = true, hello = READY).shouldAutoInstall)
     assertTrue(state(replaced, complete = true, copied = true, hello = READY).shouldAutoInstall)
@@ -169,7 +169,7 @@ class OnboardingStateTest {
   ) = OnboardingState(
     checks = checks,
     hello = hello,
-    expectedPiVersion = PI_VERSION,
+    expectedOopbotVersion = OOPBOT_VERSION,
     setupComplete = complete,
     commandCopied = copied,
     passedPages = passed,
@@ -181,8 +181,8 @@ class OnboardingStateTest {
   )
 
   private companion object {
-    const val PI_VERSION = "1.5.0"
+    const val OOPBOT_VERSION = "1.5.0"
     val READY =
-      HostHello(piVersion = PI_VERSION, nodeVersion = "22.19.0", configDir = "", home = "", sharedStorage = true)
+      HostHello(oopbotVersion = OOPBOT_VERSION, nodeVersion = "22.19.0", configDir = "", home = "", sharedStorage = true)
   }
 }

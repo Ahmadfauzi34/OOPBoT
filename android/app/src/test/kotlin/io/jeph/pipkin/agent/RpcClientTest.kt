@@ -72,7 +72,7 @@ class RpcClientTest {
   fun closeFailsWaitingAndLaterCallsWithTheFirstReason() = runBlocking {
     val waiting = async { rpcError { rpc.call("get_state") } }
     sent.receive()
-    val refusal = HostRejected("pi_version", "Pi 1.0.0 is installed")
+    val refusal = HostRejected("oopbot_version", "OOPBoT 1.0.0 is installed")
     rpc.close(refusal)
     rpc.close()
 

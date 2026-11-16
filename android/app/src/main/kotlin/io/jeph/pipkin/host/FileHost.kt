@@ -98,9 +98,9 @@ internal class FileHost(
   }
 
   private companion object {
-    const val LIST = "pipkin_files_list"
-    const val READ = "pipkin_files_read"
-    const val MKDIR = "pipkin_files_mkdir"
+    const val LIST = "oopbot_files_list"
+    const val READ = "oopbot_files_read"
+    const val MKDIR = "oopbot_files_mkdir"
     const val LIST_TIMEOUT_MILLIS = 15_000L
 
     /** A 2 MiB text file or 8 MiB image crosses Termux's socket as one JSON line. */
