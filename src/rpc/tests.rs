@@ -107,7 +107,7 @@ fn load_providers_uses_scanned_models_without_mixing_hardcoded_models() {
         cost: None,
     }];
 
-    save_scanned_models_to_config(&tmp, "google", &scanned, "test-api-key");
+    save_scanned_models_to_config(&tmp, "google", &scanned, "test-api-key").unwrap();
 
     let cat = ModelCatalog::builtin();
     let providers = load_providers(&tmp, &cat);
@@ -2965,4 +2965,112 @@ async fn todo_slash_command_lists_and_clears_session_todos() {
         .render_widget("todos")
         .is_none());
 }
+
+#[tokio::test]
+async fn reg_err_transient_llm_error_covers_network_and_529_without_matching_4xx() {
+    for transient in [
+        "HTTP 529 overloaded",
+        "429 Too Many Requests",
+        "Service Temporarily Unavailable",
+        "connection reset by peer",
+        "connection closed before message completed",
+        "broken pipe",
+        "request timeout after 30s",
+        "error sending request for url",
+        "empty response from provider",
+    ] {
+        assert!(
+            is_transient_llm_error(transient),
+            "expected transient match for: {}",
+            transient
+        );
+    }
+
+    for fatal in [
+        "HTTP 400 Bad Request: invalid field",
+        "HTTP 401 Unauthorized: invalid api key",
+        "HTTP 403 Forbidden: billing disabled",
+        "HTTP 404 Not Found: model does not exist",
+    ] {
+        assert!(
+            !is_transient_llm_error(fatal),
+            "did not expect transient match for: {}",
+            fatal
+        );
+    }
+}
+
+#[tokio::test]
+async fn reg_err_rpc_config_write_failure_is_returned_and_reported_by_slash_command() {
+    let blocked = TempConfigGuard::new("rpc_write_blocked");
+    std::fs::create_dir_all(blocked.path().join("settings.json")).unwrap();
+    std::fs::create_dir_all(blocked.path().join("models.json")).unwrap();
+    std::fs::create_dir_all(blocked.path().join("auth.json")).unwrap();
+
+    assert!(save_settings_fields(blocked.path(), Some("google"), Some("gemini-2.5-flash"), None).is_err());
+    assert!(save_model_override_to_config(
+        blocked.path(),
+        "google",
+        "gemini-2.5-flash",
+        &json!({ "maxTokens": 4096 })
+    )
+    .is_err());
+    assert!(save_auth_key(blocked.path(), "google", "k", None).is_err());
+
+    let tmp = TempConfigGuard::new("rpc_slash_save_err");
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+    let models_path = tmp.path().join("models.json");
+    if models_path.exists() {
+        let _ = std::fs::remove_file(&models_path);
+    }
+    std::fs::create_dir_all(&models_path).unwrap();
+
+    let reply = server
+        .runtime
+        .handle_slash_command("/max-tokens 2048")
+        .await
+        .unwrap();
+    assert!(
+        reply.contains("Gagal menyimpan"),
+        "expected failure reply when models.json write fails, got: {}",
+        reply
+    );
+    assert!(
+        !reply.contains("berhasil disimpan"),
+        "must not falsely claim success: {}",
+        reply
+    );
+}
+
+#[test]
+fn reg_err_poisoned_mutex_recovers_instead_of_panicking() {
+    let tmp = TempConfigGuard::new("rpc_poison_recover");
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let ui_state = Arc::clone(&server.runtime.ui_state);
+    let handle = std::thread::spawn(move || {
+        let _guard = ui_state.lock().unwrap();
+        panic!("simulated panic holding ui_state lock");
+    });
+    assert!(handle.join().is_err());
+    assert!(server.runtime.ui_state.is_poisoned());
+
+    let state = server.runtime.state_json();
+    assert!(state["model"].is_object());
+}
+
 

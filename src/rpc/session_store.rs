@@ -10,8 +10,8 @@ use std::sync::atomic::Ordering;
 impl RpcRuntime {
     pub(super) fn ensure_session_header(&self) {
         let (session_file, session_id, parent_session) = {
-            let m = self.mutable.lock().unwrap();
-            let ps = self.ui_state.lock().unwrap().parent_session.clone();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+            let ps = self.ui_state.lock().unwrap_or_else(|e| e.into_inner()).parent_session.clone();
             (m.session_file.clone(), m.session_id.clone(), ps)
         };
         if session_file.exists() {

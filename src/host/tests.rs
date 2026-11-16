@@ -1393,3 +1393,153 @@ fn reg007_terminal_pty_echo_and_resize_without_tmp_hardcode() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn reg_err_host_config_write_failures_return_io_error_instead_of_ok_true() {
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_host_io_err_{}_{}", epoch_ms(), seq));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    // Place directories at models.json, settings.json, auth.json so rename/write deterministically fails
+    std::fs::create_dir_all(temp_dir.join("models.json")).unwrap();
+    std::fs::create_dir_all(temp_dir.join("settings.json")).unwrap();
+    std::fs::create_dir_all(temp_dir.join("auth.json")).unwrap();
+
+    let prov = handle_provider_save(
+        &temp_dir,
+        &json!({ "id": "custom", "baseUrl": "https://example.com/v1", "apiKey": "sk-1", "models": [] }),
+    );
+    assert_eq!(prov["ok"], false);
+    assert_eq!(prov["code"], "io_error");
+
+    let def = handle_save_default_model(
+        &temp_dir,
+        &json!({ "provider": "google", "modelId": "gemini-2.5-flash" }),
+    );
+    assert_eq!(def["ok"], false);
+    assert_eq!(def["code"], "io_error");
+
+    // Seed valid JSON object check for logout: use read-only directory blocker
+    let logout_dir = temp_dir.join("logout_ro");
+    std::fs::create_dir_all(&logout_dir).unwrap();
+    std::fs::write(logout_dir.join("auth.json"), r#"{"google":{"apiKey":"k"}}"#).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&logout_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let out = handle_logout(&logout_dir, &json!({ "providerId": "google" }));
+        std::fs::set_permissions(&logout_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(out["ok"], false);
+        assert_eq!(out["code"], "io_error");
+    }
+
+    let sub_err = handle_subscription_save(
+        &temp_dir,
+        &json!({ "providerId": "google", "models": [] }),
+    );
+    assert_eq!(sub_err["ok"], false);
+    assert_eq!(sub_err["code"], "io_error");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn reg_err_browse_and_files_report_missing_non_dir_fifo_and_name_taken() {
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_bf_err_{}_{}", epoch_ms(), seq));
+    let ws = temp_dir.join("ws");
+    std::fs::create_dir_all(ws.join("existing_dir")).unwrap();
+    std::fs::write(ws.join("regular.txt"), "hello").unwrap();
+
+    // 1. Browse loop: relative path -> browse_path_not_absolute; file path -> not_a_folder; missing -> browse_folder_missing
+    let browse_reqs = format!(
+        "{{\"type\":\"pipkin_list\",\"id\":1,\"path\":\"relative/dir\"}}\n\
+         {{\"type\":\"pipkin_list\",\"id\":2,\"path\":\"{}\"}}\n\
+         {{\"type\":\"pipkin_list\",\"id\":3,\"path\":\"{}\"}}\n",
+        ws.join("regular.txt").to_string_lossy(),
+        ws.join("no_such_dir").to_string_lossy(),
+    );
+    let mut browse_out = Vec::new();
+    run_browse_loop(
+        &temp_dir.to_string_lossy(),
+        Cursor::new(browse_reqs.into_bytes()),
+        &mut browse_out,
+    )
+    .unwrap();
+    let browse_lines: Vec<Value> = String::from_utf8_lossy(&browse_out)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect();
+    let b1 = browse_lines.iter().find(|v| v["id"] == 1).unwrap();
+    assert_eq!(b1["errorI18n"]["key"], "browse_path_not_absolute");
+    let b2 = browse_lines.iter().find(|v| v["id"] == 2).unwrap();
+    assert_eq!(b2["errorI18n"]["key"], "not_a_folder");
+    let b3 = browse_lines.iter().find(|v| v["id"] == 3).unwrap();
+    assert_eq!(b3["errorI18n"]["key"], "browse_folder_missing");
+
+    // 2. Files loop: FIFO non-regular rejection, list on missing/file, mkdir duplicate -> files_name_taken
+    #[cfg(unix)]
+    {
+        let fifo = ws.join("pipe.fifo");
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if let Ok(st) = status {
+            if st.success() {
+                let req = format!(
+                    "{{\"type\":\"pipkin_files_read\",\"id\":20,\"root\":\"{}\",\"path\":\"pipe.fifo\"}}\n",
+                    ws.to_string_lossy()
+                );
+                let mut out = Vec::new();
+                run_files_loop(Cursor::new(req.into_bytes()), &mut out).unwrap();
+                let msgs: Vec<Value> = String::from_utf8_lossy(&out)
+                    .lines()
+                    .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                    .collect();
+                let r = msgs.iter().find(|v| v["id"] == 20).unwrap();
+                assert_eq!(r["errorCode"], "files_not_regular");
+                assert_eq!(r["errorI18n"]["key"], "files_not_regular");
+            }
+        }
+    }
+
+    // Unreadable file -> files_no_access (never fake kind: "binary")
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let secret = ws.join("locked.txt");
+        std::fs::write(&secret, "cant-read-me").unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let ws_s = ws.to_string_lossy();
+        let reqs = format!(
+            "{{\"type\":\"pipkin_files_list\",\"id\":30,\"root\":\"{}\",\"path\":\"regular.txt\"}}\n\
+             {{\"type\":\"pipkin_files_read\",\"id\":31,\"root\":\"{}\",\"path\":\"missing.txt\"}}\n\
+             {{\"type\":\"pipkin_files_read\",\"id\":32,\"root\":\"{}\",\"path\":\"locked.txt\"}}\n\
+             {{\"type\":\"pipkin_files_mkdir\",\"id\":33,\"root\":\"{}\",\"path\":\".\",\"name\":\"existing_dir\"}}\n",
+            ws_s, ws_s, ws_s, ws_s
+        );
+        let mut out = Vec::new();
+        run_files_loop(Cursor::new(reqs.into_bytes()), &mut out).unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let msgs: Vec<Value> = String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .collect();
+        let f30 = msgs.iter().find(|v| v["id"] == 30).unwrap();
+        assert_eq!(f30["errorCode"], "not_a_folder");
+        assert!(f30["error"].as_str().is_some());
+
+        let f31 = msgs.iter().find(|v| v["id"] == 31).unwrap();
+        assert_eq!(f31["errorCode"], "files_gone");
+
+        let f32 = msgs.iter().find(|v| v["id"] == 32).unwrap();
+        assert_eq!(f32["errorCode"], "files_no_access");
+        assert!(f32.get("kind").is_none());
+
+        let f33 = msgs.iter().find(|v| v["id"] == 33).unwrap();
+        assert_eq!(f33["errorCode"], "files_name_taken");
+        assert_eq!(f33["errorI18n"]["key"], "files_name_taken");
+        assert_eq!(f33["errorI18n"]["args"]["name"], "existing_dir");
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

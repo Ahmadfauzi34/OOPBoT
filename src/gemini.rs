@@ -117,26 +117,40 @@ impl GeminiClient {
 
 
     pub fn model(&self) -> String {
-        self.default_model.read().unwrap().clone()
+        self.default_model
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Ganti model aktif pada klien secara dinamis tanpa membuat ulang HTTP pool.
     pub fn set_default_model(&self, new_model: &str) {
-        let mut m = self.default_model.write().unwrap();
+        let mut m = self
+            .default_model
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         *m = new_model.to_string();
     }
 
     pub fn base_url(&self) -> String {
-        self.creds.read().unwrap().base_url.clone()
+        self.creds
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .base_url
+            .clone()
     }
 
     pub fn api_key(&self) -> String {
-        self.creds.read().unwrap().api_key.clone()
+        self.creds
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .api_key
+            .clone()
     }
 
     /// Ganti API key (dan opsional `base_url`) secara dinamis di memori.
     pub fn update_credentials(&self, api_key: String, base_url: Option<String>) {
-        let mut creds = self.creds.write().unwrap();
+        let mut creds = self.creds.write().unwrap_or_else(|e| e.into_inner());
         creds.api_key = api_key;
         if let Some(url) = base_url.filter(|u| !u.trim().is_empty()) {
             creds.base_url = url.trim_end_matches('/').to_string();
@@ -148,7 +162,7 @@ impl GeminiClient {
     /// untuk provider OpenAI-compatible (OpenRouter, Groq, DeepSeek, dsb).
     pub async fn scan_models(&self) -> Result<Vec<ModelInfo>, BoxError> {
         let (api_key, base_url) = {
-            let c = self.creds.read().unwrap();
+            let c = self.creds.read().unwrap_or_else(|e| e.into_inner());
             (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
         };
         let is_native_google = base_url.contains("googleapis.com") && !base_url.contains("/openai");
@@ -181,17 +195,7 @@ impl GeminiClient {
         }
 
         let resp = req.send().await?;
-
-        let status = resp.status();
-        let res_json: Value = resp.json().await?;
-        if !status.is_success() {
-            let msg = res_json["error"]["message"]
-                .as_str()
-                .or_else(|| res_json["message"].as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| res_json.to_string());
-            return Err(format!("Gagal scan /models ({}): {}", status, msg).into());
-        }
+        let res_json = parse_api_json_response("Gagal scan /models", resp).await?;
 
         let models = parse_models_response(&res_json, provider_hint);
         if models.is_empty() {
@@ -245,7 +249,7 @@ impl GeminiClient {
         options: &GenerationOptions,
     ) -> Result<ModelTurn, BoxError> {
         let (api_key, base_url) = {
-            let c = self.creds.read().unwrap();
+            let c = self.creds.read().unwrap_or_else(|e| e.into_inner());
             (c.api_key.clone(), c.base_url.trim_end_matches('/').to_string())
         };
 
@@ -381,16 +385,7 @@ impl GeminiClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        let res_json: Value = resp.json().await?;
-        if !status.is_success() {
-            let msg = res_json["error"]["message"]
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| res_json.to_string());
-            return Err(format!("Gemini API {}: {}", status, msg).into());
-        }
-
+        let res_json = parse_api_json_response("Gemini API", resp).await?;
         parse_model_turn(&res_json)
     }
 
@@ -577,18 +572,14 @@ impl GeminiClient {
         }
         let resp = req.json(&body).send().await?;
 
-        let status = resp.status();
-        let res_json: Value = resp.json().await?;
-        if !status.is_success() {
-            let msg = res_json["error"]["message"]
-                .as_str()
-                .or_else(|| res_json["message"].as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| res_json.to_string());
-            return Err(format!("Provider API {}: {}", status, msg).into());
+        let res_json = parse_api_json_response("Provider API", resp).await?;
+        let Some(choice) = res_json["choices"].as_array().and_then(|c| c.first()) else {
+            return Err("Provider API mengembalikan respons tanpa choices".into());
+        };
+        let message = &choice["message"];
+        if !message.is_object() {
+            return Err("Provider API mengembalikan choice tanpa objek message".into());
         }
-
-        let message = &res_json["choices"][0]["message"];
         let text = message["content"].as_str().unwrap_or_default().trim().to_string();
         let mut thoughts = Vec::new();
         if let Some(rc) = message["reasoning_content"]
@@ -819,15 +810,13 @@ impl GeminiClient {
         }
         let resp = req.json(&body).send().await?;
 
-        let status = resp.status();
-        let res_json: Value = resp.json().await?;
-        if !status.is_success() {
-            let msg = res_json["error"]["message"]
+        let res_json = parse_api_json_response("Provider Responses API", resp).await?;
+        if res_json["status"].as_str() == Some("failed") {
+            let reason = res_json["error"]["message"]
                 .as_str()
-                .or_else(|| res_json["message"].as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| res_json.to_string());
-            return Err(format!("Provider Responses API {}: {}", status, msg).into());
+                .or_else(|| res_json["incomplete_details"]["reason"].as_str())
+                .unwrap_or("status failed");
+            return Err(format!("Provider Responses API gagal: {}", reason).into());
         }
 
         Ok(parse_openai_responses_turn(&res_json))
@@ -964,47 +953,40 @@ impl GeminiClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        let res_json: Value = resp.json().await?;
-        if !status.is_success() {
-            let msg = res_json["error"]["message"]
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| res_json.to_string());
-            return Err(format!("Anthropic API {}: {}", status, msg).into());
-        }
+        let res_json = parse_api_json_response("Anthropic API", resp).await?;
 
         let mut text = String::new();
         let mut thoughts = Vec::new();
         let mut function_calls = Vec::new();
         let mut raw_parts = Vec::new();
 
-        if let Some(blocks) = res_json["content"].as_array() {
-            for b in blocks {
-                match b["type"].as_str().unwrap_or_default() {
-                    "thinking" => {
-                        if let Some(t) = b["thinking"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                            thoughts.push(t.to_string());
-                            raw_parts.push(json!({ "thought": true, "text": t }));
-                        }
+        let Some(blocks) = res_json["content"].as_array() else {
+            return Err("Anthropic API mengembalikan respons tanpa field content".into());
+        };
+        for b in blocks {
+            match b["type"].as_str().unwrap_or_default() {
+                "thinking" => {
+                    if let Some(t) = b["thinking"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                        thoughts.push(t.to_string());
+                        raw_parts.push(json!({ "thought": true, "text": t }));
                     }
-                    "text" => {
-                        if let Some(t) = b["text"].as_str() {
-                            text.push_str(t);
-                            raw_parts.push(json!({ "text": t }));
-                        }
-                    }
-                    "tool_use" => {
-                        let id = b["id"].as_str().map(str::to_string);
-                        let name = b["name"].as_str().unwrap_or_default().to_string();
-                        let args = b.get("input").cloned().unwrap_or_else(|| json!({}));
-                        raw_parts.push(json!({
-                            "functionCall": { "id": id, "name": name, "args": args }
-                        }));
-                        function_calls.push(FunctionCall { id, name, args });
-                    }
-                    _ => {}
                 }
+                "text" => {
+                    if let Some(t) = b["text"].as_str() {
+                        text.push_str(t);
+                        raw_parts.push(json!({ "text": t }));
+                    }
+                }
+                "tool_use" => {
+                    let id = b["id"].as_str().map(str::to_string);
+                    let name = b["name"].as_str().unwrap_or_default().to_string();
+                    let args = b.get("input").cloned().unwrap_or_else(|| json!({}));
+                    raw_parts.push(json!({
+                        "functionCall": { "id": id, "name": name, "args": args }
+                    }));
+                    function_calls.push(FunctionCall { id, name, args });
+                }
+                _ => {}
             }
         }
 
@@ -1025,6 +1007,85 @@ impl GeminiClient {
             usage,
         })
     }
+}
+
+fn is_html_error_body(body: &str) -> bool {
+    let trimmed = body.trim_start().to_ascii_lowercase();
+    trimmed.starts_with("<!doctype")
+        || trimmed.starts_with("<html")
+        || trimmed.starts_with("<head")
+        || trimmed.starts_with("<body")
+}
+
+fn extract_error_from_value(val: &Value) -> Option<String> {
+    let candidates = [
+        val["error"]["message"].as_str(),
+        val["error"].as_str(),
+        val.as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|item| item["error"]["message"].as_str()),
+        val["message"].as_str(),
+        val["detail"].as_str(),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(|s| s.chars().take(500).collect())
+}
+
+fn extract_api_error_message(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "empty response body".to_string();
+    }
+    if is_html_error_body(trimmed) {
+        return "HTML error page returned by server/proxy".to_string();
+    }
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(msg) = extract_error_from_value(&parsed) {
+            return msg;
+        }
+        return parsed.to_string().chars().take(400).collect();
+    }
+    trimmed.chars().take(400).collect()
+}
+
+async fn parse_api_json_response(
+    provider_label: &str,
+    resp: reqwest::Response,
+) -> Result<Value, BoxError> {
+    let status = resp.status();
+    let body_text = resp.text().await.map_err(|e| {
+        format!(
+            "{} ({}): gagal membaca respons body: {}",
+            provider_label, status, e
+        )
+    })?;
+
+    if !status.is_success() {
+        let msg = extract_api_error_message(&body_text);
+        return Err(format!("{} {}: {}", provider_label, status, msg).into());
+    }
+
+    let res_json: Value = serde_json::from_str(&body_text).map_err(|e| {
+        let preview = extract_api_error_message(&body_text);
+        format!(
+            "{} {} mengembalikan respons bukan JSON ({}): {}",
+            provider_label, status, e, preview
+        )
+    })?;
+
+    if let Some(err_val) = res_json.get("error").filter(|v| {
+        v.is_object() || v.as_str().is_some_and(|s| !s.trim().is_empty())
+    }) {
+        let msg = extract_error_from_value(&res_json)
+            .unwrap_or_else(|| err_val.to_string().chars().take(400).collect());
+        return Err(format!("{} ({}): {}", provider_label, status, msg).into());
+    }
+
+    Ok(res_json)
 }
 
 fn coalesce_gemini_contents(contents: &[Value]) -> Vec<Value> {
@@ -1543,6 +1604,242 @@ mod tests {
         assert_eq!(turn.function_calls[0].args["path"], "Cargo.toml");
         assert_eq!(turn.usage.unwrap().input_tokens, 88);
         assert_eq!(turn.usage.unwrap().output_tokens, 24);
+    }
+
+    async fn spawn_single_http_response(status_line: &str, content_type: &str, body: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let resp = format!(
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status_line,
+            content_type,
+            body.len(),
+            body
+        );
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream.write_all(resp.as_bytes()).await;
+        });
+        format!("http://{}/v1", addr)
+    }
+
+    #[tokio::test]
+    async fn reg_err_gemini_http_non_json_and_embedded_errors_preserve_status_and_reason() {
+        // 502 Bad Gateway HTML: preserves HTTP 502 instead of serde parse failure masking it
+        let base_502 = spawn_single_http_response(
+            "502 Bad Gateway",
+            "text/html",
+            "<html><body><h1>502 Bad Gateway</h1></body></html>",
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-4o-mini".into(),
+            Some(base_502),
+        )
+        .unwrap();
+        let err = client
+            .generate_with_options(
+                "gpt-4o-mini",
+                "sys",
+                &[user_message_with_images("hi", &[])],
+                &[],
+                &GenerationOptions {
+                    api: Some("openai-completions".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("502"), "expected 502 in error, got: {}", err);
+        assert!(err.contains("HTML"), "expected HTML summary, got: {}", err);
+
+        // 429 plain text rate limit: preserves HTTP 429 and text message
+        let base_429 = spawn_single_http_response(
+            "429 Too Many Requests",
+            "text/plain",
+            "Too many requests, slow down",
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-4o-mini".into(),
+            Some(base_429),
+        )
+        .unwrap();
+        let err = client
+            .generate_with_options(
+                "gpt-4o-mini",
+                "sys",
+                &[user_message_with_images("hi", &[])],
+                &[],
+                &GenerationOptions {
+                    api: Some("openai-completions".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("429"), "expected 429 in error, got: {}", err);
+        assert!(
+            err.contains("Too many requests"),
+            "expected plain-text body, got: {}",
+            err
+        );
+
+        // 200 OK with HTML proxy page returns explicit non-JSON error
+        let base_200_html = spawn_single_http_response(
+            "200 OK",
+            "text/html",
+            "<!DOCTYPE html><html><body>Captive Portal</body></html>",
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-4o-mini".into(),
+            Some(base_200_html),
+        )
+        .unwrap();
+        let err = client.scan_models().await.unwrap_err().to_string();
+        assert!(
+            err.contains("bukan JSON") && err.contains("HTML"),
+            "unexpected 200 HTML error: {}",
+            err
+        );
+
+        // 200 OK with embedded JSON error object surfaces the error instead of succeeding empty
+        let base_200_err = spawn_single_http_response(
+            "200 OK",
+            "application/json",
+            r#"{"error":{"message":"Quota exceeded on upstream proxy"}}"#,
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-4o-mini".into(),
+            Some(base_200_err),
+        )
+        .unwrap();
+        let err = client
+            .generate_with_options(
+                "gpt-4o-mini",
+                "sys",
+                &[user_message_with_images("hi", &[])],
+                &[],
+                &GenerationOptions {
+                    api: Some("openai-completions".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Quota exceeded on upstream proxy"),
+            "expected embedded error message, got: {}",
+            err
+        );
+
+        // 200 OK with empty choices fails loudly instead of silently returning empty text
+        let base_empty_choices = spawn_single_http_response(
+            "200 OK",
+            "application/json",
+            r#"{"id":"cmpl_1","choices":[]}"#,
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-4o-mini".into(),
+            Some(base_empty_choices),
+        )
+        .unwrap();
+        let err = client
+            .generate_with_options(
+                "gpt-4o-mini",
+                "sys",
+                &[user_message_with_images("hi", &[])],
+                &[],
+                &GenerationOptions {
+                    api: Some("openai-completions".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("choices"),
+            "expected empty choices error, got: {}",
+            err
+        );
+
+        // OpenAI Responses 200 OK with "error": null and "status": "failed" returns failure;
+        // whereas "error": null with valid output succeeds.
+        let base_resp_failed = spawn_single_http_response(
+            "200 OK",
+            "application/json",
+            r#"{"id":"r1","status":"failed","error":null,"incomplete_details":{"reason":"content_filter"},"output":[]}"#,
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-5.3-codex".into(),
+            Some(base_resp_failed),
+        )
+        .unwrap();
+        let err = client
+            .generate_with_options(
+                "gpt-5.3-codex",
+                "sys",
+                &[user_message_with_images("hi", &[])],
+                &[],
+                &GenerationOptions {
+                    api: Some("openai-responses".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("content_filter"),
+            "expected failed reason, got: {}",
+            err
+        );
+
+        let base_resp_ok_null_error = spawn_single_http_response(
+            "200 OK",
+            "application/json",
+            r#"{"id":"r2","status":"completed","error":null,"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"All good"}]}]}"#,
+        )
+        .await;
+        let client = GeminiClient::new_with_base_url(
+            "sk-test".into(),
+            "gpt-5.3-codex".into(),
+            Some(base_resp_ok_null_error),
+        )
+        .unwrap();
+        let turn = client
+            .generate_with_options(
+                "gpt-5.3-codex",
+                "sys",
+                &[user_message_with_images("hi", &[])],
+                &[],
+                &GenerationOptions {
+                    api: Some("openai-responses".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(turn.text, "All good");
     }
 }
 

@@ -66,7 +66,7 @@ impl Approver for RpcApprover {
         let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
 
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
             pending.insert(req_id.clone(), tx);
         }
         let mut _guard = PendingApprovalGuard {

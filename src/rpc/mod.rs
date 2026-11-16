@@ -126,7 +126,7 @@ impl Drop for CoordinatorFinishGuard {
     fn drop(&mut self) {
         if self.armed {
             {
-                let mut m = self.rt.mutable.lock().unwrap();
+                let mut m = self.rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 if matches!(
                     m.active_op,
                     ActiveOp::Streaming { .. } | ActiveOp::Compacting { .. }
@@ -416,7 +416,7 @@ impl RpcRuntime {
             .active_model_info()
             .clamp_thinking_level(&requested_thinking);
         {
-            rt.mutable.lock().unwrap().thinking_level = clamped.clone();
+            rt.mutable.lock().unwrap_or_else(|e| e.into_inner()).thinking_level = clamped.clone();
         }
         rt.sync_agent_catalog();
         rt.sync_agent_active_model();
@@ -433,7 +433,7 @@ impl RpcRuntime {
     /// Selesaikan permintaan approval tool dengan id tertentu.
     /// Mengembalikan `true` bila request id ditemukan dan notifikasi terkirim, `false` jika tidak.
     pub fn resolve_tool_approval(&self, req_id: &str, approved: bool) -> bool {
-        if let Some(sender) = self.pending_approvals.lock().unwrap().remove(req_id) {
+        if let Some(sender) = self.pending_approvals.lock().unwrap_or_else(|e| e.into_inner()).remove(req_id) {
             let _ = sender.send(approved);
             true
         } else {
@@ -535,7 +535,7 @@ impl RpcRuntime {
             pending_message_count,
             model_json,
         ) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             let model_info = Self::model_info_from_state(&m);
             (
                 m.session_file.clone(),
@@ -552,7 +552,7 @@ impl RpcRuntime {
                 model_info.to_pipkin_json(Some(&m.active_provider)),
             )
         };
-        let message_count = self.ui_state.lock().unwrap().ui_messages.len();
+        let message_count = self.ui_state.lock().unwrap_or_else(|e| e.into_inner()).ui_messages.len();
 
         json!({
             "sessionFile": session_file.to_string_lossy(),
@@ -575,7 +575,7 @@ impl RpcRuntime {
         self.ensure_session_header();
         self.ui_state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .append_session_entry_returning_id(entry_type, payload)
     }
 
@@ -605,7 +605,7 @@ impl RpcRuntime {
                 line.clear();
                 match reader.read_line(&mut line) {
                     Ok(0) => {
-                        pending.lock().unwrap().clear();
+                        pending.lock().unwrap_or_else(|e| e.into_inner()).clear();
                         break;
                     }
                     Ok(_) => {
@@ -623,7 +623,7 @@ impl RpcRuntime {
                                     val["confirmed"].as_bool().unwrap_or(false)
                                 };
                                 if !req_id.is_empty() {
-                                    if let Some(sender) = pending.lock().unwrap().remove(req_id) {
+                                    if let Some(sender) = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(req_id) {
                                         let _ = sender.send(approved);
                                     }
                                 }
@@ -639,7 +639,7 @@ impl RpcRuntime {
                                     .unwrap_or_default();
                                 let approved = data["approved"].as_bool().unwrap_or(false);
                                 if !req_id.is_empty() {
-                                    if let Some(sender) = pending.lock().unwrap().remove(req_id) {
+                                    if let Some(sender) = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(req_id) {
                                         let _ = sender.send(approved);
                                     }
                                 }
@@ -651,7 +651,7 @@ impl RpcRuntime {
                         }
                     }
                     Err(_) => {
-                        pending.lock().unwrap().clear();
+                        pending.lock().unwrap_or_else(|e| e.into_inner()).clear();
                         break;
                     }
                 }
@@ -715,7 +715,7 @@ impl RpcRuntime {
                 "get_state" => {
                     self.refresh_credentials();
                     let is_idle = {
-                        let m = self.mutable.lock().unwrap();
+                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         matches!(m.active_op, ActiveOp::Idle)
                     };
                     if !is_idle || self.needs_auto_scan().is_none() {
@@ -729,7 +729,7 @@ impl RpcRuntime {
                     }
                 }
                 "get_messages" => {
-                    let messages = self.ui_state.lock().unwrap().ui_messages.clone();
+                    let messages = self.ui_state.lock().unwrap_or_else(|e| e.into_inner()).ui_messages.clone();
                     Self::send_response(&id, "get_messages", json!({ "messages": messages }));
                 }
                 "get_session_stats" => {
@@ -738,7 +738,7 @@ impl RpcRuntime {
                 "get_available_models" => {
                     self.refresh_credentials();
                     let is_idle = {
-                        let m = self.mutable.lock().unwrap();
+                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         matches!(m.active_op, ActiveOp::Idle)
                     };
                     if !is_idle || self.needs_auto_scan().is_none() {
@@ -762,7 +762,7 @@ impl RpcRuntime {
                 "set_model" => {
                     let mut provider_changed = false;
                     {
-                        let mut m = self.mutable.lock().unwrap();
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some(p) = cmd["provider"].as_str().filter(|s| !s.trim().is_empty())
                         {
                             if p != m.active_provider {
@@ -784,14 +784,16 @@ impl RpcRuntime {
                             rt.sync_agent_active_model();
                             rt.sync_thinking_level_for_active_model();
                             let (ap, am, tl) = {
-                                let m = rt.mutable.lock().unwrap();
+                                let m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                                 (
                                     m.active_provider.clone(),
                                     m.active_model.clone(),
                                     m.thinking_level.clone(),
                                 )
                             };
-                            save_settings_fields(&rt.config_dir, Some(&ap), Some(&am), Some(&tl));
+                            if let Err(e) = save_settings_fields(&rt.config_dir, Some(&ap), Some(&am), Some(&tl)) {
+                                eprintln!("[oopbot-rpc] gagal menyimpan settings.json (set_model): {}", e);
+                            }
                             rt.append_session_entry(
                                 "model_change",
                                 json!({ "provider": ap, "modelId": am }),
@@ -802,14 +804,16 @@ impl RpcRuntime {
                         self.sync_agent_active_model();
                         self.sync_thinking_level_for_active_model();
                         let (ap, am, tl) = {
-                            let m = self.mutable.lock().unwrap();
+                            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                             (
                                 m.active_provider.clone(),
                                 m.active_model.clone(),
                                 m.thinking_level.clone(),
                             )
                         };
-                        save_settings_fields(&self.config_dir, Some(&ap), Some(&am), Some(&tl));
+                        if let Err(e) = save_settings_fields(&self.config_dir, Some(&ap), Some(&am), Some(&tl)) {
+                            eprintln!("[oopbot-rpc] gagal menyimpan settings.json (set_model): {}", e);
+                        }
                         self.append_session_entry(
                             "model_change",
                             json!({ "provider": ap, "modelId": am }),
@@ -824,7 +828,7 @@ impl RpcRuntime {
                         Self::send_response(&id, "cycle_model", Value::Null);
                     } else {
                         let (cur_p, cur_m) = {
-                            let m = self.mutable.lock().unwrap();
+                            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                             (m.active_provider.clone(), m.active_model.clone())
                         };
                         let cur_idx = models
@@ -836,23 +840,25 @@ impl RpcRuntime {
                             .unwrap_or(0);
                         let next = &models[(cur_idx + 1) % models.len()];
                         if let Some(np) = next["provider"].as_str() {
-                            self.mutable.lock().unwrap().active_provider = np.to_string();
+                            self.mutable.lock().unwrap_or_else(|e| e.into_inner()).active_provider = np.to_string();
                         }
                         if let Some(nm) = next["id"].as_str() {
-                            self.mutable.lock().unwrap().active_model = nm.to_string();
+                            self.mutable.lock().unwrap_or_else(|e| e.into_inner()).active_model = nm.to_string();
                         }
                         self.refresh_credentials();
                         self.sync_agent_active_model();
                         self.sync_thinking_level_for_active_model();
                         let (ap, am, tl) = {
-                            let m = self.mutable.lock().unwrap();
+                            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                             (
                                 m.active_provider.clone(),
                                 m.active_model.clone(),
                                 m.thinking_level.clone(),
                             )
                         };
-                        save_settings_fields(&self.config_dir, Some(&ap), Some(&am), Some(&tl));
+                        if let Err(e) = save_settings_fields(&self.config_dir, Some(&ap), Some(&am), Some(&tl)) {
+                            eprintln!("[oopbot-rpc] gagal menyimpan settings.json (cycle_model): {}", e);
+                        }
                         self.append_session_entry(
                             "model_change",
                             json!({ "provider": ap, "modelId": am }),
@@ -881,10 +887,12 @@ impl RpcRuntime {
                     if let Some(l) = cmd["level"].as_str().filter(|s| !s.trim().is_empty()) {
                         let clamped = self.active_model_info().clamp_thinking_level(l);
                         {
-                            self.mutable.lock().unwrap().thinking_level = clamped.clone();
+                            self.mutable.lock().unwrap_or_else(|e| e.into_inner()).thinking_level = clamped.clone();
                         }
                         self.agent.set_thinking_level(&clamped);
-                        save_settings_fields(&self.config_dir, None, None, Some(&clamped));
+                        if let Err(e) = save_settings_fields(&self.config_dir, None, None, Some(&clamped)) {
+                            eprintln!("[oopbot-rpc] gagal menyimpan settings.json (set_thinking_level): {}", e);
+                        }
                         self.append_session_entry(
                             "thinking_level_change",
                             json!({ "thinkingLevel": clamped }),
@@ -902,14 +910,16 @@ impl RpcRuntime {
                     if levels.len() <= 1 {
                         Self::send_response(&id, "cycle_thinking_level", Value::Null);
                     } else {
-                        let cur = self.mutable.lock().unwrap().thinking_level.clone();
+                        let cur = self.mutable.lock().unwrap_or_else(|e| e.into_inner()).thinking_level.clone();
                         let idx = levels.iter().position(|l| l == &cur).unwrap_or(0);
                         let next_lvl = levels[(idx + 1) % levels.len()].clone();
                         {
-                            self.mutable.lock().unwrap().thinking_level = next_lvl.clone();
+                            self.mutable.lock().unwrap_or_else(|e| e.into_inner()).thinking_level = next_lvl.clone();
                         }
                         self.agent.set_thinking_level(&next_lvl);
-                        save_settings_fields(&self.config_dir, None, None, Some(&next_lvl));
+                        if let Err(e) = save_settings_fields(&self.config_dir, None, None, Some(&next_lvl)) {
+                            eprintln!("[oopbot-rpc] gagal menyimpan settings.json (cycle_thinking_level): {}", e);
+                        }
                         self.append_session_entry(
                             "thinking_level_change",
                             json!({ "thinkingLevel": next_lvl }),
@@ -931,7 +941,7 @@ impl RpcRuntime {
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty());
                     {
-                        self.mutable.lock().unwrap().session_name = name.clone();
+                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).session_name = name.clone();
                     }
                     self.append_session_entry("session_info", json!({ "name": name }));
                     Self::send_response(&id, "set_session_name", json!({}));
@@ -943,7 +953,7 @@ impl RpcRuntime {
                 "set_steering_mode" => {
                     let mode_str = cmd["mode"].as_str().unwrap_or_default();
                     if let Some(mode) = QueueMode::parse(mode_str) {
-                        self.mutable.lock().unwrap().steering_mode = mode;
+                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).steering_mode = mode;
                         Self::send_response(&id, "set_steering_mode", json!({}));
                     } else {
                         Self::send_error(
@@ -956,7 +966,7 @@ impl RpcRuntime {
                 "set_follow_up_mode" => {
                     let mode_str = cmd["mode"].as_str().unwrap_or_default();
                     if let Some(mode) = QueueMode::parse(mode_str) {
-                        self.mutable.lock().unwrap().follow_up_mode = mode;
+                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).follow_up_mode = mode;
                         Self::send_response(&id, "set_follow_up_mode", json!({}));
                     } else {
                         Self::send_error(
@@ -968,7 +978,7 @@ impl RpcRuntime {
                 }
                 "set_auto_compaction" => {
                     if let Some(enabled) = cmd["enabled"].as_bool() {
-                        self.mutable.lock().unwrap().auto_compaction_enabled = enabled;
+                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).auto_compaction_enabled = enabled;
                         Self::send_response(&id, "set_auto_compaction", json!({}));
                     } else {
                         Self::send_error(
@@ -980,7 +990,7 @@ impl RpcRuntime {
                 }
                 "set_auto_retry" => {
                     if let Some(enabled) = cmd["enabled"].as_bool() {
-                        self.mutable.lock().unwrap().auto_retry_enabled = enabled;
+                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).auto_retry_enabled = enabled;
                         Self::send_response(&id, "set_auto_retry", json!({}));
                     } else {
                         Self::send_error(
@@ -991,14 +1001,14 @@ impl RpcRuntime {
                     }
                 }
                 "abort_retry" => {
-                    if let Some(ref rtx) = self.mutable.lock().unwrap().retry_cancel_tx {
+                    if let Some(ref rtx) = self.mutable.lock().unwrap_or_else(|e| e.into_inner()).retry_cancel_tx {
                         let _ = rtx.send(true);
                     }
                     Self::send_response(&id, "abort_retry", json!({}));
                 }
                 "clear_queue" => {
                     let (steering_texts, follow_up_texts) = {
-                        let mut m = self.mutable.lock().unwrap();
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         let s: Vec<String> =
                             m.steering_queue.drain(..).map(|q| q.message).collect();
                         let f: Vec<String> =
@@ -1044,7 +1054,7 @@ impl RpcRuntime {
                     let last_text = self
                         .ui_state
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .ui_messages
                         .iter()
                         .rev()
@@ -1063,7 +1073,7 @@ impl RpcRuntime {
                     );
                 }
                 "get_fork_messages" => {
-                    let s = self.ui_state.lock().unwrap();
+                    let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     let branch = active_branch_entries(&s.entries, s.leaf_id.as_deref());
                     let fork_msgs: Vec<Value> = branch
                         .iter()
@@ -1085,7 +1095,7 @@ impl RpcRuntime {
                 }
                 "get_entries" => {
                     let since = cmd["since"].as_str();
-                    let s = self.ui_state.lock().unwrap();
+                    let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(cursor) = since {
                         if let Some(pos) =
                             s.entries.iter().position(|e| e["id"].as_str() == Some(cursor))
@@ -1141,7 +1151,7 @@ impl RpcRuntime {
                         .map(str::to_string);
 
                     let reserved = {
-                        let mut m = self.mutable.lock().unwrap();
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         if !matches!(m.active_op, ActiveOp::Idle) {
                             None
                         } else {
@@ -1176,7 +1186,7 @@ impl RpcRuntime {
                 "abort" => {
                     let mut completed_rx = self.completed_seq_tx.subscribe();
                     let wait_target = {
-                        let m = self.mutable.lock().unwrap();
+                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some(ref rtx) = m.retry_cancel_tx {
                             let _ = rtx.send(true);
                         }
@@ -1218,7 +1228,7 @@ impl RpcRuntime {
                     }
 
                     let action = {
-                        let mut m = self.mutable.lock().unwrap();
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         if !matches!(m.active_op, ActiveOp::Idle) {
                             let is_compacting = matches!(m.active_op, ActiveOp::Compacting { .. });
                             match behavior {
@@ -1283,7 +1293,7 @@ impl RpcRuntime {
                     let message = cmd["message"].as_str().unwrap_or_default().to_string();
                     let images = extract_prompt_images(&cmd["images"]);
                     {
-                        self.mutable.lock().unwrap().steering_queue.push_back(
+                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).steering_queue.push_back(
                             QueuedPrompt { message, images },
                         );
                     }
@@ -1294,7 +1304,7 @@ impl RpcRuntime {
                     let message = cmd["message"].as_str().unwrap_or_default().to_string();
                     let images = extract_prompt_images(&cmd["images"]);
                     {
-                        let mut m = self.mutable.lock().unwrap();
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         m.follow_up_queue
                             .push_back(QueuedPrompt { message, images });
                         if matches!(m.active_op, ActiveOp::Compacting { .. }) {
@@ -1316,7 +1326,7 @@ impl RpcRuntime {
         // EOF / stdin ditutup: batalkan operasi aktif dan tunggu seluruh task selesai dengan rapi.
         resume_rx.close();
         {
-            let mut m = self.mutable.lock().unwrap();
+            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             m.resume_queues_after_compact = false;
             if let Some(ref rtx) = m.retry_cancel_tx {
                 let _ = rtx.send(true);

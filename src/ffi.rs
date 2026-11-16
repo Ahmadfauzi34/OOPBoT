@@ -99,7 +99,10 @@ pub extern "C" fn oopbot_version() -> *const c_char {
 /// Bebaskan dengan `oopbot_string_free`.
 #[no_mangle]
 pub extern "C" fn oopbot_reference_catalog() -> *mut c_char {
-    to_c_string(builtin_catalog_json())
+    match std::panic::catch_unwind(builtin_catalog_json) {
+        Ok(val) => to_c_string(val),
+        Err(_) => to_c_string(json!({ "ok": false, "error": "internal panic" })),
+    }
 }
 
 /// Buat instance engine `OopbotHandle` baru di dalam memori `.so`.
@@ -112,11 +115,14 @@ pub unsafe extern "C" fn oopbot_engine_new(
     default_model: *const c_char,
     auto_approve: bool,
 ) -> *mut OopbotHandle {
-    let Some(key) = from_c_str(api_key) else {
-        return std::ptr::null_mut();
-    };
-    let model = from_c_str(default_model).unwrap_or_default();
-    create_handle(key, model, auto_approve)
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(key) = from_c_str(api_key) else {
+            return std::ptr::null_mut();
+        };
+        let model = from_c_str(default_model).unwrap_or_default();
+        create_handle(key, model, auto_approve)
+    }))
+    .unwrap_or(std::ptr::null_mut())
 }
 
 /// Kirim perintah JSON ke engine dan terima respons JSON (`*mut c_char`).
@@ -132,16 +138,21 @@ pub unsafe extern "C" fn oopbot_engine_request(
     if handle.is_null() {
         return to_c_string(json!({ "ok": false, "error": "null handle" }));
     }
-    let h = &*handle;
-    let Some(raw) = from_c_str(request_json) else {
-        return to_c_string(json!({ "ok": false, "error": "null request_json" }));
-    };
-    let Ok(req) = serde_json::from_str::<Value>(&raw) else {
-        return to_c_string(json!({ "ok": false, "error": "invalid JSON" }));
-    };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let h = &*handle;
+        let Some(raw) = from_c_str(request_json) else {
+            return to_c_string(json!({ "ok": false, "error": "null request_json" }));
+        };
+        let Ok(req) = serde_json::from_str::<Value>(&raw) else {
+            return to_c_string(json!({ "ok": false, "error": "invalid JSON" }));
+        };
 
-    let resp = dispatch_request(h, &req);
-    to_c_string(resp)
+        let resp = dispatch_request(h, &req);
+        to_c_string(resp)
+    })) {
+        Ok(ptr) => ptr,
+        Err(_) => to_c_string(json!({ "ok": false, "error": "internal panic" })),
+    }
 }
 
 pub(crate) fn dispatch_request(h: &OopbotHandle, req: &Value) -> Value {
@@ -356,7 +367,10 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
     env: JniEnv,
     _class: JObject,
 ) -> JString {
-    rust_to_jstring(env, env!("CARGO_PKG_VERSION"))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rust_to_jstring(env, env!("CARGO_PKG_VERSION"))
+    }))
+    .unwrap_or(std::ptr::null_mut())
 }
 
 /// `OopbotBridge.referenceCatalog(): String`
@@ -368,7 +382,15 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_referenceCatalog(
     env: JniEnv,
     _class: JObject,
 ) -> JString {
-    rust_to_jstring(env, &builtin_catalog_json().to_string())
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        rust_to_jstring(env, &builtin_catalog_json().to_string())
+    }))
+    .unwrap_or_else(|_| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rust_to_jstring(env, r#"{"ok":false,"error":"internal panic"}"#)
+        }))
+        .unwrap_or(std::ptr::null_mut())
+    })
 }
 
 /// `OopbotBridge.engineNew(apiKey: String, defaultModel: String, autoApprove: Boolean): Long`
@@ -383,11 +405,14 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
     default_model: JString,
     auto_approve: JBoolean,
 ) -> JLong {
-    let Some(key) = jstring_to_rust(env, api_key) else {
-        return 0;
-    };
-    let model = jstring_to_rust(env, default_model).unwrap_or_default();
-    create_handle(key, model, auto_approve != 0) as JLong
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(key) = jstring_to_rust(env, api_key) else {
+            return 0;
+        };
+        let model = jstring_to_rust(env, default_model).unwrap_or_default();
+        create_handle(key, model, auto_approve != 0) as JLong
+    }))
+    .unwrap_or(0)
 }
 
 /// `OopbotBridge.engineRequest(handle: Long, requestJson: String): String`
@@ -401,18 +426,26 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
     handle: JLong,
     request_json: JString,
 ) -> JString {
-    let ptr = handle as *mut OopbotHandle;
-    if ptr.is_null() {
-        return rust_to_jstring(env, r#"{"ok":false,"error":"null handle"}"#);
-    }
-    let Some(raw) = jstring_to_rust(env, request_json) else {
-        return rust_to_jstring(env, r#"{"ok":false,"error":"null requestJson"}"#);
-    };
-    let Ok(req) = serde_json::from_str::<Value>(&raw) else {
-        return rust_to_jstring(env, r#"{"ok":false,"error":"invalid JSON"}"#);
-    };
-    let resp = dispatch_request(&*ptr, &req);
-    rust_to_jstring(env, &resp.to_string())
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let ptr = handle as *mut OopbotHandle;
+        if ptr.is_null() {
+            return rust_to_jstring(env, r#"{"ok":false,"error":"null handle"}"#);
+        }
+        let Some(raw) = jstring_to_rust(env, request_json) else {
+            return rust_to_jstring(env, r#"{"ok":false,"error":"null requestJson"}"#);
+        };
+        let Ok(req) = serde_json::from_str::<Value>(&raw) else {
+            return rust_to_jstring(env, r#"{"ok":false,"error":"invalid JSON"}"#);
+        };
+        let resp = dispatch_request(&*ptr, &req);
+        rust_to_jstring(env, &resp.to_string())
+    }))
+    .unwrap_or_else(|_| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rust_to_jstring(env, r#"{"ok":false,"error":"internal panic"}"#)
+        }))
+        .unwrap_or(std::ptr::null_mut())
+    })
 }
 
 /// `OopbotBridge.engineFree(handle: Long)`
@@ -425,7 +458,9 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineFree(
     _class: JObject,
     handle: JLong,
 ) {
-    oopbot_engine_free(handle as *mut OopbotHandle);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        oopbot_engine_free(handle as *mut OopbotHandle);
+    }));
 }
 
 #[cfg(test)]
@@ -482,6 +517,85 @@ mod tests {
             assert_eq!(tab_v["tab"]["model"], "gemini-2.5-pro");
 
             oopbot_engine_free(handle);
+        }
+    }
+
+    #[test]
+    fn reg_err_ffi_null_and_invalid_inputs_return_safe_errors() {
+        unsafe {
+            assert!(oopbot_engine_new(std::ptr::null(), std::ptr::null(), false).is_null());
+            oopbot_engine_free(std::ptr::null_mut());
+            oopbot_string_free(std::ptr::null_mut());
+
+            let req_ok = CString::new(r#"{"op":"models"}"#).unwrap();
+            let null_handle_ptr = oopbot_engine_request(std::ptr::null_mut(), req_ok.as_ptr());
+            let null_handle_v: Value =
+                serde_json::from_str(CStr::from_ptr(null_handle_ptr).to_str().unwrap()).unwrap();
+            oopbot_string_free(null_handle_ptr);
+            assert_eq!(null_handle_v["ok"], false);
+            assert_eq!(null_handle_v["error"], "null handle");
+
+            let key = CString::new("dummy_key").unwrap();
+            let model = CString::new("gemini-2.5-flash").unwrap();
+            let handle = oopbot_engine_new(key.as_ptr(), model.as_ptr(), false);
+            assert!(!handle.is_null());
+
+            let null_req_ptr = oopbot_engine_request(handle, std::ptr::null());
+            let null_req_v: Value =
+                serde_json::from_str(CStr::from_ptr(null_req_ptr).to_str().unwrap()).unwrap();
+            oopbot_string_free(null_req_ptr);
+            assert_eq!(null_req_v["ok"], false);
+            assert_eq!(null_req_v["error"], "null request_json");
+
+            let bad_json = CString::new("{bad").unwrap();
+            let bad_ptr = oopbot_engine_request(handle, bad_json.as_ptr());
+            let bad_v: Value =
+                serde_json::from_str(CStr::from_ptr(bad_ptr).to_str().unwrap()).unwrap();
+            oopbot_string_free(bad_ptr);
+            assert_eq!(bad_v["ok"], false);
+            assert_eq!(bad_v["error"], "invalid JSON");
+
+            let unknown_op = CString::new(r#"{"op":"does_not_exist"}"#).unwrap();
+            let unk_ptr = oopbot_engine_request(handle, unknown_op.as_ptr());
+            let unk_v: Value =
+                serde_json::from_str(CStr::from_ptr(unk_ptr).to_str().unwrap()).unwrap();
+            oopbot_string_free(unk_ptr);
+            assert_eq!(unk_v["ok"], false);
+            assert!(unk_v["error"]
+                .as_str()
+                .unwrap()
+                .contains("unknown op 'does_not_exist'"));
+
+            oopbot_engine_free(handle);
+
+            // JNI exports must safely handle null env/args without panicking or unwinding.
+            assert!(Java_io_jeph_pipkin_host_OopbotBridge_version(
+                std::ptr::null_mut(),
+                std::ptr::null_mut()
+            )
+            .is_null());
+            assert_eq!(
+                Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0
+                ),
+                0
+            );
+            assert!(Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut()
+            )
+            .is_null());
+            Java_io_jeph_pipkin_host_OopbotBridge_engineFree(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+            );
         }
     }
 }

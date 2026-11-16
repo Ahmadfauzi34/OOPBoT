@@ -1,4 +1,4 @@
-use super::{save_auth_key, write_json_file};
+use super::{save_auth_key, write_json_file, write_json_file_mode};
 use crate::models::{
     builtin_providers, extract_auth_credentials, parse_models_response, resolve_model_scope,
     ModelCatalog, ModelInfo,
@@ -252,6 +252,16 @@ pub(super) fn handle_auth_status(config_dir: &Path) -> Value {
     })
 }
 
+fn io_error_result(action: &str, err: impl std::fmt::Display) -> Value {
+    json!({
+        "type": "pipkin_result",
+        "ok": false,
+        "code": "io_error",
+        "error": format!("Failed to {}: {}", action, err),
+        "data": {}
+    })
+}
+
 pub(super) fn handle_logout(config_dir: &Path, params: &Value) -> Value {
     let provider_id = params["providerId"].as_str().unwrap_or_default();
     if !provider_id.is_empty() {
@@ -259,7 +269,9 @@ pub(super) fn handle_logout(config_dir: &Path, params: &Value) -> Value {
         let mut auth_json = read_json_file(&auth_path);
         if let Some(obj) = auth_json.as_object_mut() {
             obj.remove(provider_id);
-            let _ = write_json_file(&auth_path, &auth_json);
+            if let Err(e) = write_json_file_mode(&auth_path, &auth_json, Some(0o600)) {
+                return io_error_result("update auth.json", e);
+            }
         }
     }
     json!({
@@ -292,10 +304,14 @@ pub(super) fn handle_provider_save(config_dir: &Path, params: &Value) -> Value {
             "apiKey": api_key,
             "models": models,
         });
-        let _ = write_json_file(&models_path, &models_json);
+        if let Err(e) = write_json_file(&models_path, &models_json) {
+            return io_error_result("save models.json", e);
+        }
 
         if !api_key.is_empty() {
-            save_auth_key(config_dir, id, api_key);
+            if let Err(e) = save_auth_key(config_dir, id, api_key) {
+                return io_error_result("save auth.json", e);
+            }
         }
     }
     json!({
@@ -312,13 +328,17 @@ pub(super) fn handle_provider_remove(config_dir: &Path, params: &Value) -> Value
         let mut models_json = read_json_file(&models_path);
         if let Some(providers) = models_json.get_mut("providers").and_then(|p| p.as_object_mut()) {
             providers.remove(id);
-            let _ = write_json_file(&models_path, &models_json);
+            if let Err(e) = write_json_file(&models_path, &models_json) {
+                return io_error_result("update models.json", e);
+            }
         }
         let auth_path = config_dir.join("auth.json");
         let mut auth_json = read_json_file(&auth_path);
         if let Some(obj) = auth_json.as_object_mut() {
             obj.remove(id);
-            let _ = write_json_file(&auth_path, &auth_json);
+            if let Err(e) = write_json_file_mode(&auth_path, &auth_json, Some(0o600)) {
+                return io_error_result("update auth.json", e);
+            }
         }
     }
     json!({
@@ -367,7 +387,9 @@ pub(super) fn handle_subscription_save(config_dir: &Path, params: &Value) -> Val
         if let Some(models) = params.get("models") {
             models_json["providers"][provider_id]["models"] = models.clone();
         }
-        let _ = write_json_file(&models_path, &models_json);
+        if let Err(e) = write_json_file(&models_path, &models_json) {
+            return io_error_result("save models.json", e);
+        }
 
         if let Some(enabled) = params.get("enabled").and_then(|e| e.as_array()) {
             let settings_path = config_dir.join("settings.json");
@@ -397,7 +419,9 @@ pub(super) fn handle_subscription_save(config_dir: &Path, params: &Value) -> Val
                 }
             }
             settings["enabledModels"] = json!(enabled_models);
-            let _ = write_json_file(&settings_path, &settings);
+            if let Err(e) = write_json_file(&settings_path, &settings) {
+                return io_error_result("save settings.json", e);
+            }
         }
     }
     json!({
@@ -889,7 +913,9 @@ pub(super) fn handle_save_default_model(config_dir: &Path, params: &Value) -> Va
         settings["defaultThinkingLevel"] = json!(lvl);
     }
 
-    let _ = write_json_file(&settings_path, &settings);
+    if let Err(e) = write_json_file(&settings_path, &settings) {
+        return io_error_result("save settings.json", e);
+    }
 
     json!({
         "type": "pipkin_result",

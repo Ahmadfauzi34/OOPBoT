@@ -63,43 +63,69 @@ pub(super) fn run_browse_loop<R: BufRead, W: Write>(
         match req["type"].as_str() {
             Some("pipkin_list") | Some("oopbot_list") => {
                 let raw_path = req["path"].as_str().unwrap_or(home);
-                let resolved = resolve_browse_path(raw_path, home);
-                let parent = if resolved == Path::new("/") {
-                    None
-                } else {
-                    resolved.parent().and_then(|p| {
-                        let s = p.to_string_lossy().to_string();
-                        if s.is_empty() { None } else { Some(s) }
-                    })
-                };
+                let reply = match resolve_browse_path_checked(raw_path, home) {
+                    None => json!({
+                        "type": "pipkin_listing",
+                        "id": id,
+                        "path": raw_path,
+                        "parent": Value::Null,
+                        "dirs": [],
+                        "error": "Paths start with / or ~.",
+                        "errorI18n": { "key": "browse_path_not_absolute" }
+                    }),
+                    Some(resolved) => {
+                        let parent = if resolved == Path::new("/") {
+                            None
+                        } else {
+                            resolved.parent().and_then(|p| {
+                                let s = p.to_string_lossy().to_string();
+                                if s.is_empty() { None } else { Some(s) }
+                            })
+                        };
 
-                let mut dirs = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(&resolved) {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        if p.is_dir() {
-                            dirs.push(entry.file_name().to_string_lossy().to_string());
+                        match std::fs::read_dir(&resolved) {
+                            Err(e) => {
+                                let (msg, i18n) = describe_browse_io_error(&e);
+                                json!({
+                                    "type": "pipkin_listing",
+                                    "id": id,
+                                    "path": resolved.to_string_lossy(),
+                                    "parent": parent,
+                                    "dirs": [],
+                                    "error": msg,
+                                    "errorI18n": i18n
+                                })
+                            }
+                            Ok(entries) => {
+                                let mut dirs = Vec::new();
+                                for entry in entries.flatten() {
+                                    let p = entry.path();
+                                    if p.is_dir() {
+                                        dirs.push(entry.file_name().to_string_lossy().to_string());
+                                    }
+                                }
+                                // Urutkan: non-dot folder dulu, lalu dot folder di akhir, alfabetis case-insensitive
+                                dirs.sort_by(|a, b| {
+                                    let a_dot = a.starts_with('.');
+                                    let b_dot = b.starts_with('.');
+                                    match (a_dot, b_dot) {
+                                        (true, false) => std::cmp::Ordering::Greater,
+                                        (false, true) => std::cmp::Ordering::Less,
+                                        _ => a.to_lowercase().cmp(&b.to_lowercase()),
+                                    }
+                                });
+
+                                json!({
+                                    "type": "pipkin_listing",
+                                    "id": id,
+                                    "path": resolved.to_string_lossy(),
+                                    "parent": parent,
+                                    "dirs": dirs
+                                })
+                            }
                         }
                     }
-                }
-                // Urutkan: non-dot folder dulu, lalu dot folder di akhir, alfabetis case-insensitive
-                dirs.sort_by(|a, b| {
-                    let a_dot = a.starts_with('.');
-                    let b_dot = b.starts_with('.');
-                    match (a_dot, b_dot) {
-                        (true, false) => std::cmp::Ordering::Greater,
-                        (false, true) => std::cmp::Ordering::Less,
-                        _ => a.to_lowercase().cmp(&b.to_lowercase()),
-                    }
-                });
-
-                let reply = json!({
-                    "type": "pipkin_listing",
-                    "id": id,
-                    "path": resolved.to_string_lossy(),
-                    "parent": parent,
-                    "dirs": dirs
-                });
+                };
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
                 writer.flush()?;
             }
@@ -172,18 +198,155 @@ pub(super) fn nearest_existing_canonical(path: &Path) -> Option<PathBuf> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct FilesErr {
+    code: &'static str,
+    msg: String,
+    i18n: Value,
+}
+
+impl FilesErr {
+    fn simple(code: &'static str, i18n_key: &'static str, msg: impl Into<String>) -> Self {
+        Self {
+            code,
+            msg: msg.into(),
+            i18n: json!({ "key": i18n_key }),
+        }
+    }
+}
+
+fn describe_files_io_error(e: &std::io::Error) -> FilesErr {
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::PermissionDenied => {
+            return FilesErr::simple(
+                "files_no_access",
+                "files_no_access",
+                "Termux can't open this.",
+            );
+        }
+        ErrorKind::NotFound => {
+            return FilesErr::simple(
+                "files_gone",
+                "files_gone",
+                "This file or folder no longer exists.",
+            );
+        }
+        _ => {}
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(errno) = e.raw_os_error() {
+        match errno {
+            13 | 1 => {
+                // EACCES / EPERM
+                return FilesErr::simple(
+                    "files_no_access",
+                    "files_no_access",
+                    "Termux can't open this.",
+                );
+            }
+            2 => {
+                // ENOENT
+                return FilesErr::simple(
+                    "files_gone",
+                    "files_gone",
+                    "This file or folder no longer exists.",
+                );
+            }
+            20 => {
+                // ENOTDIR
+                return FilesErr::simple(
+                    "not_a_folder",
+                    "not_a_folder",
+                    "This isn't a folder.",
+                );
+            }
+            21 => {
+                // EISDIR
+                return FilesErr::simple(
+                    "files_is_folder",
+                    "files_is_folder",
+                    "This is a folder.",
+                );
+            }
+            40 => {
+                // ELOOP
+                return FilesErr::simple(
+                    "files_link_loop",
+                    "files_link_loop",
+                    "This link goes round in circles.",
+                );
+            }
+            30 => {
+                // EROFS
+                return FilesErr::simple(
+                    "files_read_only",
+                    "files_read_only",
+                    "This storage is read-only.",
+                );
+            }
+            28 => {
+                // ENOSPC
+                return FilesErr::simple(
+                    "files_device_full",
+                    "files_device_full",
+                    "The device is full.",
+                );
+            }
+            _ => {}
+        }
+    }
+
+    match e.raw_os_error() {
+        Some(code) => FilesErr {
+            code: "files_unreadable",
+            msg: format!("Can't read this (OS {}).", code),
+            i18n: json!({ "key": "files_unreadable", "args": { "code": code.to_string() } }),
+        },
+        None => FilesErr::simple(
+            "files_unreadable_unknown",
+            "files_unreadable_unknown",
+            "Can't read this (unknown error).",
+        ),
+    }
+}
+
+fn files_err_reply(kind: &str, id: i64, path: Option<&str>, ferr: &FilesErr, include_entries: bool) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("type".to_string(), json!(kind));
+    obj.insert("id".to_string(), json!(id));
+    if let Some(p) = path {
+        obj.insert("path".to_string(), json!(p));
+    }
+    obj.insert("error".to_string(), json!(ferr.msg));
+    obj.insert("errorI18n".to_string(), ferr.i18n.clone());
+    obj.insert("errorCode".to_string(), json!(ferr.code));
+    if include_entries {
+        obj.insert("entries".to_string(), json!([]));
+    }
+    Value::Object(obj)
+}
+
 pub(super) fn resolve_scoped_path(
     root: &str,
     raw_path: &str,
-) -> Result<(PathBuf, PathBuf), (&'static str, &'static str)> {
+) -> Result<(PathBuf, PathBuf), FilesErr> {
     let root_path = Path::new(root);
     if root.trim().is_empty() || !root_path.is_absolute() {
-        return Err(("outside_workspace", "Workspace root must be an absolute path."));
+        return Err(FilesErr::simple(
+            "outside_workspace",
+            "files_outside_workspace",
+            "Workspace root must be an absolute path.",
+        ));
     }
-    let canonical_root = std::fs::canonicalize(root_path)
-        .map_err(|_| ("files_gone", "Workspace root folder no longer exists."))?;
+    let canonical_root = std::fs::canonicalize(root_path).map_err(|e| describe_files_io_error(&e))?;
     if !is_safe_relative_subpath(raw_path) {
-        return Err(("outside_workspace", "That path is outside the workspace."));
+        return Err(FilesErr::simple(
+            "outside_workspace",
+            "files_outside_workspace",
+            "That path is outside the workspace.",
+        ));
     }
     let target = if raw_path == "." || raw_path.is_empty() {
         canonical_root.clone()
@@ -192,19 +355,31 @@ pub(super) fn resolve_scoped_path(
     };
     if let Ok(canon_target) = std::fs::canonicalize(&target) {
         if !canon_target.starts_with(&canonical_root) {
-            return Err(("outside_workspace", "That path is outside the workspace."));
+            return Err(FilesErr::simple(
+                "outside_workspace",
+                "files_outside_workspace",
+                "That path is outside the workspace.",
+            ));
         }
         return Ok((canonical_root, canon_target));
     }
     // Path belum ada atau broken symlink: pastikan ancestor terdekat (dan symlink target jika ada) tidak keluar root
     if let Ok(meta) = std::fs::symlink_metadata(&target) {
         if meta.file_type().is_symlink() {
-            return Err(("outside_workspace", "That symlink target cannot be accessed."));
+            return Err(FilesErr::simple(
+                "outside_workspace",
+                "files_outside_workspace",
+                "That symlink target cannot be accessed.",
+            ));
         }
     }
     if let Some(canon_parent) = target.parent().and_then(nearest_existing_canonical) {
         if !canon_parent.starts_with(&canonical_root) {
-            return Err(("outside_workspace", "That path is outside the workspace."));
+            return Err(FilesErr::simple(
+                "outside_workspace",
+                "files_outside_workspace",
+                "That path is outside the workspace.",
+            ));
         }
     }
     Ok((canonical_root, target))
@@ -243,76 +418,75 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
         match req["type"].as_str() {
             Some("pipkin_files_list") | Some("oopbot_files_list") => {
                 let reply = match resolve_scoped_path(root, path) {
-                    Err((code, msg)) => json!({
-                        "type": "pipkin_files_listing",
-                        "id": id,
-                        "path": path,
-                        "error": msg,
-                        "errorCode": code,
-                        "entries": []
-                    }),
+                    Err(ferr) => files_err_reply("pipkin_files_listing", id, Some(path), &ferr, true),
                     Ok((canonical_root, target_dir)) => {
-                        let mut entries = Vec::new();
-                        if let Ok(dir_entries) = std::fs::read_dir(&target_dir) {
-                            for entry in dir_entries.flatten() {
-                                let p = entry.path();
-                                let Ok(canon_entry) = std::fs::canonicalize(&p) else {
-                                    continue;
-                                };
-                                if !canon_entry.starts_with(&canonical_root) {
-                                    continue;
+                        match std::fs::read_dir(&target_dir) {
+                            Err(e) => {
+                                let ferr = describe_files_io_error(&e);
+                                files_err_reply("pipkin_files_listing", id, Some(path), &ferr, true)
+                            }
+                            Ok(dir_entries) => {
+                                let mut entries = Vec::new();
+                                for entry in dir_entries.flatten() {
+                                    let p = entry.path();
+                                    let Ok(canon_entry) = std::fs::canonicalize(&p) else {
+                                        continue;
+                                    };
+                                    if !canon_entry.starts_with(&canonical_root) {
+                                        continue;
+                                    }
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    let is_dir = canon_entry.is_dir();
+                                    let meta = std::fs::metadata(&canon_entry).ok();
+                                    let size = if is_dir {
+                                        0
+                                    } else {
+                                        meta.as_ref().map(|m| m.len()).unwrap_or(0)
+                                    };
+                                    let modified = meta
+                                        .and_then(|m| m.modified().ok())
+                                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                                        .map(|d| d.as_millis() as u64)
+                                        .unwrap_or(0);
+
+                                    let rel_path = if path == "." || path.is_empty() {
+                                        name.clone()
+                                    } else {
+                                        format!("{}/{}", path.trim_end_matches('/'), name)
+                                    };
+
+                                    entries.push(json!({
+                                        "name": name,
+                                        "path": rel_path,
+                                        "kind": if is_dir { "directory" } else { "file" },
+                                        "size": size,
+                                        "modified": modified
+                                    }));
                                 }
-                                let name = entry.file_name().to_string_lossy().to_string();
-                                let is_dir = canon_entry.is_dir();
-                                let meta = std::fs::metadata(&canon_entry).ok();
-                                let size = if is_dir {
-                                    0
-                                } else {
-                                    meta.as_ref().map(|m| m.len()).unwrap_or(0)
-                                };
-                                let modified = meta
-                                    .and_then(|m| m.modified().ok())
-                                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                                    .map(|d| d.as_millis() as u64)
-                                    .unwrap_or(0);
 
-                                let rel_path = if path == "." || path.is_empty() {
-                                    name.clone()
-                                } else {
-                                    format!("{}/{}", path.trim_end_matches('/'), name)
-                                };
+                                // Urutkan: direktori dulu, lalu file, alfabetis case-insensitive
+                                entries.sort_by(|a, b| {
+                                    let a_is_dir = a["kind"] == "directory";
+                                    let b_is_dir = b["kind"] == "directory";
+                                    match (a_is_dir, b_is_dir) {
+                                        (true, false) => std::cmp::Ordering::Less,
+                                        (false, true) => std::cmp::Ordering::Greater,
+                                        _ => a["name"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_lowercase()
+                                            .cmp(&b["name"].as_str().unwrap_or("").to_lowercase()),
+                                    }
+                                });
 
-                                entries.push(json!({
-                                    "name": name,
-                                    "path": rel_path,
-                                    "kind": if is_dir { "directory" } else { "file" },
-                                    "size": size,
-                                    "modified": modified
-                                }));
+                                json!({
+                                    "type": "pipkin_files_listing",
+                                    "id": id,
+                                    "path": path,
+                                    "entries": entries
+                                })
                             }
                         }
-
-                        // Urutkan: direktori dulu, lalu file, alfabetis case-insensitive
-                        entries.sort_by(|a, b| {
-                            let a_is_dir = a["kind"] == "directory";
-                            let b_is_dir = b["kind"] == "directory";
-                            match (a_is_dir, b_is_dir) {
-                                (true, false) => std::cmp::Ordering::Less,
-                                (false, true) => std::cmp::Ordering::Greater,
-                                _ => a["name"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .to_lowercase()
-                                    .cmp(&b["name"].as_str().unwrap_or("").to_lowercase()),
-                            }
-                        });
-
-                        json!({
-                            "type": "pipkin_files_listing",
-                            "id": id,
-                            "path": path,
-                            "entries": entries
-                        })
                     }
                 };
                 writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
@@ -320,13 +494,7 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
             }
             Some("pipkin_files_read") | Some("oopbot_files_read") => {
                 let reply = match resolve_scoped_path(root, path) {
-                    Err((code, msg)) => json!({
-                        "type": "pipkin_files_file",
-                        "id": id,
-                        "path": path,
-                        "error": msg,
-                        "errorCode": code
-                    }),
+                    Err(ferr) => files_err_reply("pipkin_files_file", id, Some(path), &ferr, false),
                     Ok((_canonical_root, file_path)) => {
                         const TEXT_LIMIT: u64 = 2 * 1024 * 1024; // 2 MiB
                         const IMAGE_LIMIT: u64 = 8 * 1024 * 1024; // 8 MiB
@@ -345,13 +513,28 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
 
                         let meta = std::fs::metadata(&file_path);
                         match meta {
-                            Ok(m) if m.is_dir() => json!({
-                                "type": "pipkin_files_file",
-                                "id": id,
-                                "path": path,
-                                "error": "This is a folder.",
-                                "errorCode": "files_is_folder"
-                            }),
+                            Ok(m) if m.is_dir() => files_err_reply(
+                                "pipkin_files_file",
+                                id,
+                                Some(path),
+                                &FilesErr::simple(
+                                    "files_is_folder",
+                                    "files_is_folder",
+                                    "This is a folder.",
+                                ),
+                                false,
+                            ),
+                            Ok(m) if !m.is_file() => files_err_reply(
+                                "pipkin_files_file",
+                                id,
+                                Some(path),
+                                &FilesErr::simple(
+                                    "files_not_regular",
+                                    "files_not_regular",
+                                    "This isn't a regular file.",
+                                ),
+                                false,
+                            ),
                             Ok(m) => {
                                 let size = m.len();
                                 if is_image {
@@ -363,77 +546,80 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                                             "size": size,
                                             "kind": "too_large"
                                         })
-                                    } else if let Ok(bytes) = std::fs::read(&file_path) {
-                                        let b64 = encode_base64(&bytes);
-                                        json!({
-                                            "type": "pipkin_files_file",
-                                            "id": id,
-                                            "path": path,
-                                            "size": size,
-                                            "kind": "image",
-                                            "content": b64
-                                        })
                                     } else {
-                                        json!({
-                                            "type": "pipkin_files_file",
-                                            "id": id,
-                                            "path": path,
-                                            "size": size,
-                                            "kind": "binary"
-                                        })
+                                        match std::fs::read(&file_path) {
+                                            Ok(bytes) => {
+                                                let b64 = encode_base64(&bytes);
+                                                json!({
+                                                    "type": "pipkin_files_file",
+                                                    "id": id,
+                                                    "path": path,
+                                                    "size": size,
+                                                    "kind": "image",
+                                                    "content": b64
+                                                })
+                                            }
+                                            Err(e) => {
+                                                let ferr = describe_files_io_error(&e);
+                                                files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                            }
+                                        }
                                     }
                                 } else if size > TEXT_LIMIT {
-                                    let mut file = std::fs::File::open(&file_path).ok();
-                                    let mut sniff_buf = vec![0u8; 8192];
-                                    let read_bytes = file
-                                        .as_mut()
-                                        .and_then(|f| std::io::Read::read(f, &mut sniff_buf).ok())
-                                        .unwrap_or(0);
-                                    sniff_buf.truncate(read_bytes);
-                                    let is_text = is_probably_text(&sniff_buf);
-                                    json!({
-                                        "type": "pipkin_files_file",
-                                        "id": id,
-                                        "path": path,
-                                        "size": size,
-                                        "kind": if is_text { "too_large" } else { "binary" }
-                                    })
-                                } else if let Ok(bytes) = std::fs::read(&file_path) {
-                                    if let Ok(text) = String::from_utf8(bytes) {
-                                        json!({
-                                            "type": "pipkin_files_file",
-                                            "id": id,
-                                            "path": path,
-                                            "size": size,
-                                            "kind": "text",
-                                            "content": text
-                                        })
-                                    } else {
-                                        json!({
-                                            "type": "pipkin_files_file",
-                                            "id": id,
-                                            "path": path,
-                                            "size": size,
-                                            "kind": "binary"
-                                        })
+                                    match std::fs::File::open(&file_path).and_then(|mut f| {
+                                        let mut sniff_buf = vec![0u8; 8192];
+                                        let n = std::io::Read::read(&mut f, &mut sniff_buf)?;
+                                        sniff_buf.truncate(n);
+                                        Ok(sniff_buf)
+                                    }) {
+                                        Ok(sniff_buf) => {
+                                            let is_text = is_probably_text(&sniff_buf);
+                                            json!({
+                                                "type": "pipkin_files_file",
+                                                "id": id,
+                                                "path": path,
+                                                "size": size,
+                                                "kind": if is_text { "too_large" } else { "binary" }
+                                            })
+                                        }
+                                        Err(e) => {
+                                            let ferr = describe_files_io_error(&e);
+                                            files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                        }
                                     }
                                 } else {
-                                    json!({
-                                        "type": "pipkin_files_file",
-                                        "id": id,
-                                        "path": path,
-                                        "size": 0,
-                                        "kind": "binary"
-                                    })
+                                    match std::fs::read(&file_path) {
+                                        Ok(bytes) => {
+                                            if let Ok(text) = String::from_utf8(bytes) {
+                                                json!({
+                                                    "type": "pipkin_files_file",
+                                                    "id": id,
+                                                    "path": path,
+                                                    "size": size,
+                                                    "kind": "text",
+                                                    "content": text
+                                                })
+                                            } else {
+                                                json!({
+                                                    "type": "pipkin_files_file",
+                                                    "id": id,
+                                                    "path": path,
+                                                    "size": size,
+                                                    "kind": "binary"
+                                                })
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let ferr = describe_files_io_error(&e);
+                                            files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                                        }
+                                    }
                                 }
                             }
-                            Err(_) => json!({
-                                "type": "pipkin_files_file",
-                                "id": id,
-                                "path": path,
-                                "error": "This file or folder no longer exists.",
-                                "errorCode": "files_gone"
-                            }),
+                            Err(e) => {
+                                let ferr = describe_files_io_error(&e);
+                                files_err_reply("pipkin_files_file", id, Some(path), &ferr, false)
+                            }
                         }
                     }
                 };
@@ -449,20 +635,15 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                     || name.contains('\\')
                     || name.contains('\0')
                 {
-                    json!({
-                        "type": "pipkin_files_made",
-                        "id": id,
-                        "error": "Folder names cannot be empty, contain / or be . or ..",
-                        "errorCode": "files_folder_name_invalid"
-                    })
+                    let ferr = FilesErr::simple(
+                        "files_folder_name_invalid",
+                        "files_folder_name_invalid",
+                        "Folder names cannot be empty, contain / or be . or ..",
+                    );
+                    files_err_reply("pipkin_files_made", id, None, &ferr, false)
                 } else {
                     match resolve_scoped_path(root, path) {
-                        Err((code, msg)) => json!({
-                            "type": "pipkin_files_made",
-                            "id": id,
-                            "error": msg,
-                            "errorCode": code
-                        }),
+                        Err(ferr) => files_err_reply("pipkin_files_made", id, None, &ferr, false),
                         Ok((_canonical_root, target_parent)) => {
                             let new_folder = target_parent.join(name);
                             let created_rel = if path == "." || path.is_empty() {
@@ -470,19 +651,27 @@ pub(super) fn run_files_loop<R: BufRead, W: Write>(
                             } else {
                                 format!("{}/{}", path.trim_end_matches('/'), name)
                             };
-                            if let Err(e) = std::fs::create_dir_all(&new_folder) {
-                                json!({
-                                    "type": "pipkin_files_made",
-                                    "id": id,
-                                    "error": format!("Failed to create folder: {}", e),
-                                    "errorCode": "files_mkdir_failed"
-                                })
-                            } else {
-                                json!({
+                            match std::fs::create_dir(&new_folder) {
+                                Ok(()) => json!({
                                     "type": "pipkin_files_made",
                                     "id": id,
                                     "path": created_rel
-                                })
+                                }),
+                                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                                    let ferr = FilesErr {
+                                        code: "files_name_taken",
+                                        msg: format!("A file or folder named {} already exists.", name),
+                                        i18n: json!({
+                                            "key": "files_name_taken",
+                                            "args": { "name": name }
+                                        }),
+                                    };
+                                    files_err_reply("pipkin_files_made", id, None, &ferr, false)
+                                }
+                                Err(e) => {
+                                    let ferr = describe_files_io_error(&e);
+                                    files_err_reply("pipkin_files_made", id, None, &ferr, false)
+                                }
                             }
                         }
                     }
@@ -576,6 +765,7 @@ pub(super) fn encode_base64(bytes: &[u8]) -> String {
     out
 }
 
+#[cfg(test)]
 pub(super) fn resolve_browse_path(raw: &str, home: &str) -> PathBuf {
     if raw == "~" {
         PathBuf::from(home)
@@ -583,6 +773,54 @@ pub(super) fn resolve_browse_path(raw: &str, home: &str) -> PathBuf {
         PathBuf::from(home).join(stripped)
     } else {
         PathBuf::from(raw)
+    }
+}
+
+pub(super) fn resolve_browse_path_checked(raw: &str, home: &str) -> Option<PathBuf> {
+    if raw == "~" {
+        Some(PathBuf::from(home))
+    } else if let Some(stripped) = raw.strip_prefix("~/") {
+        Some(PathBuf::from(home).join(stripped))
+    } else if Path::new(raw).is_absolute() {
+        Some(PathBuf::from(raw))
+    } else {
+        None
+    }
+}
+
+fn describe_browse_io_error(e: &std::io::Error) -> (String, Value) {
+    use std::io::ErrorKind;
+    match e.kind() {
+        ErrorKind::PermissionDenied => {
+            return (
+                "Termux can't open this folder.".to_string(),
+                json!({ "key": "browse_no_access" }),
+            );
+        }
+        ErrorKind::NotFound => {
+            return (
+                "This folder doesn't exist.".to_string(),
+                json!({ "key": "browse_folder_missing" }),
+            );
+        }
+        _ => {}
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if e.raw_os_error() == Some(20) {
+        return (
+            "This isn't a folder.".to_string(),
+            json!({ "key": "not_a_folder" }),
+        );
+    }
+    match e.raw_os_error() {
+        Some(code) => (
+            format!("Can't list this folder (OS {}).", code),
+            json!({ "key": "browse_unlistable", "args": { "code": code.to_string() } }),
+        ),
+        None => (
+            "Can't list this folder (unknown error).".to_string(),
+            json!({ "key": "browse_unlistable_unknown" }),
+        ),
     }
 }
 

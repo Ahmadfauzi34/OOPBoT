@@ -30,8 +30,8 @@ impl RpcRuntime {
             active_model,
             tokens_before,
         ) = {
-            let m = self.mutable.lock().unwrap();
-            let s = self.ui_state.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+            let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             let ctx_toks = s
                 .last_context_tokens
                 .filter(|&t| t > 0)
@@ -108,7 +108,7 @@ impl RpcRuntime {
         let active_info = self.active_model_info();
         let (compact_id, branch_after, rebuilt_after, estimated_after, usage_json) = {
             self.ensure_session_header();
-            let mut s = self.ui_state.lock().unwrap();
+            let mut s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             let cid = s.next_unique_entry_id();
             let first_kept = cut_decision
                 .first_kept_entry_id
@@ -180,7 +180,7 @@ impl RpcRuntime {
         self.emit_active_widgets();
 
         let first_kept_id = {
-            let s = self.ui_state.lock().unwrap();
+            let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             s.entries
                 .iter()
                 .rev()
@@ -259,7 +259,7 @@ impl RpcRuntime {
 
         let aborted_by_cancel = was_aborted || *cancel_rx.borrow();
         let resumed = {
-            let mut m = rt.mutable.lock().unwrap();
+            let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
             let should_resume = std::mem::take(&mut m.resume_queues_after_compact);
             if !aborted_by_cancel && should_resume {
                 let next_prompt = m
@@ -301,7 +301,7 @@ impl RpcRuntime {
                 "followUp": rf,
             }));
             if resume_tx.send((first, next_cancel_rx, seq)).is_err() {
-                let mut m = rt.mutable.lock().unwrap();
+                let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 if matches!(m.active_op, ActiveOp::Streaming { .. }) && m.current_op_seq == seq {
                     m.active_op = ActiveOp::Idle;
                 }
