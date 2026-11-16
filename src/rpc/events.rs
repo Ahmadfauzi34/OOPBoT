@@ -185,7 +185,7 @@ impl EventSink for RpcEventSink {
                 session_id: _,
                 model: _,
             } => {
-                let mut internal = self.internal.lock().unwrap();
+                let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                 internal.step_start_ms = epoch_ms();
                 internal.current_content_idx = 0;
                 internal.content_blocks.clear();
@@ -201,7 +201,7 @@ impl EventSink for RpcEventSink {
                 if text.trim().is_empty() {
                     return;
                 }
-                let mut internal = self.internal.lock().unwrap();
+                let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                 if !internal.assistant_msg_started {
                     self.emit(&json!({
                         "type": "message_start",
@@ -244,7 +244,7 @@ impl EventSink for RpcEventSink {
                 requires_confirmation: _,
             } => {
                 let (ui_tool_name, ui_args) = map_tool_for_pipkin_ui(tool_name, args);
-                let mut internal = self.internal.lock().unwrap();
+                let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                 if !internal.assistant_msg_started {
                     self.emit(&json!({
                         "type": "message_start",
@@ -304,7 +304,7 @@ impl EventSink for RpcEventSink {
                 output,
                 duration_ms: _,
             } => {
-                let mut internal = self.internal.lock().unwrap();
+                let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                 if internal.assistant_msg_started {
                     let assistant_msg = json!({
                         "role": "assistant",
@@ -318,7 +318,7 @@ impl EventSink for RpcEventSink {
                         "message": assistant_msg
                     }));
                     {
-                        let mut state = self.ui_state.lock().unwrap();
+                        let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                         state.ui_messages.push(assistant_msg.clone());
                         state.append_session_entry("message", json!({ "message": assistant_msg }));
                     }
@@ -389,7 +389,7 @@ impl EventSink for RpcEventSink {
                 }));
 
                 {
-                    let mut state = self.ui_state.lock().unwrap();
+                    let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     state.ui_messages.push(tool_result_msg.clone());
                     state.append_session_entry("message", json!({ "message": tool_result_msg }));
                     if let Some(plugins) = &self.plugins {
@@ -444,7 +444,7 @@ impl EventSink for RpcEventSink {
                 }
             }
             AgentEvent::AssistantText { text } => {
-                let mut internal = self.internal.lock().unwrap();
+                let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                 if !internal.assistant_msg_started {
                     self.emit(&json!({
                         "type": "message_start",
@@ -502,7 +502,7 @@ impl EventSink for RpcEventSink {
                 }));
 
                 {
-                    let mut state = self.ui_state.lock().unwrap();
+                    let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     state.ui_messages.push(assistant_msg.clone());
                     state.append_session_entry("message", json!({ "message": assistant_msg }));
                 }
@@ -517,7 +517,7 @@ impl EventSink for RpcEventSink {
                 outcome,
             } => {
                 {
-                    let mut internal = self.internal.lock().unwrap();
+                    let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
                     if internal.assistant_msg_started {
                         if !internal.content_blocks.is_empty() {
                             let stop_reason = if *outcome == StepsOutcome::Stopped {
@@ -536,7 +536,7 @@ impl EventSink for RpcEventSink {
                                 "type": "message_end",
                                 "message": assistant_msg
                             }));
-                            let mut state = self.ui_state.lock().unwrap();
+                            let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                             state.ui_messages.push(assistant_msg.clone());
                             state.append_session_entry("message", json!({ "message": assistant_msg }));
                         }

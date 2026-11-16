@@ -146,6 +146,15 @@ impl Default for TodoPlugin {
     }
 }
 
+/// Batas kapasitas dan panjang input agar state todo, widget UI, dan JSONL sesi tetap aman.
+const MAX_ACTIVE_TASKS: usize = 200;
+const MAX_TOTAL_TASKS: usize = 500;
+const MAX_BATCH_OPS: usize = 50;
+const MAX_SUBJECT_CHARS: usize = 300;
+const MAX_DESCRIPTION_CHARS: usize = 8_000;
+const MAX_LABEL_CHARS: usize = 200;
+const MAX_METADATA_KEYS: usize = 64;
+
 impl TodoPlugin {
     pub fn new() -> Self {
         Self {
@@ -158,29 +167,27 @@ impl TodoPlugin {
     }
 
     pub fn replace_state(&self, new_state: TodoState) {
-        if let Ok(mut guard) = self.state.lock() {
-            *guard = new_state;
-        }
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = new_state;
     }
 
     pub fn snapshot_state(&self) -> TodoState {
-        self.state
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_else(|_| TodoState::new())
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn clear_state(&self) -> Option<TodoDetails> {
-        let mut guard = self.state.lock().ok()?;
-        let had_tasks = !guard.tasks.is_empty() || guard.next_id != 1;
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let had_tasks = !guard.tasks.is_empty();
         guard.tasks.clear();
-        guard.next_id = 1;
+        // Pertahankan next_id tetap naik (monoton) dalam sesi yang sama agar ID lama tidak terpakai ulang.
+        let preserved_next_id = guard.next_id.max(1);
+        guard.next_id = preserved_next_id;
         if had_tasks {
             Some(TodoDetails {
                 action: "clear".to_string(),
                 params: json!({ "action": "clear" }),
                 tasks: Vec::new(),
-                next_id: 1,
+                next_id: preserved_next_id,
                 error: None,
             })
         } else {
@@ -189,12 +196,12 @@ impl TodoPlugin {
     }
 
     pub fn get_widget_lines(&self) -> Option<Vec<String>> {
-        let state = self.state.lock().ok()?;
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         widget_lines_for_state(&state)
     }
 
     pub fn command_text(&self) -> Option<String> {
-        let state = self.state.lock().ok()?;
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         command_text_for_state(&state)
     }
 }
@@ -227,11 +234,12 @@ impl Plugin for TodoPlugin {
         Some(
             "## Todo & Task Management Guidelines\n\
             - Gunakan tool `todo` untuk pekerjaan multi-langkah (3+ langkah), saat user memberi daftar tugas, atau untuk melacak rencana tindakan. Lewati untuk pertanyaan percakapan sederhana.\n\
-            - Aksi tersedia: `create`, `update`, `list`, `get`, `delete`, `clear`.\n\
+            - Aksi tersedia: `create` (tunggal via `subject` atau batch via `tasks`), `update`, `batch` (`operations` atomik `create`/`update`/`delete`), `list`, `get`, `delete`, `clear`.\n\
             - Mesin status 4-kondisi: `pending` → `in_progress` → `completed`, plus `deleted` (tombstone). Tugas `completed` hanya boleh diubah ke `deleted`.\n\
-            - Saat memulai tugas, ubah status ke `in_progress` dengan `activeForm` (misal 'menulis unit test'). Segera tandai `completed` saat selesai dan jangan menandai `completed` jika masih ada error/test gagal. Hanya satu tugas `in_progress` pada satu waktu.\n\
-            - Gunakan `blockedBy` saat `create` untuk dependensi awal, dan `addBlockedBy` / `removeBlockedBy` saat `update` (siklus dependensi ditolak).\n\
-            - Mendukung `owner` dan `metadata` (kirim nilai `null` pada sebuah key di `metadata` saat `update` untuk menghapus key tersebut).\n\
+            - Tugas yang masih memiliki `blockedBy` berstatus `pending`/`in_progress` akan ditolak bila langsung diubah ke `in_progress` atau `completed` sebelum penghambatnya selesai atau dihapus.\n\
+            - Saat memulai tugas, ubah status ke `in_progress` dengan `activeForm` (misal 'menulis unit test'). Segera tandai `completed` saat selesai dan jangan menandai `completed` jika masih ada error/test gagal. Utamakan hanya satu tugas `in_progress` pada satu waktu.\n\
+            - Gunakan `blockedBy` (atau `dependsOnBatchIndex` di mode batch `create.tasks`) untuk dependensi awal, dan `addBlockedBy` / `removeBlockedBy` saat `update` (siklus dependensi ditolak).\n\
+            - Mendukung `owner` dan `metadata` (kirim nilai `null` pada sebuah key di `metadata` saat `update` untuk menghapus key tersebut; kirim `null` atau `\"\"` pada `description`/`activeForm`/`owner` untuk mengosongkannya).\n\
             - Perubahan pada `todo` tersimpan otomatis di branch sesi dan memperbarui widget di UI Android pengguna."
                 .to_string(),
         )
@@ -280,9 +288,9 @@ impl Tool for TodoTool {
 
     fn description(&self) -> &'static str {
         "Kelola daftar tugas (task/todo) untuk melacak kemajuan multi-langkah. \
-        Aksi: create (buat tugas baru), update (ubah status/isi/dependensi/owner/metadata), \
-        list (lihat tugas, opsional filter status/owner/includeDeleted), \
-        get (lihat detail lengkap 1 tugas beserta blocks), delete (tombstone), clear (kosongkan semua tugas). \
+        Aksi: create (buat 1 tugas via subject atau banyak via tasks), update (ubah status/isi/dependensi/owner/metadata), \
+        batch (eksekusi atomik beberapa create/update/delete), list (lihat tugas, opsional filter status/owner/includeDeleted), \
+        get (lihat detail lengkap 1 tugas beserta blocks), delete (tombstone & bersihkan blockedBy), clear (kosongkan semua tugas tanpa reset nextId). \
         Status: pending → in_progress → completed, plus deleted."
     }
 
@@ -292,20 +300,42 @@ impl Tool for TodoTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "update", "list", "get", "delete", "clear"],
+                    "enum": ["create", "update", "batch", "list", "get", "delete", "clear"],
                     "description": "Aksi operasi todo yang ingin dijalankan"
                 },
                 "id": {
                     "type": "number",
-                    "description": "ID tugas (wajib untuk aksi update, get, delete)"
+                    "description": "ID tugas positif >= 1 (wajib untuk aksi update, get, delete)"
                 },
                 "subject": {
                     "type": "string",
-                    "description": "Judul/ringkasan tugas singkat (wajib untuk create)"
+                    "description": "Judul/ringkasan tugas singkat (wajib untuk create tunggal)"
+                },
+                "tasks": {
+                    "type": "array",
+                    "description": "Daftar tugas untuk create batch atomik (pengganti subject tunggal); tiap item mendukung subject, description, activeForm, blockedBy, dependsOnBatchIndex, owner, metadata",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "subject": { "type": "string" },
+                            "description": { "type": "string" },
+                            "activeForm": { "type": "string" },
+                            "blockedBy": { "type": "array", "items": { "type": "number" } },
+                            "dependsOnBatchIndex": { "type": "array", "items": { "type": "number" } },
+                            "owner": { "type": "string" },
+                            "metadata": { "type": "object" }
+                        },
+                        "required": ["subject"]
+                    }
+                },
+                "operations": {
+                    "type": "array",
+                    "description": "Daftar operasi atomik untuk aksi batch (tiap item wajib memiliki field action: create|update|delete beserta argumennya)",
+                    "items": { "type": "object" }
                 },
                 "description": {
                     "type": "string",
-                    "description": "Keterangan detail instruksi tugas"
+                    "description": "Keterangan detail instruksi tugas (kirim null atau string kosong saat update untuk menghapus)"
                 },
                 "activeForm": {
                     "type": "string",
@@ -350,10 +380,18 @@ impl Tool for TodoTool {
 
     fn preview(&self, args: &Value) -> String {
         let action = args["action"].as_str().unwrap_or("unknown");
-        let id = args["id"].as_u64();
+        let id = parse_task_id(&args["id"], "id").ok();
         let subject = args["subject"].as_str().unwrap_or("");
         match (action, id, subject) {
+            ("create", _, _) if args.get("tasks").and_then(Value::as_array).is_some() => {
+                let n = args["tasks"].as_array().map(|a| a.len()).unwrap_or(0);
+                format!("todo create batch ({} tasks)", n)
+            }
             ("create", _, s) => format!("todo create: {}", sanitize_text(s)),
+            ("batch", _, _) => {
+                let n = args["operations"].as_array().map(|a| a.len()).unwrap_or(0);
+                format!("todo batch ({} ops)", n)
+            }
             ("update", Some(i), _) => format!("todo update #{}", i),
             ("get", Some(i), _) => format!("todo get #{}", i),
             ("delete", Some(i), _) => format!("todo delete #{}", i),
@@ -367,11 +405,12 @@ impl Tool for TodoTool {
             .as_str()
             .ok_or_else(|| "argumen 'action' wajib diisi".to_string())?;
 
-        let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         match action {
             "create" => execute_create(&mut state, args),
             "update" => execute_update(&mut state, args),
+            "batch" => execute_batch(&mut state, args),
             "list" => execute_list(&state, args),
             "get" => execute_get(&state, args),
             "delete" => execute_delete(&mut state, args),
@@ -382,10 +421,28 @@ impl Tool for TodoTool {
 }
 
 fn parse_task_id(val: &Value, field: &str) -> Result<u32, String> {
-    let n = val
-        .as_u64()
-        .ok_or_else(|| format!("argumen '{}' (angka positif) wajib diisi", field))?;
-    u32::try_from(n).map_err(|_| format!("nilai '{}' di luar jangkauan u32", field))
+    if let Some(n) = val.as_u64() {
+        let id = u32::try_from(n).map_err(|_| format!("nilai '{}' di luar jangkauan u32", field))?;
+        if id == 0 {
+            return Err(format!("ID pada '{}' harus >= 1", field));
+        }
+        return Ok(id);
+    }
+    if let Some(f) = val.as_f64() {
+        if f.is_finite() && f >= 1.0 && f <= (u32::MAX as f64) && f.fract() == 0.0 {
+            return Ok(f as u32);
+        }
+    }
+    if let Some(s) = val.as_str() {
+        let trimmed = s.trim();
+        if let Ok(id) = trimmed.parse::<u32>() {
+            if id == 0 {
+                return Err(format!("ID pada '{}' harus >= 1", field));
+            }
+            return Ok(id);
+        }
+    }
+    Err(format!("argumen '{}' (angka bulat >= 1) wajib diisi", field))
 }
 
 fn parse_id_list(args: &Value, field: &str) -> Result<Option<Vec<u32>>, String> {
@@ -400,11 +457,7 @@ fn parse_id_list(args: &Value, field: &str) -> Result<Option<Vec<u32>>, String> 
         .ok_or_else(|| format!("argumen '{}' harus berupa array angka", field))?;
     let mut ids = Vec::with_capacity(arr.len());
     for item in arr {
-        let n = item
-            .as_u64()
-            .ok_or_else(|| format!("setiap elemen pada '{}' harus berupa angka ID tugas", field))?;
-        let id = u32::try_from(n)
-            .map_err(|_| format!("ID pada '{}' di luar jangkauan u32", field))?;
+        let id = parse_task_id(item, field)?;
         if !ids.contains(&id) {
             ids.push(id);
         }
@@ -425,6 +478,65 @@ fn parse_metadata_arg(args: &Value) -> Result<Option<Map<String, Value>>, String
     Ok(Some(obj.clone()))
 }
 
+fn parse_optional_clearable_string(
+    args: &Value,
+    field: &str,
+    trim_only_clears: bool,
+    max_chars: usize,
+) -> Result<Option<Option<String>>, String> {
+    let Some(raw) = args.get(field) else {
+        return Ok(None);
+    };
+    if raw.is_null() {
+        return Ok(Some(None));
+    }
+    let s = raw
+        .as_str()
+        .ok_or_else(|| format!("argumen '{}' harus berupa string atau null", field))?;
+    let should_clear = if trim_only_clears {
+        s.trim().is_empty()
+    } else {
+        s.is_empty()
+    };
+    if should_clear {
+        return Ok(Some(None));
+    }
+    validate_text_len(s, field, max_chars)?;
+    Ok(Some(Some(s.to_string())))
+}
+
+fn validate_text_len(text: &str, field: &str, max_chars: usize) -> Result<(), String> {
+    let count = text.chars().count();
+    if count > max_chars {
+        return Err(format!(
+            "argumen '{}' terlalu panjang ({} karakter, maksimal {})",
+            field, count, max_chars
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_create_capacity(state: &TodoState) -> Result<(), String> {
+    let active_count = state
+        .tasks
+        .iter()
+        .filter(|t| t.status != TaskStatus::Deleted)
+        .count();
+    if active_count >= MAX_ACTIVE_TASKS {
+        return Err(format!(
+            "jumlah tugas aktif mencapai batas maksimal ({}); selesaikan, hapus, atau clear tugas lama terlebih dahulu",
+            MAX_ACTIVE_TASKS
+        ));
+    }
+    if state.tasks.len() >= MAX_TOTAL_TASKS {
+        return Err(format!(
+            "total riwayat tugas sesi mencapai batas maksimal ({}); jalankan clear untuk membersihkan",
+            MAX_TOTAL_TASKS
+        ));
+    }
+    Ok(())
+}
+
 fn dependency_problem(tasks: &[TaskItem], dep_id: u32) -> Option<String> {
     let Some(task) = tasks.iter().find(|t| t.id == dep_id) else {
         return Some(format!("#{} tidak ditemukan", dep_id));
@@ -433,6 +545,18 @@ fn dependency_problem(tasks: &[TaskItem], dep_id: u32) -> Option<String> {
         return Some(format!("#{} sudah dihapus (deleted)", dep_id));
     }
     None
+}
+
+fn unresolved_blockers(tasks: &[TaskItem], blocked_by: &[u32]) -> Vec<String> {
+    let mut unresolved = Vec::new();
+    for &dep_id in blocked_by {
+        if let Some(dep) = tasks.iter().find(|t| t.id == dep_id) {
+            if matches!(dep.status, TaskStatus::Pending | TaskStatus::InProgress) {
+                unresolved.push(format!("#{} ({})", dep.id, dep.status.as_str()));
+            }
+        }
+    }
+    unresolved
 }
 
 /// Memeriksa apakah memberi dependensi `blocked_by` pada tugas `id` membentuk siklus graf.
@@ -464,6 +588,9 @@ pub fn closes_cycle(tasks: &[TaskItem], id: u32, blocked_by: &[u32]) -> bool {
 fn blocks_of(tasks: &[TaskItem]) -> HashMap<u32, Vec<u32>> {
     let mut map: HashMap<u32, Vec<u32>> = HashMap::new();
     for task in tasks {
+        if task.status == TaskStatus::Deleted {
+            continue;
+        }
         for &dep in &task.blocked_by {
             map.entry(dep).or_default().push(task.id);
         }
@@ -474,7 +601,7 @@ fn blocks_of(tasks: &[TaskItem]) -> HashMap<u32, Vec<u32>> {
 fn merge_metadata(
     existing: Option<&Map<String, Value>>,
     changes: &Map<String, Value>,
-) -> Option<Map<String, Value>> {
+) -> Result<Option<Map<String, Value>>, String> {
     let mut merged = existing.cloned().unwrap_or_default();
     for (key, value) in changes {
         if value.is_null() {
@@ -483,10 +610,31 @@ fn merge_metadata(
             merged.insert(key.clone(), value.clone());
         }
     }
+    if merged.len() > MAX_METADATA_KEYS {
+        return Err(format!(
+            "jumlah key metadata melebihi batas maksimal ({})",
+            MAX_METADATA_KEYS
+        ));
+    }
     if merged.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(merged)
+        Ok(Some(merged))
+    }
+}
+
+fn sanitize_json_value(val: &Value) -> Value {
+    match val {
+        Value::String(s) => Value::String(sanitize_text(s)),
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_json_value).collect()),
+        Value::Object(obj) => {
+            let mut out = Map::with_capacity(obj.len());
+            for (k, v) in obj {
+                out.insert(sanitize_text(k), sanitize_json_value(v));
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
     }
 }
 
@@ -500,13 +648,83 @@ fn make_details(action: &str, params: &Value, state: &TodoState) -> TodoDetails 
     }
 }
 
-fn execute_create(state: &mut TodoState, args: &Value) -> Result<Value, String> {
+fn validate_create_only_args(args: &Value) -> Result<(), String> {
+    if let Some(st) = args.get("status").filter(|v| !v.is_null()) {
+        let s = st
+            .as_str()
+            .ok_or_else(|| "argumen 'status' pada create harus berupa string".to_string())?;
+        if s != "pending" {
+            return Err(format!(
+                "aksi 'create' selalu membuat tugas berstatus 'pending' (status '{}' ditolak; gunakan aksi 'update' setelah tugas dibuat)",
+                s
+            ));
+        }
+    }
+    if args
+        .get("addBlockedBy")
+        .filter(|v| !v.is_null())
+        .and_then(Value::as_array)
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+        || args
+            .get("removeBlockedBy")
+            .filter(|v| !v.is_null())
+            .and_then(Value::as_array)
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    {
+        return Err(
+            "gunakan 'blockedBy' (bukan 'addBlockedBy'/'removeBlockedBy') pada aksi 'create'"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn create_single_task(
+    state: &mut TodoState,
+    args: &Value,
+    batch_ids: Option<&[u32]>,
+) -> Result<TaskItem, String> {
+    ensure_create_capacity(state)?;
+    validate_create_only_args(args)?;
+
     let subject = args["subject"]
         .as_str()
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| "argumen 'subject' wajib diisi untuk aksi create".to_string())?;
+    validate_text_len(subject, "subject", MAX_SUBJECT_CHARS)?;
 
-    let blocked_by = parse_id_list(args, "blockedBy")?.unwrap_or_default();
+    let mut blocked_by = parse_id_list(args, "blockedBy")?.unwrap_or_default();
+    if let Some(raw_idx) = args.get("dependsOnBatchIndex").filter(|v| !v.is_null()) {
+        let Some(created_ids) = batch_ids else {
+            return Err(
+                "argumen 'dependsOnBatchIndex' hanya dapat dipakai di dalam daftar 'tasks' pada batch create"
+                    .to_string(),
+            );
+        };
+        let arr = raw_idx
+            .as_array()
+            .ok_or_else(|| "argumen 'dependsOnBatchIndex' harus berupa array indeks >= 0".to_string())?;
+        for item in arr {
+            let idx_u64 = item
+                .as_u64()
+                .ok_or_else(|| "setiap elemen 'dependsOnBatchIndex' harus integer >= 0".to_string())?;
+            let idx = usize::try_from(idx_u64)
+                .map_err(|_| "indeks 'dependsOnBatchIndex' di luar jangkauan".to_string())?;
+            let dep_id = created_ids.get(idx).copied().ok_or_else(|| {
+                format!(
+                    "dependsOnBatchIndex {} tidak valid (hanya boleh merujuk item sebelum indeks saat ini: 0..{})",
+                    idx,
+                    created_ids.len()
+                )
+            })?;
+            if !blocked_by.contains(&dep_id) {
+                blocked_by.push(dep_id);
+            }
+        }
+    }
+
     for &dep in &blocked_by {
         if let Some(problem) = dependency_problem(&state.tasks, dep) {
             return Err(format!("blockedBy: {}", problem));
@@ -514,22 +732,30 @@ fn execute_create(state: &mut TodoState, args: &Value) -> Result<Value, String> 
     }
 
     let id = state.next_id.max(1);
-    state.next_id = id + 1;
+    let next_id = id
+        .checked_add(1)
+        .ok_or_else(|| "batas maksimum ID tugas (u32::MAX) tercapai".to_string())?;
+    state.next_id = next_id;
 
-    let description = args["description"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let active_form = args["activeForm"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let owner = args["owner"]
-        .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_string);
-    let metadata = parse_metadata_arg(args)?
-        .and_then(|patch| merge_metadata(None, &patch));
+    let description = parse_optional_clearable_string(
+        args,
+        "description",
+        false,
+        MAX_DESCRIPTION_CHARS,
+    )?
+    .flatten();
+    let active_form = parse_optional_clearable_string(
+        args,
+        "activeForm",
+        false,
+        MAX_LABEL_CHARS,
+    )?
+    .flatten();
+    let owner = parse_optional_clearable_string(args, "owner", true, MAX_LABEL_CHARS)?.flatten();
+    let metadata = match parse_metadata_arg(args)? {
+        Some(patch) => merge_metadata(None, &patch)?,
+        None => None,
+    };
 
     let task = TaskItem {
         id,
@@ -541,8 +767,16 @@ fn execute_create(state: &mut TodoState, args: &Value) -> Result<Value, String> 
         owner,
         metadata,
     };
-
     state.tasks.push(task.clone());
+    Ok(task)
+}
+
+fn execute_create(state: &mut TodoState, args: &Value) -> Result<Value, String> {
+    if let Some(raw_tasks) = args.get("tasks").filter(|v| !v.is_null()) {
+        return execute_create_batch(state, args, raw_tasks);
+    }
+
+    let task = create_single_task(state, args, None)?;
     let details = make_details("create", args, state);
 
     Ok(json!({
@@ -551,7 +785,55 @@ fn execute_create(state: &mut TodoState, args: &Value) -> Result<Value, String> 
         "changed": true,
         "task": task,
         "details": details,
-        "message": format!("Tugas #{} '{}' berhasil dibuat (pending)", id, sanitize_text(subject))
+        "message": format!("Tugas #{} '{}' berhasil dibuat (pending)", task.id, sanitize_text(&task.subject))
+    }))
+}
+
+fn execute_create_batch(
+    state: &mut TodoState,
+    args: &Value,
+    raw_tasks: &Value,
+) -> Result<Value, String> {
+    let items = raw_tasks
+        .as_array()
+        .ok_or_else(|| "argumen 'tasks' harus berupa array objek tugas".to_string())?;
+    if items.is_empty() {
+        return Err("argumen 'tasks' tidak boleh array kosong".to_string());
+    }
+    if items.len() > MAX_BATCH_OPS {
+        return Err(format!(
+            "jumlah item pada batch create melebihi batas maksimal ({})",
+            MAX_BATCH_OPS
+        ));
+    }
+
+    let mut draft = state.clone();
+    let mut created = Vec::with_capacity(items.len());
+    let mut created_ids = Vec::with_capacity(items.len());
+    for (idx, item) in items.iter().enumerate() {
+        if !item.is_object() {
+            return Err(format!("elemen 'tasks[{}]' harus berupa objek JSON", idx));
+        }
+        let task = create_single_task(&mut draft, item, Some(&created_ids))
+            .map_err(|e| format!("tasks[{}]: {}", idx, e))?;
+        created_ids.push(task.id);
+        created.push(task);
+    }
+
+    *state = draft;
+    let details = make_details("create", args, state);
+    let summary_lines: Vec<String> = created
+        .iter()
+        .map(|t| format!("#{} '{}'", t.id, sanitize_text(&t.subject)))
+        .collect();
+
+    Ok(json!({
+        "status": "success",
+        "action": "create",
+        "changed": true,
+        "tasks": created,
+        "details": details,
+        "message": format!("Berhasil membuat {} tugas (pending): {}", summary_lines.len(), summary_lines.join(", "))
     }))
 }
 
@@ -564,22 +846,35 @@ fn execute_update(state: &mut TodoState, args: &Value) -> Result<Value, String> 
         .position(|t| t.id == id)
         .ok_or_else(|| format!("Tugas dengan ID #{} tidak ditemukan", id))?;
 
-    let subject_arg = args.get("subject").and_then(Value::as_str);
-    if let Some(s) = subject_arg {
-        if s.trim().is_empty() {
-            return Err("argumen 'subject' tidak boleh kosong pada aksi update".to_string());
+    let subject_arg = match args.get("subject") {
+        None => None,
+        Some(v) => {
+            let s = v
+                .as_str()
+                .ok_or_else(|| "argumen 'subject' harus berupa string tidak kosong".to_string())?;
+            if s.trim().is_empty() {
+                return Err("argumen 'subject' tidak boleh kosong pada aksi update".to_string());
+            }
+            validate_text_len(s, "subject", MAX_SUBJECT_CHARS)?;
+            Some(s)
         }
-    }
-    let description_arg = args.get("description").and_then(Value::as_str);
-    let active_form_arg = args.get("activeForm").and_then(Value::as_str);
-    let owner_arg = args.get("owner").and_then(Value::as_str);
+    };
+    let description_arg =
+        parse_optional_clearable_string(args, "description", false, MAX_DESCRIPTION_CHARS)?;
+    let active_form_arg =
+        parse_optional_clearable_string(args, "activeForm", false, MAX_LABEL_CHARS)?;
+    let owner_arg = parse_optional_clearable_string(args, "owner", true, MAX_LABEL_CHARS)?;
     let status_arg = match args.get("status").filter(|v| !v.is_null()) {
         Some(v) => {
             let s = v
                 .as_str()
                 .ok_or_else(|| "argumen 'status' harus berupa string".to_string())?;
-            let parsed = TaskStatus::parse(s)
-                .ok_or_else(|| format!("status '{}' tidak valid (gunakan pending, in_progress, completed, atau deleted)", s))?;
+            let parsed = TaskStatus::parse(s).ok_or_else(|| {
+                format!(
+                    "status '{}' tidak valid (gunakan pending, in_progress, completed, atau deleted)",
+                    s
+                )
+            })?;
             Some(parsed)
         }
         None => None,
@@ -637,7 +932,23 @@ fn execute_update(state: &mut TodoState, args: &Value) -> Result<Value, String> 
     }
 
     if !add_blocked_by.is_empty() && closes_cycle(&state.tasks, current.id, &next_blocked_by) {
-        return Err("addBlockedBy ditolak karena akan membentuk siklus pada graf blockedBy".to_string());
+        return Err(
+            "addBlockedBy ditolak karena akan membentuk siklus pada graf blockedBy".to_string(),
+        );
+    }
+
+    if matches!(target_status, TaskStatus::InProgress | TaskStatus::Completed)
+        && current.status != target_status
+    {
+        let blockers = unresolved_blockers(&state.tasks, &next_blocked_by);
+        if !blockers.is_empty() {
+            return Err(format!(
+                "tidak dapat mengubah tugas #{} ke '{}' karena masih diblokir oleh: {} (selesaikan tugas penghambat atau hapus dengan removeBlockedBy terlebih dahulu)",
+                current.id,
+                target_status.as_str(),
+                blockers.join(", ")
+            ));
+        }
     }
 
     let mut updated = current.clone();
@@ -646,29 +957,37 @@ fn execute_update(state: &mut TodoState, args: &Value) -> Result<Value, String> 
         updated.subject = s.to_string();
     }
     if let Some(d) = description_arg {
-        updated.description = if d.is_empty() {
-            None
-        } else {
-            Some(d.to_string())
-        };
+        updated.description = d;
     }
     if let Some(af) = active_form_arg {
-        updated.active_form = if af.is_empty() {
-            None
-        } else {
-            Some(af.to_string())
-        };
+        updated.active_form = af;
     }
     if let Some(o) = owner_arg {
-        updated.owner = if o.trim().is_empty() {
-            None
-        } else {
-            Some(o.to_string())
-        };
+        updated.owner = o;
     }
     updated.blocked_by = next_blocked_by;
     if let Some(patch) = &metadata_patch {
-        updated.metadata = merge_metadata(current.metadata.as_ref(), patch);
+        updated.metadata = merge_metadata(current.metadata.as_ref(), patch)?;
+    }
+
+    let mut warnings = Vec::new();
+    if target_status == TaskStatus::InProgress && current.status != TaskStatus::InProgress {
+        let other_active: Vec<String> = state
+            .tasks
+            .iter()
+            .filter(|t| {
+                t.id != id
+                    && t.status == TaskStatus::InProgress
+                    && (updated.owner.is_none() || t.owner.is_none() || t.owner == updated.owner)
+            })
+            .map(|t| format!("#{} '{}'", t.id, sanitize_text(&t.subject)))
+            .collect();
+        if !other_active.is_empty() {
+            warnings.push(format!(
+                "Masih ada tugas lain berstatus in_progress: {} — pastikan untuk menandai 'completed' bila sudah selesai.",
+                other_active.join(", ")
+            ));
+        }
     }
 
     let changed = updated != current;
@@ -676,7 +995,7 @@ fn execute_update(state: &mut TodoState, args: &Value) -> Result<Value, String> 
         state.tasks[idx] = updated.clone();
     }
 
-    let message = if !changed {
+    let mut message = if !changed {
         format!(
             "No change: tugas #{} sudah sesuai nilai yang diminta (status: {})",
             id,
@@ -692,16 +1011,95 @@ fn execute_update(state: &mut TodoState, args: &Value) -> Result<Value, String> 
             target_status.as_str()
         )
     };
+    if !warnings.is_empty() {
+        message.push_str(&format!("\nPeringatan: {}", warnings.join(" ")));
+    }
 
     let details = make_details("update", args, state);
-    Ok(json!({
+    let mut resp = json!({
         "status": "success",
         "action": "update",
         "changed": changed,
         "task": updated,
         "details": details,
         "message": message
-    }))
+    });
+    if !warnings.is_empty() {
+        resp["warnings"] = json!(warnings);
+    }
+    Ok(resp)
+}
+
+fn execute_batch(state: &mut TodoState, args: &Value) -> Result<Value, String> {
+    let ops = args
+        .get("operations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "argumen 'operations' (array objek) wajib diisi untuk aksi batch".to_string())?;
+    if ops.is_empty() {
+        return Err("argumen 'operations' tidak boleh kosong".to_string());
+    }
+    if ops.len() > MAX_BATCH_OPS {
+        return Err(format!(
+            "jumlah operasi pada batch melebihi batas maksimal ({})",
+            MAX_BATCH_OPS
+        ));
+    }
+
+    let mut draft = state.clone();
+    let mut results = Vec::with_capacity(ops.len());
+    let mut summaries = Vec::with_capacity(ops.len());
+    let mut warnings = Vec::new();
+    let mut any_changed = false;
+
+    for (idx, op) in ops.iter().enumerate() {
+        let Some(action) = op.get("action").and_then(Value::as_str) else {
+            return Err(format!("operations[{}]: argumen 'action' wajib diisi", idx));
+        };
+        let mut res = match action {
+            "create" => execute_create(&mut draft, op),
+            "update" => execute_update(&mut draft, op),
+            "delete" => execute_delete(&mut draft, op),
+            other => Err(format!(
+                "aksi '{}' tidak didukung di dalam batch (gunakan create, update, atau delete)",
+                other
+            )),
+        }
+        .map_err(|e| format!("operations[{}] ({}): {}", idx, action, e))?;
+
+        if res["changed"].as_bool() == Some(true) {
+            any_changed = true;
+        }
+        if let Some(ws) = res.get("warnings").and_then(Value::as_array) {
+            for w in ws {
+                if let Some(s) = w.as_str() {
+                    warnings.push(s.to_string());
+                }
+            }
+        }
+        if let Some(msg) = res["message"].as_str() {
+            summaries.push(format!("{}. {}", idx + 1, msg));
+        }
+        if let Some(obj) = res.as_object_mut() {
+            obj.remove("details");
+        }
+        results.push(res);
+    }
+
+    *state = draft;
+    let details = make_details("batch", args, state);
+    let mut out = json!({
+        "status": "success",
+        "action": "batch",
+        "changed": any_changed,
+        "count": results.len(),
+        "results": results,
+        "details": details,
+        "message": summaries.join("\n")
+    });
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
+    Ok(out)
 }
 
 fn execute_list(state: &TodoState, args: &Value) -> Result<Value, String> {
@@ -804,7 +1202,26 @@ fn execute_delete(state: &mut TodoState, args: &Value) -> Result<Value, String> 
 
     state.tasks[idx].status = TaskStatus::Deleted;
     let deleted_task = state.tasks[idx].clone();
+
+    // Bersihkan referensi dangling blockedBy pada task lain agar tidak memblokir selamanya.
+    let mut unblocked_ids = Vec::new();
+    for task in &mut state.tasks {
+        if task.id == id || task.status == TaskStatus::Deleted {
+            continue;
+        }
+        let before = task.blocked_by.len();
+        task.blocked_by.retain(|&dep| dep != id);
+        if task.blocked_by.len() < before {
+            unblocked_ids.push(task.id);
+        }
+    }
+
     let details = make_details("delete", args, state);
+    let unblock_note = if unblocked_ids.is_empty() {
+        String::new()
+    } else {
+        format!(" (membuka dependensi pada: {})", format_ids(&unblocked_ids, ", "))
+    };
 
     Ok(json!({
         "status": "success",
@@ -812,16 +1229,23 @@ fn execute_delete(state: &mut TodoState, args: &Value) -> Result<Value, String> 
         "changed": true,
         "id": id,
         "task": deleted_task.clone(),
+        "unblockedIds": unblocked_ids,
         "details": details,
-        "message": format!("Tugas #{} '{}' berhasil dihapus (tombstone)", id, sanitize_text(&deleted_task.subject))
+        "message": format!(
+            "Tugas #{} '{}' berhasil dihapus (tombstone){}",
+            id,
+            sanitize_text(&deleted_task.subject),
+            unblock_note
+        )
     }))
 }
 
 fn execute_clear(state: &mut TodoState, args: &Value) -> Result<Value, String> {
     let count = state.tasks.len();
-    let changed = count > 0 || state.next_id != 1;
+    let changed = count > 0;
     state.tasks.clear();
-    state.next_id = 1;
+    // Pertahankan next_id tetap monoton dalam sesi ini agar ID lama di history tidak tabrakan.
+    state.next_id = state.next_id.max(1);
     let details = make_details("clear", args, state);
 
     Ok(json!({
@@ -829,6 +1253,7 @@ fn execute_clear(state: &mut TodoState, args: &Value) -> Result<Value, String> {
         "action": "clear",
         "changed": changed,
         "cleared_count": count,
+        "nextId": state.next_id,
         "details": details,
         "message": format!("Seluruh daftar tugas ({} item) telah dikosongkan", count)
     }))
@@ -896,10 +1321,8 @@ fn format_get_lines(task: &TaskItem, blocks: &[u32]) -> String {
     }
     if let Some(meta) = &task.metadata {
         if !meta.is_empty() {
-            lines.push(format!(
-                "  metadata: {}",
-                Value::Object(meta.clone())
-            ));
+            let safe_meta = sanitize_json_value(&Value::Object(meta.clone()));
+            lines.push(format!("  metadata: {}", safe_meta));
         }
     }
     lines.join("\n")
@@ -918,7 +1341,6 @@ pub fn widget_lines_for_state(state: &TodoState) -> Option<Vec<String>> {
         .filter(|t| t.status == TaskStatus::Completed)
         .count();
     let active = completed < total;
-    let show_ids = visible.iter().any(|t| !t.blocked_by.is_empty());
 
     let mut lines = Vec::with_capacity(total + 1);
     let header_glyph = if active { "●" } else { "○" };
@@ -933,11 +1355,13 @@ pub fn widget_lines_for_state(state: &TodoState) -> Option<Vec<String>> {
             TaskStatus::Deleted => "✕",
         };
 
-        let mut task_line = if show_ids {
-            format!("{} {} #{} {}", branch, glyph, task.id, sanitize_text(&task.subject))
-        } else {
-            format!("{} {} {}", branch, glyph, sanitize_text(&task.subject))
-        };
+        let mut task_line = format!(
+            "{} {} #{} {}",
+            branch,
+            glyph,
+            task.id,
+            sanitize_text(&task.subject)
+        );
 
         if task.status == TaskStatus::InProgress {
             if let Some(active_form) = &task.active_form {
@@ -1039,10 +1463,39 @@ fn try_parse_todo_state(val: &Value) -> Option<TodoState> {
     let next_id_val = obj.get("nextId").or_else(|| obj.get("next_id"))?.as_u64()?;
 
     let mut tasks = Vec::with_capacity(tasks_val.len());
+    let mut seen_ids = HashSet::new();
     for item in tasks_val {
-        let task: TaskItem = serde_json::from_value(item.clone()).ok()?;
+        let Ok(task) = serde_json::from_value::<TaskItem>(item.clone()) else {
+            continue;
+        };
+        if task.id == 0 {
+            continue;
+        }
+        if !seen_ids.insert(task.id) {
+            tasks.retain(|t: &TaskItem| t.id != task.id);
+        }
         tasks.push(task);
     }
+    if !tasks_val.is_empty() && tasks.is_empty() {
+        return None;
+    }
+
+    let active_ids: HashSet<u32> = tasks
+        .iter()
+        .filter(|t| t.status != TaskStatus::Deleted)
+        .map(|t| t.id)
+        .collect();
+    for task in &mut tasks {
+        let own_id = task.id;
+        let mut dedup = Vec::with_capacity(task.blocked_by.len());
+        for &dep in &task.blocked_by {
+            if dep != own_id && active_ids.contains(&dep) && !dedup.contains(&dep) {
+                dedup.push(dep);
+            }
+        }
+        task.blocked_by = dedup;
+    }
+
     let max_id = tasks.iter().map(|t| t.id).max().unwrap_or(0);
     let parsed_next = u32::try_from(next_id_val).unwrap_or(u32::MAX);
     let next_id = parsed_next.max(max_id.saturating_add(1)).max(1);
@@ -1219,7 +1672,7 @@ mod tests {
         let lines = plugin.get_widget_lines().expect("harus ada widget");
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("Todos (0/1)"));
-        assert!(lines[1].contains("◐ Desain Arsitektur OOP"));
+        assert!(lines[1].contains("◐ #1 Desain Arsitektur OOP"));
         assert!(lines[1].contains("(mengoding plugin.rs)"));
 
         // Mark completed
@@ -1233,7 +1686,7 @@ mod tests {
 
         let lines_done = plugin.get_widget_lines().expect("harus ada widget");
         assert!(lines_done[0].contains("Todos (1/1)"));
-        assert!(lines_done[1].contains("✓ Desain Arsitektur OOP"));
+        assert!(lines_done[1].contains("✓ #1 Desain Arsitektur OOP"));
     }
 
     #[tokio::test]
@@ -1402,5 +1855,266 @@ mod tests {
     fn test_sanitize_strips_ansi_and_bidi_controls() {
         let dirty = "\u{001b}[31mMerah\u{001b}[0m\nBaris\t\u{202e}bidi\u{2066}!";
         assert_eq!(sanitize_text(dirty), "Merah Baris bidi!");
+    }
+
+    #[tokio::test]
+    async fn reg_todo_blocks_in_progress_until_dep_done_and_cleans_dangling_on_delete() {
+        let plugin = TodoPlugin::new();
+        let tool = TodoTool {
+            state: Arc::clone(&plugin.state),
+        };
+
+        tool.execute(&json!({ "action": "create", "subject": "Langkah 1" }))
+            .await
+            .unwrap();
+        tool.execute(&json!({
+            "action": "create",
+            "subject": "Langkah 2",
+            "blockedBy": [1]
+        }))
+        .await
+        .unwrap();
+
+        // Transitioning #2 to in_progress or completed while #1 is pending must fail
+        let blocked_start = tool
+            .execute(&json!({ "action": "update", "id": 2, "status": "in_progress" }))
+            .await
+            .unwrap_err();
+        assert!(blocked_start.contains("#1 (pending)"));
+
+        let blocked_done = tool
+            .execute(&json!({ "action": "update", "id": 2, "status": "completed" }))
+            .await
+            .unwrap_err();
+        assert!(blocked_done.contains("#1 (pending)"));
+
+        // Deleting #1 cleans #1 from #2.blocked_by and reports unblockedIds
+        let del = tool
+            .execute(&json!({ "action": "delete", "id": 1 }))
+            .await
+            .unwrap();
+        assert_eq!(del["unblockedIds"], json!([2]));
+        assert!(del["message"].as_str().unwrap().contains("#2"));
+
+        // Now #2 can cleanly transition to in_progress
+        let start2 = tool
+            .execute(&json!({ "action": "update", "id": 2, "status": "in_progress" }))
+            .await
+            .unwrap();
+        assert_eq!(start2["task"]["status"], "in_progress");
+        assert!(start2["task"].get("blockedBy").is_none());
+    }
+
+    #[tokio::test]
+    async fn reg_todo_warns_on_multiple_in_progress_and_keeps_monotonic_id_after_clear() {
+        let plugin = TodoPlugin::new();
+        let tool = TodoTool {
+            state: Arc::clone(&plugin.state),
+        };
+
+        tool.execute(&json!({ "action": "create", "subject": "T1" }))
+            .await
+            .unwrap();
+        tool.execute(&json!({ "action": "create", "subject": "T2" }))
+            .await
+            .unwrap();
+
+        let first_start = tool
+            .execute(&json!({ "action": "update", "id": 1, "status": "in_progress" }))
+            .await
+            .unwrap();
+        assert!(first_start.get("warnings").is_none());
+
+        // Starting #2 while #1 is still in_progress emits explicit warning
+        let second_start = tool
+            .execute(&json!({ "action": "update", "id": 2, "status": "in_progress" }))
+            .await
+            .unwrap();
+        assert_eq!(second_start["warnings"].as_array().unwrap().len(), 1);
+        assert!(second_start["message"].as_str().unwrap().contains("Peringatan:"));
+
+        // clear empties tasks but preserves monotonic next_id (3)
+        let cleared = tool.execute(&json!({ "action": "clear" })).await.unwrap();
+        assert_eq!(cleared["changed"], true);
+        assert_eq!(cleared["nextId"], 3);
+
+        // Second clear is a no-op (changed = false)
+        let cleared_again = tool.execute(&json!({ "action": "clear" })).await.unwrap();
+        assert_eq!(cleared_again["changed"], false);
+
+        // Next created task gets #3, never #1
+        let t3 = tool
+            .execute(&json!({ "action": "create", "subject": "T3" }))
+            .await
+            .unwrap();
+        assert_eq!(t3["task"]["id"], 3);
+    }
+
+    #[tokio::test]
+    async fn reg_todo_atomic_create_tasks_and_batch_operations_rollback_on_error() {
+        let plugin = TodoPlugin::new();
+        let tool = TodoTool {
+            state: Arc::clone(&plugin.state),
+        };
+
+        // Atomic batch create with invalid second item must roll back next_id & tasks
+        let failed_create = tool
+            .execute(&json!({
+                "action": "create",
+                "tasks": [
+                    { "subject": "Valid" },
+                    { "subject": "   " }
+                ]
+            }))
+            .await;
+        assert!(failed_create.is_err());
+        assert!(plugin.snapshot_state().tasks.is_empty());
+        assert_eq!(plugin.snapshot_state().next_id, 1);
+
+        // Valid batch create with dependsOnBatchIndex
+        let ok_create = tool
+            .execute(&json!({
+                "action": "create",
+                "tasks": [
+                    { "subject": "Setup DB" },
+                    { "subject": "Build API", "dependsOnBatchIndex": [0] },
+                    { "subject": "Run Tests", "dependsOnBatchIndex": [1] }
+                ]
+            }))
+            .await
+            .unwrap();
+        assert_eq!(ok_create["tasks"].as_array().unwrap().len(), 3);
+        assert_eq!(ok_create["tasks"][1]["blockedBy"], json!([1]));
+        assert_eq!(ok_create["tasks"][2]["blockedBy"], json!([2]));
+
+        // Atomic batch where op #2 fails rolls back op #1 as well
+        let failed_batch = tool
+            .execute(&json!({
+                "action": "batch",
+                "operations": [
+                    { "action": "update", "id": 1, "status": "in_progress" },
+                    { "action": "update", "id": 2, "status": "in_progress" }
+                ]
+            }))
+            .await;
+        assert!(failed_batch.is_err());
+        assert_eq!(plugin.snapshot_state().tasks[0].status, TaskStatus::Pending);
+
+        // Valid atomic batch completing #1 then starting #2
+        let ok_batch = tool
+            .execute(&json!({
+                "action": "batch",
+                "operations": [
+                    { "action": "update", "id": 1, "status": "completed" },
+                    { "action": "update", "id": 2, "status": "in_progress", "activeForm": "koding" }
+                ]
+            }))
+            .await
+            .unwrap();
+        assert_eq!(ok_batch["changed"], true);
+        assert_eq!(ok_batch["count"], 2);
+        assert_eq!(plugin.snapshot_state().tasks[0].status, TaskStatus::Completed);
+        assert_eq!(plugin.snapshot_state().tasks[1].status, TaskStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn reg_todo_tolerant_id_parsing_clearable_fields_bounds_and_create_guards() {
+        let plugin = TodoPlugin::new();
+        let tool = TodoTool {
+            state: Arc::clone(&plugin.state),
+        };
+
+        // create rejects non-pending status & addBlockedBy
+        assert!(tool
+            .execute(&json!({ "action": "create", "subject": "A", "status": "in_progress" }))
+            .await
+            .is_err());
+        assert!(tool
+            .execute(&json!({ "action": "create", "subject": "A", "addBlockedBy": [1] }))
+            .await
+            .is_err());
+
+        // Overlong subject is rejected
+        let huge = "x".repeat(MAX_SUBJECT_CHARS + 1);
+        assert!(tool
+            .execute(&json!({ "action": "create", "subject": huge }))
+            .await
+            .is_err());
+
+        tool.execute(&json!({
+            "action": "create",
+            "subject": "Task",
+            "description": "desc",
+            "owner": "agent"
+        }))
+        .await
+        .unwrap();
+
+        // Stringified id "1" and null clearing on description/owner work
+        let upd = tool
+            .execute(&json!({
+                "action": "update",
+                "id": "1",
+                "description": null,
+                "owner": null
+            }))
+            .await
+            .unwrap();
+        assert_eq!(upd["changed"], true);
+        assert!(upd["task"].get("description").is_none());
+        assert!(upd["task"].get("owner").is_none());
+
+        // ID 0 is rejected cleanly
+        assert!(tool
+            .execute(&json!({ "action": "get", "id": 0 }))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn reg_todo_replay_defensive_parsing_metadata_sanitization_and_poison_recovery() {
+        // Defensive replay: keeps valid tasks, drops corrupt item, strips deleted/missing blockedBy
+        let entry = json!({
+            "type": "custom",
+            "customType": TODO_STATE_ENTRY,
+            "data": {
+                "nextId": 4,
+                "tasks": [
+                    { "id": 1, "subject": "Deleted", "status": "deleted" },
+                    { "id": 2, "subject": "Valid", "status": "pending", "blockedBy": [1, 2, 99] },
+                    { "bad_schema": true }
+                ]
+            }
+        });
+        let replayed = replay_branch_entries(&[entry]);
+        assert_eq!(replayed.tasks.len(), 2);
+        assert!(replayed.tasks[1].blocked_by.is_empty());
+
+        // Poisoned Mutex recovers on replace_state, snapshot_state, and execute
+        let plugin = TodoPlugin::new();
+        let st_clone = Arc::clone(&plugin.state);
+        let jh = std::thread::spawn(move || {
+            let _g = st_clone.lock().unwrap();
+            panic!("poison todo mutex");
+        });
+        assert!(jh.join().is_err());
+
+        plugin.replace_state(TodoState::new());
+        let tool = TodoTool {
+            state: Arc::clone(&plugin.state),
+        };
+        let created = tool
+            .execute(&json!({
+                "action": "create",
+                "subject": "Aman",
+                "metadata": { "note": "\u{001b}[31mred\u{001b}[0m\nline" }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(created["task"]["id"], 1);
+        let got = tool.execute(&json!({ "action": "get", "id": 1 })).await.unwrap();
+        let msg = got["message"].as_str().unwrap();
+        assert!(!msg.contains('\u{001b}'));
+        assert!(msg.contains("red line"));
     }
 }

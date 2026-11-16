@@ -72,13 +72,13 @@ impl RpcRuntime {
 
     /// Cari `ModelInfo` lengkap untuk model aktif saat ini beserta seluruh override dari `models.json`.
     pub fn active_model_info(&self) -> ModelInfo {
-        let m = self.mutable.lock().unwrap();
+        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
         Self::model_info_from_state(&m)
     }
 
     pub(super) fn sync_agent_catalog(&self) {
         let models = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             m.catalog.list().to_vec()
         };
         for model in models {
@@ -88,7 +88,7 @@ impl RpcRuntime {
 
     pub(super) fn sync_agent_active_model(&self) {
         let (info, model_id) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             (Self::model_info_from_state(&m), m.active_model.clone())
         };
         self.agent.upsert_model(info);
@@ -97,13 +97,13 @@ impl RpcRuntime {
 
 
     pub(super) fn current_model_json(&self) -> Value {
-        let m = self.mutable.lock().unwrap();
+        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
         Self::model_info_from_state(&m).to_pipkin_json(Some(&m.active_provider))
     }
 
     pub(super) fn available_models_json(&self) -> Vec<Value> {
         let (providers, active_provider, catalog_list) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             (
                 m.providers.clone(),
                 m.active_provider.clone(),
@@ -169,13 +169,13 @@ impl RpcRuntime {
 
     pub(super) fn refresh_credentials(&self) {
         let (catalog_clone, active_provider) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             (m.catalog.clone(), m.active_provider.clone())
         };
         let new_providers = load_providers(&self.config_dir, &catalog_clone);
         let ep_opt = new_providers.get(&active_provider).cloned();
         {
-            let mut m = self.mutable.lock().unwrap();
+            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             m.providers = new_providers;
         }
         if let Some(ep) = ep_opt {
@@ -186,7 +186,7 @@ impl RpcRuntime {
 
     pub(super) fn sync_thinking_level_for_active_model(&self) {
         let clamped_change = {
-            let mut m = self.mutable.lock().unwrap();
+            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             let clamped = Self::model_info_from_state(&m).clamp_thinking_level(&m.thinking_level);
             let changed = clamped != m.thinking_level;
             m.thinking_level = clamped.clone();
@@ -202,7 +202,7 @@ impl RpcRuntime {
     }
 
     pub(super) fn needs_auto_scan(&self) -> Option<(String, ProviderEndpoint)> {
-        let m = self.mutable.lock().unwrap();
+        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
         let active_provider = m.active_provider.clone();
         let ep = m.providers.get(&active_provider)?.clone();
         if !ep.has_auth || ep.api_key.trim().is_empty() {
@@ -231,14 +231,16 @@ impl RpcRuntime {
 
         if let Ok(scanned) = self.agent.scan_models().await {
             if !scanned.is_empty() {
-                save_scanned_models_to_config(
+                if let Err(e) = save_scanned_models_to_config(
                     &self.config_dir,
                     &active_provider,
                     &scanned,
                     &ep.api_key,
-                );
+                ) {
+                    eprintln!("[oopbot-rpc] gagal menyimpan models.json setelah auto-scan: {}", e);
+                }
                 let (saved_prov, saved_model, saved_think) = {
-                    let mut m = self.mutable.lock().unwrap();
+                    let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                     m.catalog.replace_with_scanned(scanned.clone());
                     if !scanned
                         .iter()
@@ -263,12 +265,14 @@ impl RpcRuntime {
                 self.sync_agent_active_model();
                 self.refresh_credentials();
                 self.sync_thinking_level_for_active_model();
-                save_settings_fields(
+                if let Err(e) = save_settings_fields(
                     &self.config_dir,
                     Some(&saved_prov),
                     Some(&saved_model),
                     Some(&saved_think),
-                );
+                ) {
+                    eprintln!("[oopbot-rpc] gagal menyimpan settings.json setelah auto-scan: {}", e);
+                }
             }
         }
     }
@@ -465,7 +469,7 @@ pub(super) fn save_settings_fields(
     default_provider: Option<&str>,
     default_model: Option<&str>,
     default_thinking_level: Option<&str>,
-) {
+) -> std::io::Result<()> {
     let settings_path = config_dir.join("settings.json");
     let mut settings = read_json_file(&settings_path);
     if !settings.is_object() {
@@ -480,9 +484,7 @@ pub(super) fn save_settings_fields(
     if let Some(l) = default_thinking_level.filter(|s| !s.is_empty()) {
         settings["defaultThinkingLevel"] = json!(l);
     }
-    if let Ok(text) = serde_json::to_string_pretty(&settings) {
-        let _ = std::fs::write(&settings_path, format!("{}\n", text));
-    }
+    crate::util::write_json_atomic(&settings_path, &settings, None)
 }
 
 pub(super) fn save_scanned_models_to_config(
@@ -490,9 +492,9 @@ pub(super) fn save_scanned_models_to_config(
     provider_id: &str,
     scanned: &[ModelInfo],
     api_key: &str,
-) {
+) -> std::io::Result<()> {
     if scanned.is_empty() {
-        return;
+        return Ok(());
     }
     let models_path = config_dir.join("models.json");
     let mut models_json = read_json_file(&models_path);
@@ -513,9 +515,7 @@ pub(super) fn save_scanned_models_to_config(
     if !api_key.is_empty() {
         models_json["providers"][provider_id]["scannedApiKey"] = json!(api_key);
     }
-    if let Ok(text) = serde_json::to_string_pretty(&models_json) {
-        let _ = std::fs::write(&models_path, format!("{}\n", text));
-    }
+    crate::util::write_json_atomic(&models_path, &models_json, None)
 }
 
 pub(super) fn save_model_override_to_config(
@@ -523,9 +523,9 @@ pub(super) fn save_model_override_to_config(
     provider_id: &str,
     model_id: &str,
     override_patch: &Value,
-) {
+) -> std::io::Result<()> {
     let Some(patch_obj) = override_patch.as_object() else {
-        return;
+        return Ok(());
     };
     let models_path = config_dir.join("models.json");
     let mut models_json = read_json_file(&models_path);
@@ -547,12 +547,15 @@ pub(super) fn save_model_override_to_config(
     for (k, v) in patch_obj {
         models_json["providers"][provider_id]["modelOverrides"][model_id][k] = v.clone();
     }
-    if let Ok(text) = serde_json::to_string_pretty(&models_json) {
-        let _ = std::fs::write(&models_path, format!("{}\n", text));
-    }
+    crate::util::write_json_atomic(&models_path, &models_json, None)
 }
 
-pub(super) fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str, base_url: Option<&str>) {
+pub(super) fn save_auth_key(
+    config_dir: &Path,
+    provider_id: &str,
+    api_key: &str,
+    base_url: Option<&str>,
+) -> std::io::Result<()> {
     let auth_path = config_dir.join("auth.json");
     let mut auth_json = read_json_file(&auth_path);
     if !auth_json.is_object() {
@@ -562,9 +565,7 @@ pub(super) fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str,
         "type": "api_key",
         "apiKey": api_key,
     });
-    if let Ok(text) = serde_json::to_string_pretty(&auth_json) {
-        let _ = std::fs::write(&auth_path, format!("{}\n", text));
-    }
+    crate::util::write_json_atomic(&auth_path, &auth_json, Some(0o600))?;
 
     if let Some(url) = base_url.filter(|u| !u.is_empty()) {
         let models_path = config_dir.join("models.json");
@@ -575,12 +576,14 @@ pub(super) fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str,
         if !models_json["providers"].is_object() {
             models_json["providers"] = json!({});
         }
+        if !models_json["providers"][provider_id].is_object() {
+            models_json["providers"][provider_id] = json!({});
+        }
         models_json["providers"][provider_id]["baseUrl"] = json!(url);
         models_json["providers"][provider_id]["apiKey"] = json!(api_key);
-        if let Ok(text) = serde_json::to_string_pretty(&models_json) {
-            let _ = std::fs::write(&models_path, format!("{}\n", text));
-        }
+        crate::util::write_json_atomic(&models_path, &models_json, None)?;
     }
+    Ok(())
 }
 
 pub(super) fn read_oopbot_env_map() -> HashMap<String, String> {

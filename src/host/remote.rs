@@ -1,4 +1,4 @@
-use super::{sha256_hex, write_json_file, TMP_SEQ};
+use super::{sha256_hex, write_json_file, write_json_file_mode, TMP_SEQ};
 use crate::util::{epoch_ms, read_json_file};
 use serde_json::{json, Value};
 use std::env;
@@ -146,7 +146,7 @@ pub(super) fn write_remote_hosts_and_ssh_config(ssh_dir: &Path, home: &str, host
     }
 
     let hosts_path = ssh_dir.join("hosts.json");
-    write_json_file(&hosts_path, &json!({ "version": 1, "hosts": hosts }))
+    write_json_file_mode(&hosts_path, &json!({ "version": 1, "hosts": hosts }), Some(0o600))
         .map_err(|e| e.to_string())?;
 
     let known_hosts = ssh_dir.join("known_hosts");
@@ -208,13 +208,8 @@ pub(super) fn write_remote_hosts_and_ssh_config(ssh_dir: &Path, home: &str, host
     ));
     lines.push(String::new());
     let cfg_path = ssh_dir.join("config");
-    std::fs::write(&cfg_path, lines.join("\n")).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&hosts_path, std::fs::Permissions::from_mode(0o600));
-        let _ = std::fs::set_permissions(&cfg_path, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::util::write_text_atomic(&cfg_path, &lines.join("\n"), Some(0o600))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -624,12 +619,35 @@ pub(super) fn handle_remote_forget_host_key(config_dir: &Path, params: &Value) -
     if kh.is_file() {
         let addr = host["address"].as_str().unwrap_or("");
         let target_host = parse_remote_address(addr).map(|(_, h)| h).unwrap_or(addr);
-        if let Ok(content) = std::fs::read_to_string(&kh) {
-            let filtered: Vec<&str> = content
-                .lines()
-                .filter(|line| !target_host.is_empty() && !line.contains(target_host))
-                .collect();
-            let _ = std::fs::write(&kh, filtered.join("\n"));
+        let content = match std::fs::read_to_string(&kh) {
+            Ok(c) => c,
+            Err(e) => {
+                return json!({
+                    "type": "pipkin_result",
+                    "ok": false,
+                    "code": "io_error",
+                    "error": format!("Failed to read known_hosts: {}", e),
+                    "data": {}
+                });
+            }
+        };
+        let filtered: Vec<&str> = content
+            .lines()
+            .filter(|line| !target_host.is_empty() && !line.contains(target_host))
+            .collect();
+        let new_content = if filtered.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", filtered.join("\n"))
+        };
+        if let Err(e) = crate::util::write_text_atomic(&kh, &new_content, Some(0o600)) {
+            return json!({
+                "type": "pipkin_result",
+                "ok": false,
+                "code": "io_error",
+                "error": format!("Failed to update known_hosts: {}", e),
+                "data": {}
+            });
         }
     }
     json!({

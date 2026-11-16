@@ -46,7 +46,7 @@ use terminal::*;
 
 use crate::gemini::BoxError;
 use crate::rpc::{set_output_sink, RpcServer};
-use crate::util::read_json_file;
+use crate::util::{read_json_file, write_json_atomic};
 use serde_json::{json, Value};
 use std::env;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -316,7 +316,18 @@ async fn handle_login_mode(
                     if let Some(val) = resp["value"].as_str() {
                         let key = val.trim();
                         if !key.is_empty() {
-                            save_auth_key(config_dir, &provider_id, key);
+                            if let Err(e) = save_auth_key(config_dir, &provider_id, key) {
+                                let err = json!({
+                                    "type": "pipkin_result",
+                                    "ok": false,
+                                    "error": format!("Failed to save API key: {}", e),
+                                    "code": "io_error",
+                                    "data": {}
+                                });
+                                writeln!(writer, "{}", serde_json::to_string(&err)?)?;
+                                writer.flush()?;
+                                return Ok(());
+                            }
                         }
                     }
                     let res = json!({
@@ -513,15 +524,24 @@ async fn handle_utility_mode(
 
 
 pub(super) fn write_json_file(path: &Path, val: &Value) -> Result<(), BoxError> {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let text = serde_json::to_string_pretty(val)?;
-    std::fs::write(path, format!("{}\n", text))?;
+    write_json_atomic(path, val, None)?;
     Ok(())
 }
 
-pub(super) fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str) {
+pub(super) fn write_json_file_mode(
+    path: &Path,
+    val: &Value,
+    mode: Option<u32>,
+) -> Result<(), BoxError> {
+    write_json_atomic(path, val, mode)?;
+    Ok(())
+}
+
+pub(super) fn save_auth_key(
+    config_dir: &Path,
+    provider_id: &str,
+    api_key: &str,
+) -> Result<(), BoxError> {
     let auth_path = config_dir.join("auth.json");
     let mut auth_json = read_json_file(&auth_path);
     if !auth_json.is_object() {
@@ -531,6 +551,6 @@ pub(super) fn save_auth_key(config_dir: &Path, provider_id: &str, api_key: &str)
         "type": "api_key",
         "apiKey": api_key,
     });
-    let _ = write_json_file(&auth_path, &auth_json);
+    write_json_file_mode(&auth_path, &auth_json, Some(0o600))
 }
 

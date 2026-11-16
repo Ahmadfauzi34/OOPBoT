@@ -33,7 +33,12 @@ pub fn sha256_hex(data: &[u8]) -> String {
     for chunk in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -497,7 +502,7 @@ pub(super) fn handle_git_commits(root: &str, known: Option<&str>) -> Value {
         None
     };
 
-    if comparison.is_none() {
+    let Some(comp_ref) = comparison else {
         let empty_body = json!({
             "baseRef": null,
             "total": 0,
@@ -510,9 +515,7 @@ pub(super) fn handle_git_commits(root: &str, known: Option<&str>) -> Value {
         let mut res = empty_body;
         res["fingerprint"] = json!(fp);
         return res;
-    }
-
-    let comp_ref = comparison.unwrap();
+    };
     let range = format!("{}..HEAD", comp_ref);
 
     let log_out = std::process::Command::new("git")

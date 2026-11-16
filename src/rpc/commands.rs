@@ -16,7 +16,7 @@ use std::sync::Arc;
 impl RpcRuntime {
     pub(super) fn emit_queue_update(&self) {
         let (steering, follow_up) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             let s: Vec<String> = m.steering_queue.iter().map(|q| q.message.clone()).collect();
             let f: Vec<String> = m
                 .follow_up_queue
@@ -58,7 +58,7 @@ impl RpcRuntime {
         Self::send_line(&json!({ "type": "message_end", "message": user_msg }));
         {
             self.ensure_session_header();
-            let mut state = self.ui_state.lock().unwrap();
+            let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             state.ui_messages.push(user_msg.clone());
             state.append_session_entry("message", json!({ "message": user_msg }));
         }
@@ -83,7 +83,7 @@ impl RpcRuntime {
                             })
                             .collect();
                         let (active_provider, cur_key) = {
-                            let mut m = self.mutable.lock().unwrap();
+                            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                             m.catalog.replace_with_scanned(scanned.clone());
                             let key = m
                                 .providers
@@ -93,18 +93,22 @@ impl RpcRuntime {
                             (m.active_provider.clone(), key)
                         };
                         self.sync_agent_catalog();
-                        save_scanned_models_to_config(
+                        let save_note = match save_scanned_models_to_config(
                             &self.config_dir,
                             &active_provider,
                             &scanned,
                             &cur_key,
-                        );
+                        ) {
+                            Ok(()) => "dan menyimpannya ke `models.json`".to_string(),
+                            Err(e) => format!("namun **gagal menyimpan** ke `models.json` ({})", e),
+                        };
                         self.sync_agent_active_model();
                         self.refresh_credentials();
                         Some(format!(
-                            "Berhasil men-scan **{} model** dari `{}` dan menyimpannya ke `models.json`:\n{}\n\nGunakan pemilih model di atas atau ketik `/model <ID>` untuk mengganti model.",
+                            "Berhasil men-scan **{} model** dari `{}` {}:\n{}\n\nGunakan pemilih model di atas atau ketik `/model <ID>` untuk mengganti model.",
                             count,
                             self.agent.base_url(),
+                            save_note,
                             preview.join("\n")
                         ))
                     }
@@ -120,20 +124,21 @@ impl RpcRuntime {
                 }
                 let api_key = parts[1].trim();
                 let base_url = parts.get(2).map(|s| s.trim().to_string());
-                let active_provider = self.mutable.lock().unwrap().active_provider.clone();
+                let active_provider = self.mutable.lock().unwrap_or_else(|e| e.into_inner()).active_provider.clone();
                 self.agent
                     .update_credentials(api_key.to_string(), base_url.clone());
-                save_auth_key(
+                let auth_save_err = save_auth_key(
                     &self.config_dir,
                     &active_provider,
                     api_key,
                     base_url.as_deref(),
-                );
+                )
+                .err();
                 match self.agent.scan_models().await {
                     Ok(scanned) => {
                         let count = scanned.len();
                         let active_model = {
-                            let mut m = self.mutable.lock().unwrap();
+                            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                             if !scanned.iter().any(|item| item.id == m.active_model) {
                                 if let Some(first) = scanned.first() {
                                     m.active_model = first.id.clone();
@@ -144,37 +149,61 @@ impl RpcRuntime {
                         };
                         self.sync_agent_catalog();
                         self.sync_agent_active_model();
-                        save_scanned_models_to_config(
+                        let mut save_warnings = Vec::new();
+                        if let Some(e) = &auth_save_err {
+                            save_warnings.push(format!("`auth.json`: {}", e));
+                        }
+                        if let Err(e) = save_scanned_models_to_config(
                             &self.config_dir,
                             &active_provider,
                             &scanned,
                             api_key,
-                        );
+                        ) {
+                            save_warnings.push(format!("`models.json`: {}", e));
+                        }
                         self.refresh_credentials();
-                        save_settings_fields(
+                        if let Err(e) = save_settings_fields(
                             &self.config_dir,
                             Some(&active_provider),
                             Some(&active_model),
                             None,
-                        );
-                        Some(format!(
-                            "Token berhasil disimpan & **{} model** terdeteksi otomatis! Model aktif sekarang: `{}` (`{}`).",
-                            count, active_model, active_provider
-                        ))
+                        ) {
+                            save_warnings.push(format!("`settings.json`: {}", e));
+                        }
+                        if save_warnings.is_empty() {
+                            Some(format!(
+                                "Token berhasil disimpan & **{} model** terdeteksi otomatis! Model aktif sekarang: `{}` (`{}`).",
+                                count, active_model, active_provider
+                            ))
+                        } else {
+                            Some(format!(
+                                "Token aktif di memori & **{} model** terdeteksi (`{}`), namun penyimpanan gagal ({}).",
+                                count,
+                                active_model,
+                                save_warnings.join("; ")
+                            ))
+                        }
                     }
                     Err(e) => {
                         self.refresh_credentials();
-                        Some(format!(
-                            "Token disimpan, namun auto-scan `/models` gagal: {}",
-                            e
-                        ))
+                        if let Some(save_err) = auth_save_err {
+                            Some(format!(
+                                "Gagal menyimpan token ke `auth.json` ({}) dan auto-scan `/models` gagal: {}",
+                                save_err, e
+                            ))
+                        } else {
+                            Some(format!(
+                                "Token disimpan, namun auto-scan `/models` gagal: {}",
+                                e
+                            ))
+                        }
                     }
                 }
             }
             "/models" => {
                 self.refresh_credentials();
                 let (active_provider, active_model) = {
-                    let m = self.mutable.lock().unwrap();
+                    let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                     (m.active_provider.clone(), m.active_model.clone())
                 };
                 let avail = self.available_models_json();
@@ -217,7 +246,7 @@ impl RpcRuntime {
             "/model" => {
                 if parts.len() < 2 {
                     let (active_provider, active_model, thinking_level, info) = {
-                        let m = self.mutable.lock().unwrap();
+                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         (
                             m.active_provider.clone(),
                             m.active_model.clone(),
@@ -239,7 +268,7 @@ impl RpcRuntime {
                 }
                 let target = parts[1].trim();
                 {
-                    let mut m = self.mutable.lock().unwrap();
+                    let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some((prov, mid)) = target.split_once('/') {
                         if m.providers.contains_key(prov) {
                             m.active_provider = prov.to_string();
@@ -274,27 +303,33 @@ impl RpcRuntime {
                 self.refresh_credentials();
                 self.sync_thinking_level_for_active_model();
                 let (active_provider, active_model, thinking_level) = {
-                    let m = self.mutable.lock().unwrap();
+                    let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                     (
                         m.active_provider.clone(),
                         m.active_model.clone(),
                         m.thinking_level.clone(),
                     )
                 };
-                save_settings_fields(
+                if let Err(e) = save_settings_fields(
                     &self.config_dir,
                     Some(&active_provider),
                     Some(&active_model),
                     Some(&thinking_level),
-                );
-                Some(format!(
-                    "Model aktif diganti ke `{}/{}` (thinking: `{}`).",
-                    active_provider, active_model, thinking_level
-                ))
+                ) {
+                    Some(format!(
+                        "Model aktif diganti ke `{}/{}` (thinking: `{}`), namun gagal menyimpan ke `settings.json` ({}).",
+                        active_provider, active_model, thinking_level, e
+                    ))
+                } else {
+                    Some(format!(
+                        "Model aktif diganti ke `{}/{}` (thinking: `{}`).",
+                        active_provider, active_model, thinking_level
+                    ))
+                }
             }
             "/thinking" => {
                 let (info, active_model, thinking_level) = {
-                    let m = self.mutable.lock().unwrap();
+                    let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                     (
                         Self::model_info_from_state(&m),
                         m.active_model.clone(),
@@ -314,23 +349,29 @@ impl RpcRuntime {
                 let requested = parts[1].trim().to_ascii_lowercase();
                 let clamped = info.clamp_thinking_level(&requested);
                 {
-                    self.mutable.lock().unwrap().thinking_level = clamped.clone();
+                    self.mutable.lock().unwrap_or_else(|e| e.into_inner()).thinking_level = clamped.clone();
                 }
                 self.agent.set_thinking_level(&clamped);
-                save_settings_fields(&self.config_dir, None, None, Some(&clamped));
+                let save_res = save_settings_fields(&self.config_dir, None, None, Some(&clamped));
                 Self::send_line(&json!({
                     "type": "thinking_level_changed",
                     "level": clamped,
                 }));
-                Some(format!(
-                    "Level thinking diatur ke `{}` untuk model `{}`.",
-                    clamped, active_model
-                ))
+                match save_res {
+                    Ok(()) => Some(format!(
+                        "Level thinking diatur ke `{}` untuk model `{}`.",
+                        clamped, active_model
+                    )),
+                    Err(e) => Some(format!(
+                        "Level thinking diatur ke `{}` untuk model `{}`, namun gagal menyimpan ke `settings.json` ({}).",
+                        clamped, active_model, e
+                    )),
+                }
             }
             "/provider" => {
                 if parts.len() < 2 {
                     let (providers, active_provider) = {
-                        let m = self.mutable.lock().unwrap();
+                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         (m.providers.clone(), m.active_provider.clone())
                     };
                     let mut lines = Vec::new();
@@ -357,10 +398,10 @@ impl RpcRuntime {
                     ));
                 }
                 let target_pid = parts[1].trim();
-                let ep_opt = self.mutable.lock().unwrap().providers.get(target_pid).cloned();
+                let ep_opt = self.mutable.lock().unwrap_or_else(|e| e.into_inner()).providers.get(target_pid).cloned();
                 if let Some(ep) = ep_opt {
                     {
-                        let mut m = self.mutable.lock().unwrap();
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         m.active_provider = target_pid.to_string();
                         if let Some(first) = ep.models.first() {
                             m.active_model = first.id.clone();
@@ -370,23 +411,29 @@ impl RpcRuntime {
                     self.sync_agent_active_model();
                     self.sync_thinking_level_for_active_model();
                     let (active_provider, active_model, thinking_level) = {
-                        let m = self.mutable.lock().unwrap();
+                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         (
                             m.active_provider.clone(),
                             m.active_model.clone(),
                             m.thinking_level.clone(),
                         )
                     };
-                    save_settings_fields(
+                    if let Err(e) = save_settings_fields(
                         &self.config_dir,
                         Some(&active_provider),
                         Some(&active_model),
                         Some(&thinking_level),
-                    );
-                    Some(format!(
-                        "Provider aktif diganti ke `{}` dengan model `{}`.",
-                        active_provider, active_model
-                    ))
+                    ) {
+                        Some(format!(
+                            "Provider aktif diganti ke `{}` dengan model `{}`, namun gagal menyimpan ke `settings.json` ({}).",
+                            active_provider, active_model, e
+                        ))
+                    } else {
+                        Some(format!(
+                            "Provider aktif diganti ke `{}` dengan model `{}`.",
+                            active_provider, active_model
+                        ))
+                    }
                 } else {
                     Some(format!("Provider `{}` tidak ditemukan.", target_pid))
                 }
@@ -397,7 +444,7 @@ impl RpcRuntime {
                         .active_model_info()
                         .output_token_limit
                         .unwrap_or(65_536);
-                    let active_model = self.mutable.lock().unwrap().active_model.clone();
+                    let active_model = self.mutable.lock().unwrap_or_else(|e| e.into_inner()).active_model.clone();
                     return Some(format!(
                         "Batas `maxTokens` model `{}` saat ini: `{}`.\nGunakan `/max-tokens <angka>` untuk mengubah dan menyimpan ke `models.json`.",
                         active_model, cur
@@ -410,15 +457,20 @@ impl RpcRuntime {
                     return Some("Nilai `/max-tokens` harus lebih besar dari 0.".to_string());
                 }
                 let (active_provider, active_model) = {
-                    let m = self.mutable.lock().unwrap();
+                    let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                     (m.active_provider.clone(), m.active_model.clone())
                 };
-                save_model_override_to_config(
+                if let Err(e) = save_model_override_to_config(
                     &self.config_dir,
                     &active_provider,
                     &active_model,
                     &json!({ "maxTokens": max_tok }),
-                );
+                ) {
+                    return Some(format!(
+                        "Gagal menyimpan `maxTokens` untuk `{}/{}` ke `models.json`: {}",
+                        active_provider, active_model, e
+                    ));
+                }
                 self.refresh_credentials();
                 self.sync_agent_active_model();
                 Some(format!(
@@ -428,7 +480,7 @@ impl RpcRuntime {
             }
             "/clear" => {
                 {
-                    let mut state = self.ui_state.lock().unwrap();
+                    let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     state.ui_messages.clear();
                 }
                 self.agent.clear_memory_silent();
@@ -475,7 +527,7 @@ impl RpcRuntime {
         Self::send_line(&json!({ "type": "message_end", "message": abort_msg }));
         {
             self.ensure_session_header();
-            let mut state = self.ui_state.lock().unwrap();
+            let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             state.ui_messages.push(abort_msg.clone());
             state.append_session_entry("message", json!({ "message": abort_msg }));
         }
@@ -508,7 +560,7 @@ impl RpcRuntime {
         }
 
         let (provider_has_auth, active_provider, active_model, auto_retry_enabled) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             let has_auth = m
                 .providers
                 .get(&m.active_provider)
@@ -582,7 +634,7 @@ impl RpcRuntime {
 
                     if turn_in + turn_out > 0 || has_real_usage {
                         {
-                            let mut state = self.ui_state.lock().unwrap();
+                            let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                             state.token_totals.input += turn_in;
                             state.token_totals.output += turn_out;
                             state.total_tokens = state.total_tokens.saturating_add(turn_in + turn_out);
@@ -646,7 +698,7 @@ impl RpcRuntime {
                         retry_started = true;
                         let (rtx, mut rrx) = tokio::sync::watch::channel(false);
                         {
-                            self.mutable.lock().unwrap().retry_cancel_tx = Some(rtx);
+                            self.mutable.lock().unwrap_or_else(|e| e.into_inner()).retry_cancel_tx = Some(rtx);
                         }
                         Self::send_line(&json!({
                             "type": "auto_retry_start",
@@ -668,7 +720,7 @@ impl RpcRuntime {
                             _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => RetryWaitOutcome::SleepDone,
                         };
                         {
-                            self.mutable.lock().unwrap().retry_cancel_tx = None;
+                            self.mutable.lock().unwrap_or_else(|e| e.into_inner()).retry_cancel_tx = None;
                         }
                         match wait_out {
                             RetryWaitOutcome::SleepDone => continue,
@@ -712,7 +764,7 @@ impl RpcRuntime {
                     Self::send_line(&json!({ "type": "message_end", "message": err_msg }));
                     {
                         self.ensure_session_header();
-                        let mut state = self.ui_state.lock().unwrap();
+                        let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                         state.ui_messages.push(err_msg.clone());
                         state.append_session_entry("message", json!({ "message": err_msg }));
                     }
@@ -741,7 +793,7 @@ impl RpcRuntime {
         let rt_hook = Arc::clone(&rt);
         let steer_hook: SteerHook = Arc::new(move || {
             let (drained, rem_s, rem_f) = {
-                let mut m = rt_hook.mutable.lock().unwrap();
+                let mut m = rt_hook.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 let count = match m.steering_mode {
                     QueueMode::OneAtATime => 1.min(m.steering_queue.len()),
                     QueueMode::All => m.steering_queue.len(),
@@ -784,7 +836,9 @@ impl RpcRuntime {
                 final_aborted = true;
                 break;
             }
-            let last_input = current_inputs.pop().unwrap();
+            let Some(last_input) = current_inputs.pop() else {
+                break;
+            };
             for extra in &current_inputs {
                 rt.emit_and_persist_user_message(&extra.message, &extra.images);
                 rt.agent
@@ -803,12 +857,12 @@ impl RpcRuntime {
 
             // Cek ambang auto-compaction bila diaktifkan & konteks >= 85% window
             let maybe_auto_compact = {
-                let m = rt.mutable.lock().unwrap();
+                let m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 if m.auto_compaction_enabled {
                     let window = Self::model_info_from_state(&m)
                         .input_token_limit
                         .unwrap_or(0);
-                    let state = rt.ui_state.lock().unwrap();
+                    let state = rt.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     if window >= 4096 && !state.context_unknown {
                         let threshold = window.saturating_sub(16_384).max((window * 85) / 100);
                         state
@@ -833,7 +887,7 @@ impl RpcRuntime {
             }
 
             let (next_batch, rem_s, rem_f) = {
-                let mut m = rt.mutable.lock().unwrap();
+                let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 if !m.steering_queue.is_empty() {
                     let n = match m.steering_mode {
                         QueueMode::OneAtATime => 1,
@@ -877,7 +931,7 @@ impl RpcRuntime {
         }
 
         {
-            let mut m = rt.mutable.lock().unwrap();
+            let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
             m.active_op = ActiveOp::Idle;
             m.retry_cancel_tx = None;
         }
@@ -976,7 +1030,7 @@ impl RpcRuntime {
         Self::send_line(&json!({ "type": "message_end", "message": msg }));
         {
             self.ensure_session_header();
-            let mut state = self.ui_state.lock().unwrap();
+            let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             state.ui_messages.push(msg.clone());
             state.append_session_entry("message", json!({ "message": msg }));
         }
@@ -990,7 +1044,7 @@ impl RpcRuntime {
         let branch_entries = active_branch_entries(&loaded.entries, loaded.leaf_id.as_deref());
 
         {
-            let mut m = self.mutable.lock().unwrap();
+            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             m.session_file = new_file;
             m.session_id = new_id.clone();
             m.session_name = new_name.clone();
@@ -999,7 +1053,7 @@ impl RpcRuntime {
             m.resume_queues_after_compact = false;
         }
         {
-            let mut s = self.ui_state.lock().unwrap();
+            let mut s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             *s = RpcUiState::from_loaded_session(loaded);
         }
         self.plugins.replay_branch(&branch_entries);
@@ -1011,7 +1065,7 @@ impl RpcRuntime {
     pub(super) fn handle_session_stats_command(&self, id: &str) {
         let model_info = self.active_model_info();
         let (session_file, session_id) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             (
                 m.session_file.to_string_lossy().to_string(),
                 m.session_id.clone(),
@@ -1028,7 +1082,7 @@ impl RpcRuntime {
             total_cost,
             context_usage,
         ) = {
-            let s = self.ui_state.lock().unwrap();
+            let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             let mut user_cnt = 0u64;
             let mut asst_cnt = 0u64;
             let mut call_cnt = 0u64;
@@ -1107,7 +1161,7 @@ impl RpcRuntime {
 
     pub(super) fn handle_fork_command(&self, id: &str, entry_id: &str) {
         {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             if !matches!(m.active_op, ActiveOp::Idle) {
                 Self::send_error(id, "fork", "Tidak bisa fork saat agen sedang sibuk");
                 return;
@@ -1119,8 +1173,8 @@ impl RpcRuntime {
         }
 
         let (old_file, path_entries) = {
-            let m = self.mutable.lock().unwrap();
-            let s = self.ui_state.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+            let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             (
                 m.session_file.clone(),
                 active_branch_entries(&s.entries, s.leaf_id.as_deref()),
@@ -1176,15 +1230,15 @@ impl RpcRuntime {
 
     pub(super) fn handle_clone_command(&self, id: &str) {
         {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             if !matches!(m.active_op, ActiveOp::Idle) {
                 Self::send_error(id, "clone", "Tidak bisa clone saat agen sedang sibuk");
                 return;
             }
         }
         let (old_file, path_entries) = {
-            let m = self.mutable.lock().unwrap();
-            let s = self.ui_state.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+            let s = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
             (
                 m.session_file.clone(),
                 active_branch_entries(&s.entries, s.leaf_id.as_deref()),
@@ -1215,13 +1269,13 @@ impl RpcRuntime {
 
     pub(super) fn handle_new_session_command(&self, id: &str, parent_session: Option<&str>) {
         {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             if !matches!(m.active_op, ActiveOp::Idle) {
                 Self::send_error(id, "new_session", "Tidak bisa new_session saat agen sedang sibuk");
                 return;
             }
         }
-        let cur_dir = self.mutable.lock().unwrap().session_file.parent().map(Path::to_path_buf);
+        let cur_dir = self.mutable.lock().unwrap_or_else(|e| e.into_inner()).session_file.parent().map(Path::to_path_buf);
         let new_file = unique_session_file_path(
             &self.config_dir,
             &self.cwd,
@@ -1247,7 +1301,7 @@ impl RpcRuntime {
 
     pub(super) fn handle_switch_session_command(&self, id: &str, session_path: &str) {
         {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             if !matches!(m.active_op, ActiveOp::Idle) {
                 Self::send_error(id, "switch_session", "Tidak bisa pindah sesi saat agen sedang sibuk");
                 return;
@@ -1274,14 +1328,14 @@ impl RpcRuntime {
 
     pub(super) fn handle_export_html_command(&self, id: &str, output_path: Option<&str>) {
         let (session_file, session_id, session_name) = {
-            let m = self.mutable.lock().unwrap();
+            let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
             (
                 m.session_file.clone(),
                 m.session_id.clone(),
                 m.session_name.clone(),
             )
         };
-        let ui_messages = self.ui_state.lock().unwrap().ui_messages.clone();
+        let ui_messages = self.ui_state.lock().unwrap_or_else(|e| e.into_inner()).ui_messages.clone();
 
         let target_path = match output_path.map(str::trim).filter(|s| !s.is_empty()) {
             Some(raw) => expand_home_or_resolve(raw, &self.cwd),
@@ -1406,9 +1460,18 @@ pub(super) fn is_transient_llm_error(err: &str) -> bool {
         || low.contains("502")
         || low.contains("503")
         || low.contains("504")
+        || low.contains("529")
         || low.contains("overloaded")
         || low.contains("rate limit")
+        || low.contains("too many requests")
+        || low.contains("temporarily unavailable")
+        || low.contains("connection reset")
+        || low.contains("connection closed")
+        || low.contains("broken pipe")
         || low.contains("timed out")
+        || low.contains("timeout")
+        || low.contains("error sending request")
+        || low.contains("empty response")
 }
 
 pub(super) fn extract_prompt_images(images_val: &Value) -> Vec<(String, String)> {

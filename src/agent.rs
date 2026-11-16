@@ -212,13 +212,13 @@ impl GeminiAgent {
 
     /// Model yang sedang aktif di tab saat ini.
     pub fn model(&self) -> String {
-        self.tabs.lock().unwrap().active().model.clone()
+        self.tabs.lock().unwrap_or_else(|e| e.into_inner()).active().model.clone()
     }
 
     /// Info lengkap model aktif saat ini.
     pub fn active_model_info(&self) -> ModelInfo {
         let active_id = self.model();
-        let cat = self.catalog.lock().unwrap();
+        let cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
         cat.find(&active_id).cloned().unwrap_or_else(|| ModelInfo {
             id: active_id.clone(),
             label: active_id,
@@ -236,12 +236,12 @@ impl GeminiAgent {
     }
 
     pub fn thinking_level(&self) -> String {
-        self.thinking_level.lock().unwrap().clone()
+        self.thinking_level.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn set_thinking_level(&self, level: &str) -> String {
         let clamped = self.active_model_info().clamp_thinking_level(level.trim());
-        *self.thinking_level.lock().unwrap() = clamped.clone();
+        *self.thinking_level.lock().unwrap_or_else(|e| e.into_inner()) = clamped.clone();
         clamped
     }
 
@@ -272,20 +272,20 @@ impl GeminiAgent {
     /// menyelaraskan katalog agen dengan katalog RPC yang membawa override
     /// models.json dan model hasil scan provider).
     pub fn upsert_model(&self, info: ModelInfo) {
-        self.catalog.lock().unwrap().upsert_model(info);
+        self.catalog.lock().unwrap_or_else(|e| e.into_inner()).upsert_model(info);
     }
 
     /// Bersihkan histori + timeline tab aktif tanpa mencetak apa pun.
     /// Dipakai jalur RPC (stdout adalah aliran JSONL — println akan merusaknya).
     pub fn clear_memory_silent(&self) {
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         tabs.active_mut().clear();
         self.persist_tabs(&tabs);
     }
 
     /// Terapkan konfigurasi override ke model di katalog (`maxTokens`, `contextWindow`, `reasoning`, `thinkingLevelMap`, dsb.).
     pub fn configure_model(&self, model_id: &str, override_json: &Value) -> ModelInfo {
-        let mut cat = self.catalog.lock().unwrap();
+        let mut cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
         let mut info = cat.find(model_id).cloned().unwrap_or_else(|| ModelInfo {
             id: model_id.to_string(),
             label: model_id.to_string(),
@@ -308,7 +308,7 @@ impl GeminiAgent {
     /// Ganti model pada tab yang sedang aktif (bisa lewat nomor katalog `1..N` atau ID model).
     pub fn set_active_model(&self, query: &str) -> String {
         let resolved = {
-            let mut cat = self.catalog.lock().unwrap();
+            let mut cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(info) = cat.find(query) {
                 info.id.clone()
             } else {
@@ -316,7 +316,7 @@ impl GeminiAgent {
                 query.to_string()
             }
         };
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         tabs.active_mut().model = resolved.clone();
         self.persist_tabs(&tabs);
         self.client.set_default_model(&resolved);
@@ -324,14 +324,14 @@ impl GeminiAgent {
     }
 
     pub fn list_models(&self) -> Vec<ModelInfo> {
-        self.catalog.lock().unwrap().list().to_vec()
+        self.catalog.lock().unwrap_or_else(|e| e.into_inner()).list().to_vec()
     }
 
     /// Scan daftar model dari server provider menggunakan token aktif,
     /// lalu perbarui `ModelCatalog`.
     pub async fn scan_models(&self) -> Result<Vec<ModelInfo>, BoxError> {
         let scanned = self.client.scan_models().await?;
-        let mut cat = self.catalog.lock().unwrap();
+        let mut cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
         cat.replace_with_scanned(scanned.clone());
         Ok(scanned)
     }
@@ -354,12 +354,12 @@ impl GeminiAgent {
     }
 
     pub fn list_tabs(&self) -> (usize, Vec<ChatSession>) {
-        let tabs = self.tabs.lock().unwrap();
+        let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         (tabs.active_index(), tabs.list().to_vec())
     }
 
     pub fn active_tab_summary(&self) -> (String, String, String) {
-        let tabs = self.tabs.lock().unwrap();
+        let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let t = tabs.active();
         (t.id.clone(), t.title.clone(), t.model.clone())
     }
@@ -368,7 +368,7 @@ impl GeminiAgent {
         let model_id = model
             .map(str::to_string)
             .unwrap_or_else(|| self.model());
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let created = tabs.new_tab(&model_id).clone();
         self.persist_tabs(&tabs);
         self.client.set_default_model(&created.model);
@@ -376,7 +376,7 @@ impl GeminiAgent {
     }
 
     pub fn switch_tab(&self, selector: &str) -> Option<ChatSession> {
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let switched = tabs.switch_to(selector).cloned();
         if let Some(ref s) = switched {
             self.persist_tabs(&tabs);
@@ -387,7 +387,7 @@ impl GeminiAgent {
 
     pub fn close_tab(&self, selector: &str) -> bool {
         let fallback = self.client.model();
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let ok = tabs.close_tab(selector, &fallback);
         if ok {
             self.persist_tabs(&tabs);
@@ -397,15 +397,15 @@ impl GeminiAgent {
     }
 
     pub fn active_timeline(&self) -> Vec<TimelineEntry> {
-        self.tabs.lock().unwrap().active().timeline.clone()
+        self.tabs.lock().unwrap_or_else(|e| e.into_inner()).active().timeline.clone()
     }
 
     pub fn active_history(&self) -> Vec<Value> {
-        self.tabs.lock().unwrap().active().history.clone()
+        self.tabs.lock().unwrap_or_else(|e| e.into_inner()).active().history.clone()
     }
 
     pub fn replace_active_history(&self, id: &str, title: Option<&str>, history: Vec<Value>) {
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let active = tabs.active_mut();
         active.id = id.to_string();
         active.title = match title {
@@ -423,7 +423,7 @@ impl GeminiAgent {
         } else {
             user_message_with_images(&input.text, &input.images)
         };
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let active = tabs.active_mut();
         active.update_title_from_prompt(&input.text);
         active.history.push(msg);
@@ -452,7 +452,7 @@ impl GeminiAgent {
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(String, Option<TokenUsage>), BoxError> {
         let (session_id, active_model) = {
-            let tabs = self.tabs.lock().unwrap();
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let s = tabs.active();
             (s.id.clone(), s.model.clone())
         };
@@ -600,7 +600,7 @@ impl GeminiAgent {
                     },
                     collector,
                 );
-                Some(result)
+                Some(strip_internal_tool_fields_for_llm(tool.name(), result))
             }
             Err(e) => {
                 let err_val = json!({ "error": e });
@@ -629,7 +629,7 @@ impl GeminiAgent {
         steer_hook: Option<SteerHook>,
     ) -> Result<TurnOutcome, BoxError> {
         let (session_id, active_model, mut history) = {
-            let tabs = self.tabs.lock().unwrap();
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let s = tabs.active();
             (s.id.clone(), s.model.clone(), s.history.clone())
         };
@@ -741,7 +741,7 @@ impl GeminiAgent {
 
                 let events = collector.take_events();
                 let folded = MemoryEventCollector::fold_turn(&input.text, &events);
-                let mut tabs = self.tabs.lock().unwrap();
+                let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
                 let active = tabs.active_mut();
                 active.update_title_from_prompt(&input.text);
                 active.history = history;
@@ -806,7 +806,7 @@ impl GeminiAgent {
         );
         let events = collector.take_events();
         let folded = MemoryEventCollector::fold_turn(&input.text, &events);
-        let mut tabs = self.tabs.lock().unwrap();
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let active = tabs.active_mut();
         active.update_title_from_prompt(&input.text);
         active.history = history;
@@ -862,7 +862,7 @@ impl Agent for GeminiAgent {
 
     fn clear_memory(&self) {
         let id = {
-            let tabs = self.tabs.lock().unwrap();
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             tabs.active().id.clone()
         };
         self.clear_memory_silent();
@@ -954,6 +954,15 @@ fn save_token_to_user_env(api_key: &str, base_url: Option<&str>, model: &str) {
     let _ = std::fs::write(&env_path, content);
 }
 
+fn strip_internal_tool_fields_for_llm(tool_name: &str, mut result: Value) -> Value {
+    if tool_name == "todo" {
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("details");
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,6 +1011,25 @@ mod tests {
         assert_eq!(outcome.usage.unwrap().input_tokens, 150);
         assert_eq!(outcome.usage.unwrap().output_tokens, 80);
         assert!(!outcome.aborted);
+    }
+
+    #[test]
+    fn reg_todo_strips_internal_details_from_llm_payload_only() {
+        let raw = json!({
+            "status": "success",
+            "action": "create",
+            "changed": true,
+            "task": { "id": 1, "subject": "A", "status": "pending" },
+            "details": { "action": "create", "tasks": [{ "id": 1 }], "nextId": 2 },
+            "message": "ok"
+        });
+        let for_llm = strip_internal_tool_fields_for_llm("todo", raw.clone());
+        assert!(for_llm.get("details").is_none());
+        assert_eq!(for_llm["task"]["id"], 1);
+        assert_eq!(for_llm["message"], "ok");
+
+        let other = strip_internal_tool_fields_for_llm("read_file", raw.clone());
+        assert!(other.get("details").is_some());
     }
 }
 
