@@ -4,4 +4,4 @@
 -keep class com.google.ai.edge.litertlm.** { *; }
 
 # Keep the Rust JNI bridge (liboopbot.so) entry points intact in release builds.
--keep class io.jeph.pipkin.host.OopbotBridge { *; }
+-keep class io.jeph.oopbot.host.OopbotBridge { *; }

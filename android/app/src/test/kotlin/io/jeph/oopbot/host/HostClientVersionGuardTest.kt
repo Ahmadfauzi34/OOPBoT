@@ -1,0 +1,54 @@
+package io.jeph.oopbot.host
+
+import io.jeph.oopbot.agent.helloVersionMismatch
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class HostClientVersionGuardTest {
+  @Test
+  fun verifiedEnsureVersionAcceptsMatchingOopbotVersion() {
+    assertEquals(
+      "0.5.5",
+      verifiedEnsureVersion(JSONObject().put("oopbotVersion", "0.5.5"), "0.5.5"),
+    )
+  }
+
+  @Test
+  fun verifiedEnsureVersionRejectsStaleNullBlankOrMissingWithNodeTooOld() {
+    val invalidPayloads = listOf(
+      JSONObject(),
+      JSONObject().put("oopbotVersion", ""),
+      JSONObject().put("oopbotVersion", JSONObject.NULL),
+      JSONObject().put("piVersion", "0.5.5"),
+      JSONObject().put("oopbotVersion", "0.5.4"),
+      JSONObject().put("oopbotVersion", "0.5.6"),
+    )
+    for (payload in invalidPayloads) {
+      val failure = assertThrows(HostFailure.NodeTooOld::class.java) {
+        verifiedEnsureVersion(payload, "0.5.5")
+      }
+      assertEquals(HostFailure.Kind.NodeTooOld, failure.kind)
+      assertTrue(failure.command?.contains("/releases/download/v0.5.5/") == true)
+    }
+  }
+
+  @Test
+  fun extractEnsureVersionDoesNotTurnJsonNullIntoLiteralNullString() {
+    val payload = JSONObject().put("oopbotVersion", JSONObject.NULL)
+    assertNull(extractEnsureVersion(payload))
+  }
+
+  @Test
+  fun helloVersionMismatchReturnsOopbotVersionRejectionOnlyOnMismatch() {
+    assertNull(helloVersionMismatch(JSONObject().put("oopbotVersion", "0.5.5"), "0.5.5"))
+    assertNull(helloVersionMismatch(JSONObject(), "0.5.5"))
+    assertNull(helloVersionMismatch(JSONObject().put("oopbotVersion", JSONObject.NULL), "0.5.5"))
+
+    val stale = helloVersionMismatch(JSONObject().put("oopbotVersion", "0.5.4"), "0.5.5")
+    assertEquals("oopbot_version", stale?.code)
+  }
+}

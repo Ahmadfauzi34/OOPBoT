@@ -14,7 +14,7 @@ readonly PROVIDER=codex-lb
 readonly MODEL=gpt-6-astra
 readonly TERMUX_BIN=/data/data/com.termux/files/usr/bin
 readonly TIMEOUT_SECONDS=30
-readonly DEV_PACKAGE=io.jeph.pipkin.debug
+readonly DEV_PACKAGE=io.jeph.oopbot.debug
 
 # Emulators only: the user's phone is never set up by script.
 if [[ $# -lt 1 || $# -gt 2 || $1 != emulator-* || ($# -eq 2 && $2 != --release) ]]; then
@@ -108,7 +108,7 @@ if adb -s "$serial" shell dumpsys package com.termux | grep -q 'versionName=goog
 	fi
 else
 	# Android lets an app start Termux's command service only while it is on screen.
-	adb -s "$serial" shell am start -W -n "$DEV_PACKAGE/io.jeph.pipkin.MainActivity" >/dev/null
+	adb -s "$serial" shell am start -W -n "$DEV_PACKAGE/io.jeph.oopbot.MainActivity" >/dev/null
 	adb -s "$serial" shell "run-as $DEV_PACKAGE am start-foreground-service --user 0 \
 		-n com.termux/com.termux.app.RunCommandService -a com.termux.RUN_COMMAND \
 		--es com.termux.RUN_COMMAND_PATH $TERMUX_BIN/node \

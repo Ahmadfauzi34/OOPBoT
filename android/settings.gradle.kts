@@ -17,5 +17,5 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Pipkin"
+rootProject.name = "OOPBoT"
 include(":app")

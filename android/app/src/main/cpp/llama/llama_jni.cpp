@@ -1,4 +1,4 @@
-// JNI bindings for io.jeph.pipkin.localmodel.engine.llama.LlamaServer: llama.cpp's server (tools/server/server.cpp),
+// JNI bindings for io.jeph.oopbot.localmodel.engine.llama.LlamaServer: llama.cpp's server (tools/server/server.cpp),
 // started the way its llama-server binary starts it, inside the :inference process.
 
 #include <android/log.h>
@@ -30,7 +30,7 @@ void server_stream_session_manager_start();
 
 namespace {
 
-constexpr const char * TAG = "PipkinLlama";
+constexpr const char * TAG = "OopbotLlama";
 
 // Written on its own line to stderr by sync_logs; the pump counts them to know it has logged everything before.
 constexpr char LOG_SYNC = '\x1e';
@@ -168,7 +168,7 @@ extern "C" llama_model * __wrap_llama_model_load_from_file(const char * path, ll
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_io_jeph_pipkin_localmodel_engine_llama_LlamaServer_run(JNIEnv * env, jobject, jobjectArray arguments) {
+Java_io_jeph_oopbot_localmodel_engine_llama_LlamaServer_run(JNIEnv * env, jobject, jobjectArray arguments) {
   redirect_output_to_logcat();
 
   const jsize count = env->GetArrayLength(arguments);
@@ -217,23 +217,23 @@ Java_io_jeph_pipkin_localmodel_engine_llama_LlamaServer_run(JNIEnv * env, jobjec
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_io_jeph_pipkin_localmodel_engine_llama_LlamaServer_terminate(JNIEnv *, jobject) {
+Java_io_jeph_oopbot_localmodel_engine_llama_LlamaServer_terminate(JNIEnv *, jobject) {
   llama_server_terminate();
 }
 
 extern "C" JNIEXPORT jfloat JNICALL
-Java_io_jeph_pipkin_localmodel_engine_llama_LlamaServer_loadProgress(JNIEnv *, jobject) {
+Java_io_jeph_oopbot_localmodel_engine_llama_LlamaServer_loadProgress(JNIEnv *, jobject) {
   return load_progress.load();
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_io_jeph_pipkin_localmodel_engine_llama_LlamaServer_firstError(JNIEnv * env, jobject) {
+Java_io_jeph_oopbot_localmodel_engine_llama_LlamaServer_firstError(JNIEnv * env, jobject) {
   std::lock_guard<std::mutex> lock(log_mutex);
   return first_error.empty() ? nullptr : env->NewStringUTF(first_error.c_str());
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_io_jeph_pipkin_localmodel_engine_llama_LlamaServer_gpuName(JNIEnv * env, jobject) {
+Java_io_jeph_oopbot_localmodel_engine_llama_LlamaServer_gpuName(JNIEnv * env, jobject) {
   redirect_output_to_logcat();
   ggml_backend_dev_t gpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
   return gpu == nullptr ? nullptr : env->NewStringUTF(ggml_backend_dev_description(gpu));

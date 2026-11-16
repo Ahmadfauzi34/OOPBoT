@@ -8,7 +8,7 @@ Fondasi *agent harness* berbasis Rust yang menggabungkan:
 Setiap rilis di GitHub Actions otomatis menghasilkan **3 artefak**:
 1. **`oopbot-aarch64-linux-android`** — Binary CLI + RPC mandiri untuk Termux (`oopbot` & `oopbot --mode rpc`).
 2. **`liboopbot-aarch64-linux-android.so`** — Shared library (`cdylib`) C-ABI (`jniLibs/arm64-v8a/liboopbot.so`).
-3. **`oopbot-pipkin-<tag>-arm64.apk`** — APK Android siap pasang yang langsung menggunakan mesin Rust `oopbot` di Termux.
+3. **`oopbot-<tag>-arm64.apk`** — APK Android siap pasang yang langsung menggunakan mesin Rust `oopbot` di Termux.
 
 ---
 

@@ -449,16 +449,16 @@ tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("bui
 }
 
 android {
-  namespace = "io.jeph.pipkin"
+  namespace = "io.jeph.oopbot"
   compileSdk = 37
 
   defaultConfig {
-    applicationId = "io.jeph.pipkin"
+    applicationId = "io.jeph.oopbot"
     minSdk = 29
     targetSdk = 37
     // Release builds get both from .github/workflows/release.yml; local builds keep these placeholders.
-    versionCode = providers.gradleProperty("pipkin.versionCode").map(String::toInt).getOrElse(1)
-    versionName = providers.gradleProperty("pipkin.versionName").getOrElse("0.0.0-dev")
+    versionCode = providers.gradleProperty("oopbot.versionCode").map(String::toInt).getOrElse(1)
+    versionName = providers.gradleProperty("oopbot.versionName").getOrElse("0.0.0-dev")
     ndk { abiFilters += listOf("arm64-v8a") }
     externalNativeBuild {
       cmake {
@@ -466,7 +466,7 @@ android {
         arguments += "-DLLAMA_SOURCES=${llamaSourcesDir.get().asFile}"
         arguments += "-DOPENCL_HEADERS=${llamaSourcesDir.get().dir("opencl-headers").asFile}"
         // Only the app's libraries: llama.cpp's tools and examples would build for nothing.
-        targets += listOf("pipkin-syntax", "pipkin-llama", "pipkin-opencl-probe")
+        targets += listOf("oopbot-syntax", "oopbot-llama", "oopbot-opencl-probe")
       }
     }
   }

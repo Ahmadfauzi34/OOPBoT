@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 
-# pipkin-syntax, the tree-sitter grammars; pipkin-llama in llama/, llama.cpp's server for local models; and
-# pipkin-opencl-probe in opencl/, which finds the GPU that OpenCL reports.
-project(pipkin LANGUAGES C CXX)
+# oopbot-syntax, the tree-sitter grammars; oopbot-llama in llama/, llama.cpp's server for local models; and
+# oopbot-opencl-probe in opencl/, which finds the GPU that OpenCL reports.
+project(oopbot LANGUAGES C CXX)
 
 # The pinned sources fetched by Gradle's fetchTreeSitterSources task.
 if(NOT TREE_SITTER_SOURCES)
@@ -55,15 +55,15 @@ foreach(dir ${GRAMMAR_DIRS})
   list(APPEND GRAMMAR_FILES ${files})
 endforeach()
 
-add_library(pipkin-syntax SHARED syntax.c ${TS}/tree-sitter/lib/src/lib.c ${GRAMMAR_FILES})
+add_library(oopbot-syntax SHARED syntax.c ${TS}/tree-sitter/lib/src/lib.c ${GRAMMAR_FILES})
 
-target_include_directories(pipkin-syntax PRIVATE ${TS}/tree-sitter/lib/include ${TS}/tree-sitter/lib/src)
+target_include_directories(oopbot-syntax PRIVATE ${TS}/tree-sitter/lib/include ${TS}/tree-sitter/lib/src)
 
 # tree-sitter's own build flags; with symbols hidden, only the JNI functions are exported.
-target_compile_definitions(pipkin-syntax PRIVATE _POSIX_C_SOURCE=200112L _DEFAULT_SOURCE TREE_SITTER_HIDE_SYMBOLS)
+target_compile_definitions(oopbot-syntax PRIVATE _POSIX_C_SOURCE=200112L _DEFAULT_SOURCE TREE_SITTER_HIDE_SYMBOLS)
 
 # JNI fixes every native function's signature, so unused env and class parameters are expected.
-target_compile_options(pipkin-syntax PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+target_compile_options(oopbot-syntax PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
 
 # Third-party sources build at -O2 without warnings, even in debug builds, where parsing at -O0
 # would lag behind a streaming reply.

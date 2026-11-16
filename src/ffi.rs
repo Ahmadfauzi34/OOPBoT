@@ -2,7 +2,7 @@
 //!
 //! Menyediakan:
 //! 1. **C-ABI (`oopbot_*`)**: untuk pemanggilan dari C/C++, JNA, Python, atau Node.
-//! 2. **Android JNI (`Java_io_jeph_pipkin_host_OopbotBridge_*`)**: untuk pemanggilan
+//! 2. **Android JNI (`Java_io_jeph_oopbot_host_OopbotBridge_*`)**: untuk pemanggilan
 //!    langsung dari aplikasi Android Kotlin (`OopbotBridge.kt`) lewat `System.loadLibrary("oopbot")`
 //!    tanpa memerlukan dependensi crate tambahan.
 
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn oopbot_engine_free(handle: *mut OopbotHandle) {
 }
 
 // ===========================================================================
-// Android JNI Bridge (`io.jeph.pipkin.host.OopbotBridge`)
+// Android JNI Bridge (`io.jeph.oopbot.host.OopbotBridge`)
 // ===========================================================================
 
 pub type JniEnv = *mut *const JniNativeInterface;
@@ -363,7 +363,7 @@ unsafe fn rust_to_jstring(env: JniEnv, text: &str) -> JString {
 /// # Safety
 /// `env` must be a valid JNI `JNIEnv*` pointer for the calling thread.
 #[no_mangle]
-pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
+pub unsafe extern "C" fn Java_io_jeph_oopbot_host_OopbotBridge_version(
     env: JniEnv,
     _class: JObject,
 ) -> JString {
@@ -378,7 +378,7 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_version(
 /// # Safety
 /// `env` must be a valid JNI `JNIEnv*` pointer for the calling thread.
 #[no_mangle]
-pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_referenceCatalog(
+pub unsafe extern "C" fn Java_io_jeph_oopbot_host_OopbotBridge_referenceCatalog(
     env: JniEnv,
     _class: JObject,
 ) -> JString {
@@ -398,7 +398,7 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_referenceCatalog(
 /// # Safety
 /// `env` must be a valid JNI `JNIEnv*` pointer, and `api_key` / `default_model` must be valid JNI string references (or null).
 #[no_mangle]
-pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
+pub unsafe extern "C" fn Java_io_jeph_oopbot_host_OopbotBridge_engineNew(
     env: JniEnv,
     _class: JObject,
     api_key: JString,
@@ -420,7 +420,7 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
 /// # Safety
 /// `env` must be a valid JNI `JNIEnv*`, `handle` must be a non-freed pointer from `engineNew` (or `0`), and `request_json` must be a valid JNI string reference (or null).
 #[no_mangle]
-pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
+pub unsafe extern "C" fn Java_io_jeph_oopbot_host_OopbotBridge_engineRequest(
     env: JniEnv,
     _class: JObject,
     handle: JLong,
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
 /// # Safety
 /// `handle` must be `0` or a live pointer previously returned by `engineNew` that has not yet been freed.
 #[no_mangle]
-pub unsafe extern "C" fn Java_io_jeph_pipkin_host_OopbotBridge_engineFree(
+pub unsafe extern "C" fn Java_io_jeph_oopbot_host_OopbotBridge_engineFree(
     _env: JniEnv,
     _class: JObject,
     handle: JLong,
@@ -569,13 +569,13 @@ mod tests {
             oopbot_engine_free(handle);
 
             // JNI exports must safely handle null env/args without panicking or unwinding.
-            assert!(Java_io_jeph_pipkin_host_OopbotBridge_version(
+            assert!(Java_io_jeph_oopbot_host_OopbotBridge_version(
                 std::ptr::null_mut(),
                 std::ptr::null_mut()
             )
             .is_null());
             assert_eq!(
-                Java_io_jeph_pipkin_host_OopbotBridge_engineNew(
+                Java_io_jeph_oopbot_host_OopbotBridge_engineNew(
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
@@ -584,14 +584,14 @@ mod tests {
                 ),
                 0
             );
-            assert!(Java_io_jeph_pipkin_host_OopbotBridge_engineRequest(
+            assert!(Java_io_jeph_oopbot_host_OopbotBridge_engineRequest(
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 0,
                 std::ptr::null_mut()
             )
             .is_null());
-            Java_io_jeph_pipkin_host_OopbotBridge_engineFree(
+            Java_io_jeph_oopbot_host_OopbotBridge_engineFree(
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 0,

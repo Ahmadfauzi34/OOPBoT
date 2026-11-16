@@ -87,7 +87,7 @@ jobs:
           fi
 
   build-apk:
-    name: Build Android APK (Pipkin UI + liboopbot.so)
+    name: Build Android APK (OOPBoT UI + liboopbot.so)
     needs: build-android
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -136,18 +136,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          gradle :app:assembleDebug -Ppipkin.versionName="$VER" -Ppipkin.versionCode=1
+          gradle :app:assembleDebug -Poopbot.versionName="$VER" -Poopbot.versionCode=1
           mkdir -p ../apk-dist
           APK_FILE=$(find app/build -name "*.apk" | head -n 1)
           echo "Found built APK: $APK_FILE"
-          test -n "$APK_FILE" && cp "$APK_FILE" "../apk-dist/oopbot-pipkin-${GITHUB_REF_NAME}-arm64.apk"
+          test -n "$APK_FILE" && cp "$APK_FILE" "../apk-dist/oopbot-${GITHUB_REF_NAME}-arm64.apk"
           cd ../apk-dist
-          sha256sum "oopbot-pipkin-${GITHUB_REF_NAME}-arm64.apk" > "oopbot-pipkin-${GITHUB_REF_NAME}-arm64.apk.sha256"
+          sha256sum "oopbot-${GITHUB_REF_NAME}-arm64.apk" > "oopbot-${GITHUB_REF_NAME}-arm64.apk.sha256"
           ls -lh
 
       - uses: actions/upload-artifact@v4
         with:
-          name: oopbot-pipkin-apk
+          name: oopbot-apk
           path: apk-dist/*
 
       - name: Publikasikan APK ke GitHub Release

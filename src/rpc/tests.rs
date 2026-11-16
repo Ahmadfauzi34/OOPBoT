@@ -159,7 +159,7 @@ impl Drop for TempConfigGuard {
 fn rpc_server_activates_plugins_from_extensions_arg() {
     let tmp = TempConfigGuard::new("oopbot_plugins_test");
     let extensions = vec![
-        "/data/user/0/io.jeph.pipkin/files/extensions/oopbot-todo/index.js".to_string(),
+        "/data/user/0/io.jeph.oopbot/files/extensions/oopbot-todo/index.js".to_string(),
         "oopbot-web-access".to_string(),
     ];
 

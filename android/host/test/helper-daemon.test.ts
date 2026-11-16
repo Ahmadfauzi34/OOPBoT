@@ -184,12 +184,12 @@ describe("helper daemon", () => {
     expect(await readFile(path.join(env.home, "out.txt"), "utf8")).toBe("hello there\n");
     expect(await readdir(file("launches"))).toEqual([]);
 
-    connection.send({ type: "return", package: "io.jeph.pipkin.debug" });
+    connection.send({ type: "return", package: "io.jeph.oopbot.debug" });
     expect(await connection.next()).toEqual({ type: "returned", ok: true });
     expect(await readFile(env.amLog, "utf8")).toBe(
-      "start --user 0 --activity-reorder-to-front -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n io.jeph.pipkin.debug/io.jeph.pipkin.MainActivity\n",
+      "start --user 0 --activity-reorder-to-front -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n io.jeph.oopbot.debug/io.jeph.oopbot.MainActivity\n",
     );
-    connection.send({ type: "return", package: "io.jeph.pipkin; rm -rf /" });
+    connection.send({ type: "return", package: "io.jeph.oopbot; rm -rf /" });
     expect(await connection.next()).toEqual({ type: "returned", ok: false });
 
     connection.send({ type: "launch", args: "nope", stdin: "" });

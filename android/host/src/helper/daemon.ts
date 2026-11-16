@@ -338,7 +338,7 @@ class Daemon {
       channel.send({ type: "returned", ok: false });
       return;
     }
-    const component = `${pkg}/io.jeph.pipkin.MainActivity`;
+    const component = `${pkg}/io.jeph.oopbot.MainActivity`;
     // Reordering brings Pipkin's existing screen forward instead of stacking a new one on it.
     const intent = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", component];
     execFile(

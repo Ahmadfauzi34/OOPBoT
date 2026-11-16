@@ -1,4 +1,4 @@
-# pipkin-llama: llama.cpp's own OpenAI-compatible server (tools/server), run in the :inference process through JNI,
+# oopbot-llama: llama.cpp's own OpenAI-compatible server (tools/server), run in the :inference process through JNI,
 # with llama.cpp, ggml and the server linked in statically so that the app ships one library per ABI.
 
 # The pinned sources fetched by Gradle's llamaSources task.
@@ -7,7 +7,7 @@ if(NOT LLAMA_SOURCES)
 endif()
 
 # Debug builds would otherwise compile llama.cpp at -O0, where a reply crawls out at a few tokens a minute, and release
-# builds at RelWithDebInfo's -O2. These variables only reach this directory and llama.cpp's, not pipkin-syntax.
+# builds at RelWithDebInfo's -O2. These variables only reach this directory and llama.cpp's, not oopbot-syntax.
 foreach(lang C CXX)
   set(CMAKE_${lang}_FLAGS_DEBUG "-O3 -DNDEBUG")
   set(CMAKE_${lang}_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG")
@@ -30,7 +30,7 @@ set(LLAMA_ALL_WARNINGS OFF)
 set(GGML_OPENMP OFF)
 set(GGML_NATIVE OFF)
 
-# A release archive has no git history, and build-info.cmake would otherwise report Pipkin's own commit, whose
+# A release archive has no git history, and build-info.cmake would otherwise report OOPBoT's own commit, whose
 # repository the sources are extracted inside.
 set(LLAMA_BUILD_IS_DEV OFF)
 set(LLAMA_BUILD_NUMBER 0)
@@ -61,19 +61,19 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
   set(GGML_OPENCL_EMBED_KERNELS ON)
   set(GGML_OPENCL_USE_ADRENO_KERNELS ON)
   set(OpenCL_INCLUDE_DIR ${OPENCL_HEADERS} CACHE PATH "Khronos's OpenCL headers" FORCE)
-  set(OpenCL_LIBRARY pipkin-opencl-loader CACHE STRING "Pipkin's OpenCL loader" FORCE)
+  set(OpenCL_LIBRARY oopbot-opencl-loader CACHE STRING "OOPBoT's OpenCL loader" FORCE)
 endif()
 # x86_64 runs on emulators and Chromebooks, keeps the NDK's baseline of SSE4.2, and has no GPU backend.
 
 add_subdirectory(${LLAMA_SOURCES}/llama.cpp llama.cpp EXCLUDE_FROM_ALL)
 
-add_library(pipkin-llama SHARED llama_jni.cpp)
+add_library(oopbot-llama SHARED llama_jni.cpp)
 
-target_compile_features(pipkin-llama PRIVATE cxx_std_17)
-target_compile_options(pipkin-llama PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(pipkin-llama PRIVATE llama-server-impl log)
+target_compile_features(oopbot-llama PRIVATE cxx_std_17)
+target_compile_options(oopbot-llama PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(oopbot-llama PRIVATE llama-server-impl log)
 
-target_link_options(pipkin-llama PRIVATE
+target_link_options(oopbot-llama PRIVATE
   # The server replaces common_params.load_progress_callback with its own, which reports only to a router process;
   # llama_jni.cpp wraps the model loader to read the progress on the way.
   -Wl,--wrap=llama_model_load_from_file

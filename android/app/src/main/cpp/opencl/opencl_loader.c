@@ -1,4 +1,4 @@
-// The OpenCL functions that ggml's OpenCL backend and pipkin-opencl-probe call, each forwarding to the vendor's driver,
+// The OpenCL functions that ggml's OpenCL backend and oopbot-opencl-probe call, each forwarding to the vendor's driver,
 // libOpenCL.so, which loads on the first call. Linking the driver instead would make Android refuse to load either
 // library on a phone without one, such as an emulator; without it, OpenCL here finds no platform and every other
 // function fails. Add a function to CL_FUNCTIONS and define it below when a new llama.cpp calls one more: the link

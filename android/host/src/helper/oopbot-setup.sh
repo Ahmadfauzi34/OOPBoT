@@ -260,5 +260,5 @@ $ready || fail "The helper didn't start. Paste the command again."
 # 6. Done; back to OOPBoT. Android blocks the switch when Termux isn't on screen, so say how to get there too.
 echo "OOPBoT setup done. Switch back to OOPBoT if it doesn't open on its own."
 am start --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
-  -n "$package/io.jeph.pipkin.MainActivity" >/dev/null 2>&1 || true
+  -n "$package/io.jeph.oopbot.MainActivity" >/dev/null 2>&1 || true
 
