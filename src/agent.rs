@@ -600,7 +600,7 @@ impl GeminiAgent {
                     },
                     collector,
                 );
-                Some(result)
+                Some(strip_internal_tool_fields_for_llm(tool.name(), result))
             }
             Err(e) => {
                 let err_val = json!({ "error": e });
@@ -954,6 +954,15 @@ fn save_token_to_user_env(api_key: &str, base_url: Option<&str>, model: &str) {
     let _ = std::fs::write(&env_path, content);
 }
 
+fn strip_internal_tool_fields_for_llm(tool_name: &str, mut result: Value) -> Value {
+    if tool_name == "todo" {
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("details");
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,6 +1011,25 @@ mod tests {
         assert_eq!(outcome.usage.unwrap().input_tokens, 150);
         assert_eq!(outcome.usage.unwrap().output_tokens, 80);
         assert!(!outcome.aborted);
+    }
+
+    #[test]
+    fn reg_todo_strips_internal_details_from_llm_payload_only() {
+        let raw = json!({
+            "status": "success",
+            "action": "create",
+            "changed": true,
+            "task": { "id": 1, "subject": "A", "status": "pending" },
+            "details": { "action": "create", "tasks": [{ "id": 1 }], "nextId": 2 },
+            "message": "ok"
+        });
+        let for_llm = strip_internal_tool_fields_for_llm("todo", raw.clone());
+        assert!(for_llm.get("details").is_none());
+        assert_eq!(for_llm["task"]["id"], 1);
+        assert_eq!(for_llm["message"], "ok");
+
+        let other = strip_internal_tool_fields_for_llm("read_file", raw.clone());
+        assert!(other.get("details").is_some());
     }
 }
 
