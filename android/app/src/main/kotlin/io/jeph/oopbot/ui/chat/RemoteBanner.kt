@@ -43,12 +43,12 @@ import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.RemoteHost
 import io.jeph.oopbot.ui.components.DialogConfirm
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
@@ -58,9 +58,9 @@ import kotlinx.coroutines.launch
  * The warning floating over a remote chat's stream while its host is lost: why, in the host's words, and Connect when
  * only the user can sign in or check the host's key. The chat checks the host while it's on screen
  * ([RemoteChecks]), so the warning comes up within seconds of the host going, before anyone sends a message, and goes
- * once it answers again; until then the composer won't send. A connect that works takes it down at once. While Pipkin
+ * once it answers again; until then the composer won't send. A connect that works takes it down at once. While OOPBoT
  * signs a host in again with its saved password, the warning says it's reconnecting; when the server refused the
- * password, or the host's key changed so Pipkin didn't send it, it says so and offers to fix that.
+ * password, or the host's key changed so OOPBoT didn't send it, it says so and offers to fix that.
  */
 @Composable
 internal fun RemoteBanner(process: AgentProcess, modifier: Modifier = Modifier) {
@@ -118,19 +118,19 @@ private class Shown(@DrawableRes val icon: Int, val text: String, val action: (@
 
 @Composable
 private fun BannerPill(shown: Shown, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   // A button brings its own padding.
-  val end = if (shown.action == null) PipkinTokens.Spacing.s16 else PipkinTokens.Spacing.s4
+  val end = if (shown.action == null) OopbotTokens.Spacing.s16 else OopbotTokens.Spacing.s4
   Row(
     modifier = modifier
-      .widthIn(max = PipkinTokens.contentMaxWidth)
+      .widthIn(max = OopbotTokens.contentMaxWidth)
       .shadow(BANNER_ELEVATION, BANNER_SHAPE)
       .clip(BANNER_SHAPE)
       // Opaque, so it covers the stream's text under it rather than showing it through.
       .background(colors.warningSoft.compositeOver(colors.surface1))
       .semantics { liveRegion = LiveRegionMode.Polite }
       .heightIn(min = 44.dp)
-      .padding(start = PipkinTokens.Spacing.s12, end = end),
+      .padding(start = OopbotTokens.Spacing.s12, end = end),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
@@ -140,7 +140,7 @@ private fun BannerPill(shown: Shown, modifier: Modifier) {
       // Not filling: a short warning makes a short pill.
       modifier = Modifier.weight(1f, fill = false).padding(vertical = 10.dp),
       color = colors.dotWarning,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
       lineHeight = 19.sp,
     )
@@ -149,14 +149,14 @@ private fun BannerPill(shown: Shown, modifier: Modifier) {
 }
 
 /**
- * Why Pipkin didn't send [host]'s saved password: its key isn't the one the user accepted. Forget host key, for a key
+ * Why OOPBoT didn't send [host]'s saved password: its key isn't the one the user accepted. Forget host key, for a key
  * the user knows changed, forgets it and runs [onForgotten], which connects and asks about the new key.
  */
 @Composable
 private fun KeyChangedDialog(host: RemoteHost, onDismiss: () -> Unit, onForgotten: () -> Unit) {
   val remoteHosts = LocalContext.current.appGraph.remoteHosts
   val scope = rememberCoroutineScope()
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.remote_key_changed_title, host.name),
     text = stringResource(R.string.remote_key_changed_warning, host.name),
     icon = R.drawable.ic_lucide_triangle_alert,
@@ -182,7 +182,7 @@ private fun KeyChangedDialog(host: RemoteHost, onDismiss: () -> Unit, onForgotte
 }
 
 /**
- * While a remote chat's Pi runs and Pipkin is in front, asks its `pipkin-remote` every [CHECK_INTERVAL] whether the
+ * While a remote chat's Pi runs and OOPBoT is in front, asks its `oopbot-remote` every [CHECK_INTERVAL] whether the
  * host still answers: once at once, then on and on. A tool call alone finds the host lost only once someone sent a
  * message and the agent reached for it.
  */
@@ -218,8 +218,8 @@ private fun BannerTextButton(label: String, onClick: () -> Unit) {
       .clip(RoundedCornerShape(10.dp))
       .clickable(role = Role.Button, onClick = onClick)
       .padding(horizontal = 10.dp, vertical = 9.dp),
-    color = pipkinColors.accent,
-    fontSize = PipkinTokens.FontSize.base,
+    color = oopbotColors.accent,
+    fontSize = OopbotTokens.FontSize.base,
     fontWeight = FontWeight.Bold,
   )
 }

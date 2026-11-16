@@ -52,15 +52,15 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** A step's icon on a rounded accent-washed tile; it turns into an accent check, with a small bounce, once [done]. */
 @Composable
 internal fun IconTile(@DrawableRes icon: Int, done: Boolean, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
-  val shape = RoundedCornerShape(PipkinTokens.Radius.xxl + PipkinTokens.Spacing.s8)
+  val colors = oopbotColors
+  val shape = RoundedCornerShape(OopbotTokens.Radius.xxl + OopbotTokens.Spacing.s8)
   AnimatedContent(
     targetState = done,
     modifier = modifier.size(TILE_SIZE),
@@ -95,11 +95,11 @@ internal fun IconTile(@DrawableRes icon: Int, done: Boolean, modifier: Modifier 
 /** Where onboarding is: a dot per step, the current one stretched, finished ones in accent. */
 @Composable
 internal fun ProgressDots(done: List<Boolean>, current: Int, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val description = stringResource(R.string.onboarding_progress, current + 1, done.size)
   Row(
     modifier = modifier.clearAndSetSemantics { contentDescription = description },
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     done.forEachIndexed { index, isDone ->
@@ -134,10 +134,10 @@ internal fun PasteDemo(modifier: Modifier = Modifier) {
 
 @Composable
 private fun PasteDemoTerminal(modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val time = rememberDemoTime()
-  val shape = RoundedCornerShape(PipkinTokens.Radius.xxl)
-  val mono = PipkinTokens.FontSize.code
+  val shape = RoundedCornerShape(OopbotTokens.Radius.xxl)
+  val mono = OopbotTokens.FontSize.code
   val description = stringResource(R.string.onboarding_setup_body)
   Column(
     modifier = modifier
@@ -148,19 +148,19 @@ private fun PasteDemoTerminal(modifier: Modifier) {
       .graphicsLayer { alpha = fade(time.value, FADE_OUT_AT, CYCLE_MILLIS, from = 1f, to = 0f) }
       .background(colors.surface1, shape)
       // The extra room on top is where the Paste bubble pops up.
-      .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s16, bottom = PipkinTokens.Spacing.s16)
-      .padding(top = PipkinTokens.Spacing.s16 + BUBBLE_ROOM),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s16, bottom = OopbotTokens.Spacing.s16)
+      .padding(top = OopbotTokens.Spacing.s16 + BUBBLE_ROOM),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-      Text(text = PROMPT, color = colors.foregroundMuted, fontFamily = PipkinFonts.mono, fontSize = mono)
+      Text(text = PROMPT, color = colors.foregroundMuted, fontFamily = OopbotFonts.mono, fontSize = mono)
       Box(contentAlignment = Alignment.CenterStart) {
         PressTarget(time)
         Text(
           text = COMMAND,
           modifier = Modifier.graphicsLayer { alpha = fade(time.value, PASTE_AT, PASTE_AT + STEP_MILLIS) },
           color = colors.foreground,
-          fontFamily = PipkinFonts.mono,
+          fontFamily = OopbotFonts.mono,
           fontSize = mono,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -171,33 +171,33 @@ private fun PasteDemoTerminal(modifier: Modifier) {
       text = stringResource(R.string.onboarding_demo_installing),
       modifier = Modifier.graphicsLayer { alpha = fade(time.value, RUN_AT, RUN_AT + STEP_MILLIS) },
       color = colors.foregroundMuted,
-      fontFamily = PipkinFonts.mono,
+      fontFamily = OopbotFonts.mono,
       fontSize = mono,
     )
     DoneLine(time)
   }
 }
 
-/** Termux's last line in the demo: a check and "Pipkin setup done". */
+/** Termux's last line in the demo: a check and "OOPBoT setup done". */
 @Composable
 private fun DoneLine(time: State<Float>) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier.graphicsLayer { alpha = fade(time.value, DONE_AT, DONE_AT + STEP_MILLIS) },
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     LucideIcon(
       icon = R.drawable.ic_lucide_check,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
       tint = colors.accent,
     )
     Text(
       text = stringResource(R.string.onboarding_demo_done),
       color = colors.foreground,
-      fontFamily = PipkinFonts.mono,
-      fontSize = PipkinTokens.FontSize.code,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
     )
   }
 }
@@ -205,7 +205,7 @@ private fun DoneLine(time: State<Float>) {
 /** The blinking cursor where the finger long-presses, and the Paste bubble that pops up over it. */
 @Composable
 private fun PressTarget(time: State<Float>) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(
     modifier = Modifier
       .size(CURSOR_WIDTH, CURSOR_HEIGHT)
@@ -239,10 +239,10 @@ private fun PressTarget(time: State<Float>) {
           scaleX = (BUBBLE_START_SCALE + (1f - BUBBLE_START_SCALE) * shown) * tapped
           scaleY = scaleX
         }
-        .background(colors.surface3, RoundedCornerShape(PipkinTokens.Radius.md))
-        .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s4),
+        .background(colors.surface3, RoundedCornerShape(OopbotTokens.Radius.md))
+        .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s4),
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
     )
   }
 }

@@ -65,9 +65,9 @@ import io.jeph.oopbot.ui.git.shownExplorerTab
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /**
@@ -114,7 +114,7 @@ internal fun ExplorerPanel(
   Column(
     modifier = modifier
       .fillMaxSize()
-      .background(pipkinColors.sidebar)
+      .background(oopbotColors.sidebar)
       .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
       .imePadding(),
   ) {
@@ -258,15 +258,15 @@ private fun ExplorerHeader(
   onSelect: (ExplorerTab) -> Unit,
   onClose: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
-      .padding(top = PipkinTokens.Spacing.s8)
+      .padding(top = OopbotTokens.Spacing.s8)
       .fillMaxWidth()
       .height(56.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s12),
+      .padding(horizontal = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     Row(
       modifier = Modifier
@@ -274,8 +274,8 @@ private fun ExplorerHeader(
         .height(42.dp)
         .clip(CircleShape)
         .background(colors.surface1)
-        .padding(PipkinTokens.Spacing.s4),
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+        .padding(OopbotTokens.Spacing.s4),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
     ) {
       for (tab in tabs) {
         ExplorerTabButton(
@@ -302,7 +302,7 @@ private fun ExplorerHeader(
  */
 @Composable
 private fun ExplorerTabButton(tab: ExplorerTab, active: Boolean, count: Int?, onClick: () -> Unit, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val tint = if (active) colors.foreground else colors.foregroundMuted
   Row(
     modifier = modifier
@@ -311,7 +311,7 @@ private fun ExplorerTabButton(tab: ExplorerTab, active: Boolean, count: Int?, on
       .background(if (active) colors.surface2 else Color.Transparent)
       .clickable(onClick = onClick)
       .semantics { selected = active }
-      .padding(horizontal = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
   ) {
@@ -332,7 +332,7 @@ private fun ExplorerTabButton(tab: ExplorerTab, active: Boolean, count: Int?, on
       ),
       modifier = Modifier.weight(1f, fill = false),
       color = tint,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
@@ -343,18 +343,18 @@ private fun ExplorerTabButton(tab: ExplorerTab, active: Boolean, count: Int?, on
 
 @Composable
 private fun TabCount(count: Int) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Text(
     text = count.toString(),
     modifier = Modifier
       .clearAndSetSemantics {}
       .background(colors.accentSoft, CircleShape)
       .defaultMinSize(minWidth = 20.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s6),
+      .padding(horizontal = OopbotTokens.Spacing.s6),
     color = colors.accent,
-    fontSize = PipkinTokens.FontSize.sm,
+    fontSize = OopbotTokens.FontSize.sm,
     fontWeight = FontWeight.Bold,
-    style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+    style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
     textAlign = TextAlign.Center,
     maxLines = 1,
   )
@@ -377,15 +377,15 @@ private fun ExplorerToolbar(
   onNewFolder: () -> Unit,
   onRefresh: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val preferences = LocalContext.current.appGraph.preferences
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .height(44.dp)
-      .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s12),
+      .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s2),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s2),
   ) {
     SortKeyButton(sort.key, onClick = { preferences.setExplorerSort(sort.next()) })
     ToolbarButton(
@@ -408,7 +408,7 @@ private fun ExplorerToolbar(
     )
     if (refreshing) {
       Box(modifier = Modifier.size(TOOLBAR_BUTTON_SIZE), contentAlignment = Alignment.Center) {
-        Spinner(PipkinTokens.IconSize.md, stringResource(R.string.files_refreshing))
+        Spinner(OopbotTokens.IconSize.md, stringResource(R.string.files_refreshing))
       }
     } else {
       ToolbarButton(R.drawable.ic_lucide_refresh_cw, stringResource(R.string.files_refresh), onRefresh, enabled)
@@ -431,7 +431,7 @@ private fun ToolbarButton(
     modifier = Modifier.size(TOOLBAR_BUTTON_SIZE),
     enabled = enabled,
     background = background,
-    tint = pipkinColors.foregroundMuted,
+    tint = oopbotColors.foregroundMuted,
   )
 }
 
@@ -447,10 +447,10 @@ private fun SortKeyButton(key: SortKey, onClick: () -> Unit) {
     modifier = Modifier
       .height(28.dp)
       .clip(CircleShape)
-      .border(1.dp, pipkinColors.border, CircleShape)
+      .border(1.dp, oopbotColors.border, CircleShape)
       .clickable(onClick = onClick)
       .semantics { contentDescription = description }
-      .padding(horizontal = PipkinTokens.Spacing.s12),
+      .padding(horizontal = OopbotTokens.Spacing.s12),
     contentAlignment = Alignment.Center,
   ) {
     for (other in SortKey.entries) {
@@ -462,7 +462,7 @@ private fun SortKeyButton(key: SortKey, onClick: () -> Unit) {
 
 @Composable
 private fun SortKeyLabel(text: String, modifier: Modifier = Modifier) {
-  Text(text = text, modifier = modifier, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.meta)
+  Text(text = text, modifier = modifier, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.meta)
 }
 
 @Composable

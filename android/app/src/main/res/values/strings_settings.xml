@@ -191,7 +191,7 @@
     <string name="provider_status_checking">Checking…</string>
     <string name="provider_status_connected">Connected</string>
     <string name="provider_status_failed">Couldn\'t connect</string>
-    <!-- Pipkin couldn't ask Pi which providers you're signed in to. -->
+    <!-- OOPBoT couldn't ask the agent which providers you're signed in to. -->
     <string name="settings_auth_refresh_failed">Could not read sign-in status.</string>
     <plurals name="provider_models_available">
         <item quantity="one">%1$d model available</item>

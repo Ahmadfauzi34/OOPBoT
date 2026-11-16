@@ -35,9 +35,9 @@ import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownPadding
 import com.mikepenz.markdown.utils.resolveImageAlt
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.flow.conflate
 import org.intellij.markdown.MarkdownElementTypes
 
@@ -46,19 +46,19 @@ import org.intellij.markdown.MarkdownElementTypes
  * [cache], markdown it has parsed before shows from the first frame, and each parse of it is kept there.
  */
 @Composable
-fun PipkinMarkdown(markdown: String, modifier: Modifier = Modifier, cache: MarkdownCache? = null) {
-  val colors = pipkinColors
+fun OopbotMarkdown(markdown: String, modifier: Modifier = Modifier, cache: MarkdownCache? = null) {
+  val colors = oopbotColors
   val body = TextStyle(
     color = colors.foreground,
-    fontFamily = PipkinFonts.ui,
-    fontSize = PipkinTokens.FontSize.content,
-    lineHeight = PipkinTokens.LineHeight.markdown,
-    fontFeatureSettings = PipkinFonts.FEATURES,
+    fontFamily = OopbotFonts.ui,
+    fontSize = OopbotTokens.FontSize.content,
+    lineHeight = OopbotTokens.LineHeight.markdown,
+    fontFeatureSettings = OopbotFonts.FEATURES,
   )
-  // CodeText is Pipkin's one code style, so the library's code typography is ignored here.
+  // CodeText is OOPBoT's one code style, so the library's code typography is ignored here.
   val codeBlock: @Composable (String, String?, TextStyle) -> Unit = { text, language, _ ->
     CodeBox(
-      modifier = Modifier.padding(vertical = PipkinTokens.Spacing.s6),
+      modifier = Modifier.padding(vertical = OopbotTokens.Spacing.s6),
       label = language?.takeIf { it.isNotBlank() },
     ) { CodeText(text, language) }
   }
@@ -75,8 +75,8 @@ fun PipkinMarkdown(markdown: String, modifier: Modifier = Modifier, cache: Markd
           dividerColor = colors.border,
         ),
       typography = typography(body),
-      padding = markdownPadding(block = PipkinTokens.Spacing.s6, codeBlock = PaddingValues(0.dp)),
-      dimens = markdownDimens(codeBackgroundCornerSize = PipkinTokens.Radius.base),
+      padding = markdownPadding(block = OopbotTokens.Spacing.s6, codeBlock = PaddingValues(0.dp)),
+      dimens = markdownDimens(codeBackgroundCornerSize = OopbotTokens.Radius.base),
       components =
         markdownComponents(
           codeFence = { MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = codeBlock) },
@@ -116,12 +116,12 @@ private fun rememberParsedMarkdown(markdown: String, cache: MarkdownCache?): Sta
 }
 
 /**
- * Pipkin has no image loader, so an image shows as Paseo shows one that failed to load: its alt text, small and muted
+ * OOPBoT has no image loader, so an image shows as Paseo shows one that failed to load: its alt text, small and muted
  * on surface2, or nothing without alt. Left to the library, each image reserves an empty box the size of a picture.
  */
 @Composable
 private fun imageAltAnnotator(): MarkdownAnnotator {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val style = SpanStyle(color = colors.foregroundMuted, background = colors.surface2, fontSize = IMAGE_ALT_FONT_SIZE)
   return remember(style) {
     markdownAnnotator { content, node ->
@@ -137,24 +137,24 @@ private val IMAGE_ALT_FONT_SIZE = 10.sp
 
 @Composable
 private fun typography(body: TextStyle): MarkdownTypography {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val code = TextStyle(
     color = colors.foreground,
-    fontFamily = PipkinFonts.mono,
-    fontSize = PipkinTokens.FontSize.code,
-    lineHeight = PipkinTokens.LineHeight.code,
-    fontFeatureSettings = PipkinFonts.FEATURES,
+    fontFamily = OopbotFonts.mono,
+    fontSize = OopbotTokens.FontSize.code,
+    lineHeight = OopbotTokens.LineHeight.code,
+    fontFeatureSettings = OopbotFonts.FEATURES,
   )
   return markdownTypography(
-    h1 = body.copy(fontSize = PipkinTokens.FontSize.xxl, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
-    h2 = body.copy(fontSize = PipkinTokens.FontSize.xl, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
-    h3 = body.copy(fontSize = PipkinTokens.FontSize.lg, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
+    h1 = body.copy(fontSize = OopbotTokens.FontSize.xxl, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
+    h2 = body.copy(fontSize = OopbotTokens.FontSize.xl, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+    h3 = body.copy(fontSize = OopbotTokens.FontSize.lg, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
     h4 = body.copy(fontWeight = FontWeight.SemiBold),
     h5 = body.copy(fontWeight = FontWeight.SemiBold),
     h6 = body.copy(fontWeight = FontWeight.SemiBold),
     text = body,
     code = code,
-    inlineCode = code.copy(lineHeight = PipkinTokens.LineHeight.markdown),
+    inlineCode = code.copy(lineHeight = OopbotTokens.LineHeight.markdown),
     quote = body.copy(color = colors.foregroundMuted),
     paragraph = body,
     ordered = body,
@@ -162,7 +162,7 @@ private fun typography(body: TextStyle): MarkdownTypography {
     list = body,
     textLink = TextLinkStyles(style = SpanStyle(color = colors.accent, textDecoration = TextDecoration.Underline)),
     // The front matter table's cell type, a size under the body so more of a row fits across.
-    table = body.copy(fontSize = PipkinTokens.FontSize.base, lineHeight = 20.sp),
+    table = body.copy(fontSize = OopbotTokens.FontSize.base, lineHeight = 20.sp),
     alertTitle = body.copy(fontWeight = FontWeight.SemiBold),
   )
 }

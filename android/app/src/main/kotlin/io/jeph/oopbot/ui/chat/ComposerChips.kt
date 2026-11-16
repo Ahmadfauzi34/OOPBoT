@@ -21,8 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import org.json.JSONObject
 
 /** The current model's name, ellipsized when [modifier] gives it less room; opens the model picker. */
@@ -43,8 +43,8 @@ internal fun ThinkingChip(thinkingLevel: String?, onClick: () -> Unit) {
     LucideIcon(
       icon = R.drawable.ic_lucide_brain,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
-      tint = pipkinColors.foregroundMuted,
+      size = OopbotTokens.IconSize.sm,
+      tint = oopbotColors.foregroundMuted,
     )
     ChipText(thinkingLevel?.let { thinkingLevelLabel(it) }.orEmpty())
   }
@@ -55,7 +55,7 @@ private fun ChipText(text: String, modifier: Modifier = Modifier) {
   Text(
     text = text,
     modifier = modifier,
-    color = pipkinColors.foreground,
+    color = oopbotColors.foreground,
     fontSize = 12.5.sp,
     fontWeight = FontWeight.Medium,
     maxLines = 1,
@@ -76,7 +76,7 @@ private fun ToolbarChip(
       modifier
         .heightIn(min = 30.dp)
         .clip(CircleShape)
-        .background(pipkinColors.surface2)
+        .background(oopbotColors.surface2)
         .clickable(onClickLabel = onClickLabel, onClick = onClick)
         .padding(horizontal = 10.dp),
     verticalAlignment = Alignment.CenterVertically,

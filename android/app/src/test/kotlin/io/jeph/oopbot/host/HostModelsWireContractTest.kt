@@ -36,7 +36,7 @@ class HostModelsWireContractTest {
       JSONObject()
         .put("oopbotVersion", "0.5.5")
         .put("nodeVersion", "oopbot-native")
-        .put("configDir", "/data/data/com.termux/files/home/.pipkin")
+        .put("configDir", "/data/data/com.termux/files/home/.oopbot")
         .put("home", "/data/data/com.termux/files/home")
         .put("sharedStorage", true),
     )

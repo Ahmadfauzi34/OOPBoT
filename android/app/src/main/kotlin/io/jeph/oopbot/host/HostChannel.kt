@@ -94,6 +94,6 @@ internal class HostChannel(
   }
 
   private companion object {
-    const val TAG = "PipkinHost"
+    const val TAG = "OopbotHost"
   }
 }

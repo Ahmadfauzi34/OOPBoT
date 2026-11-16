@@ -48,7 +48,7 @@
     <string name="host_provider_http_status">HTTP <xliff:g id="status" example="401">%1$s</xliff:g></string>
     <!-- %1$s: the HTTP status code the server answered with; %2$s: the error message the server sent, in its own language. -->
     <string name="host_provider_http_status_said">HTTP <xliff:g id="status" example="401">%1$s</xliff:g>: <xliff:g id="message" example="Invalid API key">%2$s</xliff:g></string>
-    <!-- %1$s: the URL Pipkin asked for its list of models, ending in /models. -->
+    <!-- %1$s: the URL OOPBoT asked for its list of models, ending in /models. -->
     <string name="host_provider_web_page"><xliff:g id="url" example="https://example.com/models">%1$s</xliff:g> returned a web page, not JSON</string>
     <!-- %1$s: the start of what the server answered instead. -->
     <string name="host_provider_not_json">The server did not return JSON: <xliff:g id="body" example="Not Found">%1$s</xliff:g></string>

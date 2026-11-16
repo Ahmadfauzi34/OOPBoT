@@ -60,8 +60,8 @@ import io.jeph.oopbot.ui.git.CommitScreen
 import io.jeph.oopbot.ui.sidebar.Sidebar
 import io.jeph.oopbot.ui.sidebar.SidebarLinks
 import io.jeph.oopbot.ui.terminal.TerminalScreen
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.WorkspaceTabsSheet
 import io.jeph.oopbot.ui.workspace.rememberPaneItems
@@ -214,7 +214,7 @@ internal fun MainScreen(
       modifier = Modifier
         .align(Alignment.BottomCenter)
         .windowInsetsPadding(WindowInsets.safeDrawing)
-        .padding(PipkinTokens.Spacing.s16),
+        .padding(OopbotTokens.Spacing.s16),
     )
   }
 }
@@ -384,7 +384,7 @@ private fun WorkspacePanes(
   ChatsOnScreen(uncovered.mapNotNullTo(HashSet()) { (items[it] as? PaneItem.Chat)?.process })
   PaneRow(panels.swapped) {
     for (pane in shownPanes) {
-      if (pane == Pane.Secondary) VerticalDivider(thickness = 1.dp, color = pipkinColors.border)
+      if (pane == Pane.Secondary) VerticalDivider(thickness = 1.dp, color = oopbotColors.border)
       // Keyed, so each pane keeps its own state whichever panes show.
       key(pane) {
         val item = items[pane]

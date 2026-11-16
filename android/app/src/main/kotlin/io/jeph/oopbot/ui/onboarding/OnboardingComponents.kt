@@ -44,14 +44,14 @@ import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** A settings-style page: [header] over a scrolling, width-capped column of step cards. */
 @Composable
 internal fun SetupPage(header: @Composable () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-  Column(modifier = Modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     header()
     Column(
       modifier =
@@ -60,12 +60,12 @@ internal fun SetupPage(header: @Composable () -> Unit, content: @Composable Colu
           .weight(1f)
           .verticalScroll(rememberScrollState())
           .navigationBarsPadding()
-          .padding(PipkinTokens.Spacing.s16),
+          .padding(OopbotTokens.Spacing.s16),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       Column(
-        modifier = Modifier.widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+        modifier = Modifier.widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
         content = content,
       )
     }
@@ -75,25 +75,25 @@ internal fun SetupPage(header: @Composable () -> Unit, content: @Composable Colu
 /** [spec] as a numbered card: a flat surface1 card with its status badge and title over its content. */
 @Composable
 internal fun StepCard(spec: StepSpec, number: Int, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
     modifier =
       modifier
         .fillMaxWidth()
-        .background(colors.surface1, RoundedCornerShape(PipkinTokens.Radius.xxl))
-        .padding(PipkinTokens.Spacing.s16),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+        .background(colors.surface1, RoundedCornerShape(OopbotTokens.Radius.xxl))
+        .padding(OopbotTokens.Spacing.s16),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     ) {
       StatusBadge(number, spec.status)
       Text(
         text = spec.title,
         modifier = Modifier.weight(1f),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.Bold,
         lineHeight = CARD_TITLE_LINE_HEIGHT,
       )
@@ -102,7 +102,7 @@ internal fun StepCard(spec: StepSpec, number: Int, modifier: Modifier = Modifier
           text = it,
           modifier = Modifier
             .background(colors.accentSoft, RoundedCornerShape(BADGE_RADIUS))
-            .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s2),
+            .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s2),
           color = colors.accent,
           fontSize = BADGE_TEXT_SIZE,
           fontWeight = FontWeight.Bold,
@@ -116,9 +116,9 @@ internal fun StepCard(spec: StepSpec, number: Int, modifier: Modifier = Modifier
     spec.note?.let { StepText(it) }
     if (spec.buttons.isNotEmpty()) {
       FlowRow(
-        modifier = Modifier.padding(top = PipkinTokens.Spacing.s4),
-        horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+        modifier = Modifier.padding(top = OopbotTokens.Spacing.s4),
+        horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
       ) {
         spec.buttons.forEachIndexed { index, button ->
           // Once a step is done its buttons only redo it, so none of them is the main action any more.
@@ -143,14 +143,14 @@ internal fun requirementLabel(requirement: Requirement): String? = when (require
 /** The step's number on a disc while pending, the pot while running, a filled check once done, or an alert. */
 @Composable
 private fun StatusBadge(number: Int, status: StepStatus) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val circle = Modifier.size(BADGE_SIZE).clip(CircleShape)
   when (status) {
     StepStatus.Done -> Box(circle.background(colors.accent), contentAlignment = Alignment.Center) {
       LucideIcon(
         icon = R.drawable.ic_lucide_check,
         contentDescription = stringResource(R.string.onboarding_status_done),
-        size = PipkinTokens.IconSize.sm,
+        size = OopbotTokens.IconSize.sm,
         tint = colors.accentForeground,
       )
     }
@@ -161,7 +161,7 @@ private fun StatusBadge(number: Int, status: StepStatus) {
       LucideIcon(
         icon = R.drawable.ic_lucide_circle_alert,
         contentDescription = stringResource(R.string.onboarding_status_failed),
-        size = PipkinTokens.IconSize.sm,
+        size = OopbotTokens.IconSize.sm,
         tint = colors.destructive,
       )
     }
@@ -170,9 +170,9 @@ private fun StatusBadge(number: Int, status: StepStatus) {
       Text(
         text = number.toString(),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         fontWeight = FontWeight.Bold,
-        style = LocalTextStyle.current.merge(TextStyle(fontFeatureSettings = PipkinFonts.TABULAR)),
+        style = LocalTextStyle.current.merge(TextStyle(fontFeatureSettings = OopbotFonts.TABULAR)),
       )
     }
   }
@@ -180,37 +180,37 @@ private fun StatusBadge(number: Int, status: StepStatus) {
 
 /** The muted explanation under a step title, or an error in destructive. */
 @Composable
-internal fun StepText(text: String, modifier: Modifier = Modifier, color: Color = pipkinColors.foregroundMuted) {
+internal fun StepText(text: String, modifier: Modifier = Modifier, color: Color = oopbotColors.foregroundMuted) {
   Text(
     text = text,
     modifier = modifier,
     color = color,
-    fontSize = PipkinTokens.FontSize.meta,
+    fontSize = OopbotTokens.FontSize.meta,
     lineHeight = STEP_TEXT_LINE_HEIGHT,
   )
 }
 
-/** A simmering pot beside what Pipkin is waiting for. */
+/** A simmering pot beside what OOPBoT is waiting for. */
 @Composable
 internal fun WaitingRow(text: String, modifier: Modifier = Modifier) {
   Row(
     modifier = modifier,
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
-    SimmeringPot(size = PipkinTokens.IconSize.lg, tint = pipkinColors.foreground)
-    Text(text = text, color = pipkinColors.foreground, fontSize = PipkinTokens.FontSize.meta)
+    SimmeringPot(size = OopbotTokens.IconSize.lg, tint = oopbotColors.foreground)
+    Text(text = text, color = oopbotColors.foreground, fontSize = OopbotTokens.FontSize.meta)
   }
 }
 
 @Composable
 internal fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Button(
     onClick = onClick,
     modifier = modifier.heightIn(min = 36.dp),
     enabled = enabled,
-    shape = RoundedCornerShape(PipkinTokens.Radius.md),
+    shape = RoundedCornerShape(OopbotTokens.Radius.md),
     colors =
       ButtonDefaults.buttonColors(
         containerColor = colors.accent,
@@ -220,7 +220,7 @@ internal fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier
       ),
     contentPadding = ButtonPadding,
   ) {
-    Text(text = text, fontSize = PipkinTokens.FontSize.base)
+    Text(text = text, fontSize = OopbotTokens.FontSize.base)
   }
 }
 
@@ -231,12 +231,12 @@ internal fun SecondaryButton(
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   OutlinedButton(
     onClick = onClick,
     modifier = modifier.heightIn(min = 36.dp),
     enabled = enabled,
-    shape = RoundedCornerShape(PipkinTokens.Radius.md),
+    shape = RoundedCornerShape(OopbotTokens.Radius.md),
     border = BorderStroke(1.dp, colors.borderAccent),
     colors =
       ButtonDefaults.outlinedButtonColors(
@@ -245,7 +245,7 @@ internal fun SecondaryButton(
       ),
     contentPadding = ButtonPadding,
   ) {
-    Text(text = text, fontSize = PipkinTokens.FontSize.base)
+    Text(text = text, fontSize = OopbotTokens.FontSize.base)
   }
 }
 
@@ -255,32 +255,32 @@ internal fun SecondaryButton(
  */
 @Composable
 internal fun CommandBox(command: String, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   Row(
     modifier =
       modifier
         .fillMaxWidth()
         .background(colors.surface2, RoundedCornerShape(COMMAND_RADIUS))
-        .padding(start = PipkinTokens.Spacing.s12, end = PipkinTokens.Spacing.s4)
-        .padding(vertical = PipkinTokens.Spacing.s8),
+        .padding(start = OopbotTokens.Spacing.s12, end = OopbotTokens.Spacing.s4)
+        .padding(vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.Top,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     Text(
       text = command,
-      modifier = Modifier.weight(1f).padding(vertical = PipkinTokens.Spacing.s4),
+      modifier = Modifier.weight(1f).padding(vertical = OopbotTokens.Spacing.s4),
       color = colors.foreground,
-      fontFamily = PipkinFonts.mono,
-      fontSize = PipkinTokens.FontSize.code,
-      lineHeight = PipkinTokens.LineHeight.code,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
     )
     RoundIconButton(
       icon = R.drawable.ic_lucide_copy,
       contentDescription = stringResource(R.string.onboarding_copy_command),
       onClick = { TermuxSetup.copy(context, command) },
       tint = colors.foregroundMuted,
-      iconSize = PipkinTokens.IconSize.sm,
+      iconSize = OopbotTokens.IconSize.sm,
     )
   }
 }
@@ -292,10 +292,10 @@ internal fun ProgressLines(lines: List<String>, modifier: Modifier = Modifier) {
     lines.forEach { line ->
       Text(
         text = line,
-        color = pipkinColors.foregroundMuted,
-        fontFamily = PipkinFonts.mono,
-        fontSize = PipkinTokens.FontSize.code,
-        lineHeight = PipkinTokens.LineHeight.code,
+        color = oopbotColors.foregroundMuted,
+        fontFamily = OopbotFonts.mono,
+        fontSize = OopbotTokens.FontSize.code,
+        lineHeight = OopbotTokens.LineHeight.code,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -304,7 +304,7 @@ internal fun ProgressLines(lines: List<String>, modifier: Modifier = Modifier) {
 }
 
 private val STEP_TEXT_LINE_HEIGHT = 19.sp
-private val ButtonPadding = PaddingValues(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s6)
+private val ButtonPadding = PaddingValues(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s6)
 private val CARD_TITLE_LINE_HEIGHT = 20.sp
 private val BADGE_SIZE = 24.dp
 private val BADGE_RADIUS = 8.dp

@@ -35,7 +35,7 @@ class NoticeStoreTest {
   }
 
   @Test
-  fun noticesSavedBeforePipkinHadNoticesOfItsOwnStillLoad() {
+  fun noticesSavedBeforeOopbotHadNoticesOfItsOwnStillLoad() {
     NoticeStore(dir, now).put("/s/a.jsonl", listOf(first))
     val file = dir.listFiles().orEmpty().single()
     file.writeText("""[{"level":"Info","message":"Sandbox ready","after":null,"afterRun":true}]""")

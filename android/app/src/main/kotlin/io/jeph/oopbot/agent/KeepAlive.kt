@@ -32,11 +32,11 @@ internal class KeepAlive(context: Context) {
 
   private fun update(active: Boolean, reason: String) {
     if (!AgentService.update(context, active)) {
-      Log.w(TAG, "Keep-alive ($reason, active=$active) not applied; Android may stop Pipkin in the background")
+      Log.w(TAG, "Keep-alive ($reason, active=$active) not applied; Android may stop OOPBoT in the background")
     }
   }
 
   private companion object {
-    const val TAG = "Pipkin"
+    const val TAG = "OOPBoT"
   }
 }

@@ -25,7 +25,7 @@ internal object TermuxSetup {
   internal fun sanitizeVersion(raw: String): String = raw.trim().takeIf(SAFE_VERSION::matches) ?: DEFAULT_OOPBOT_VERSION
 
   /**
-   * F-Droid: OOPBoT native binary, allow-external-apps, then back to Pipkin, the build with [packageName]: the debug
+   * F-Droid: OOPBoT native binary, allow-external-apps, then back to OOPBoT, the build with [packageName]: the debug
    * build has its own package beside the release. `dpkg --configure -a` finishes an upgrade an earlier paste left half
    * done. `yes` answers dpkg's conffile prompts. Storage access is its own setup step.
    */
@@ -58,7 +58,7 @@ internal object TermuxSetup {
    * F-Droid: opens Termux on a session that shows Termux's own storage prompt; F-Droid's build only, as it needs
    * RUN_COMMAND. The broadcast in `termux-setup-storage` only reaches a Termux on screen, so it waits a moment for
    * Termux to open. Its question about rebuilding an existing `~/storage` stays the user's to answer: Termux empties
-   * that folder, files included. Pipkin comes back once access is granted, after a minute, or at once on a "no"; the
+   * that folder, files included. OOPBoT comes back once access is granted, after a minute, or at once on a "no"; the
    * line it prints is what a user who declined the prompt sees meanwhile. The wait checks shared storage itself, as
    * the host does.
    */
@@ -80,7 +80,7 @@ internal object TermuxSetup {
 
   /**
    * The setup command for the installed build. The Play build's carries a fresh single-use pairing token, so ask for
-   * it only when it's about to be copied; [keepAlive] keeps Pipkin serving its installer while the user is in Termux.
+   * it only when it's about to be copied; [keepAlive] keeps OOPBoT serving its installer while the user is in Termux.
    */
   fun command(context: Context, keepAlive: KeepAlive): String = when {
     TermuxInstall.status(context).isPlay -> PlaySetup.newCommand(context, keepAlive)

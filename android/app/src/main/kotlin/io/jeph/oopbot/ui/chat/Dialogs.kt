@@ -16,9 +16,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.DialogConfirm
 import io.jeph.oopbot.ui.components.DialogTextField
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 
-/** A [PipkinDialog] with Cancel and a confirm button; back or a tap outside dismisses it. */
+/** A [OopbotDialog] with Cancel and a confirm button; back or a tap outside dismisses it. */
 @Composable
 internal fun ConfirmDialog(
   title: String,
@@ -29,7 +29,7 @@ internal fun ConfirmDialog(
   @DrawableRes icon: Int? = null,
   destructive: Boolean = false,
 ) {
-  PipkinDialog(
+  OopbotDialog(
     title = title,
     text = text,
     icon = icon,
@@ -50,7 +50,7 @@ internal fun TextInputDialog(
   onDismiss: () -> Unit,
 ) {
   var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(initial.length))) }
-  PipkinDialog(
+  OopbotDialog(
     title = title,
     confirm = DialogConfirm(confirmLabel, { onConfirm(value.text) }, enabled = value.text.isNotBlank()),
     dismissLabel = stringResource(R.string.chat_cancel),

@@ -6,8 +6,8 @@ import android.os.Bundle
 import io.jeph.oopbot.termux.TermuxInstall
 
 /**
- * Opens Termux in a new session for [TermuxWaker] and finishes at once, without a window. An activity of Pipkin's
- * own starting and finishing is what lets Android switch back to Pipkin for a few seconds after Termux covers it.
+ * Opens Termux in a new session for [TermuxWaker] and finishes at once, without a window. An activity of OOPBoT's
+ * own starting and finishing is what lets Android switch back to OOPBoT for a few seconds after Termux covers it.
  */
 class TermuxWakeActivity : Activity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -15,7 +15,7 @@ class TermuxWakeActivity : Activity() {
     try {
       TermuxInstall.openTermuxNewSession(this)
     } catch (_: ActivityNotFoundException) {
-      // Termux was uninstalled since the wake began; the wake times out and Pipkin reports it.
+      // Termux was uninstalled since the wake began; the wake times out and OOPBoT reports it.
     }
     finish()
   }

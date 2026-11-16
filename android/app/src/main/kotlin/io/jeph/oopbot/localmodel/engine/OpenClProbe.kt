@@ -1,7 +1,7 @@
 package io.jeph.oopbot.localmodel.engine
 
 /**
- * Asks the vendor's OpenCL driver, if Pipkin can load one, for the phone's GPU. Both LiteRT-LM's GPU backend and
+ * Asks the vendor's OpenCL driver, if OOPBoT can load one, for the phone's GPU. Both LiteRT-LM's GPU backend and
  * llama.cpp's run on OpenCL, and llama.cpp's only on Adreno GPUs, so the GPU's name decides which can run here. The
  * library loads the driver only when asked, so a phone without one still runs everything else.
  */

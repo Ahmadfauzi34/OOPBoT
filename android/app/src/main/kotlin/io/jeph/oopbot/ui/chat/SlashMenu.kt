@@ -45,16 +45,16 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.RpcError
 import io.jeph.oopbot.agent.commands
 import io.jeph.oopbot.ui.components.CapsLabel
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /** The highlighted row for one query; a new query highlights its best match again. */
 private data class Highlight(val query: String, val index: Int)
 
 /**
- * Paseo's slash-command menu for one chat: while the draft starts with `/name` it lists Pipkin's
+ * Paseo's slash-command menu for one chat: while the draft starts with `/name` it lists OOPBoT's
  * built-in commands and Pi's own (extension commands, prompt templates, skills), best match nearest
  * the composer. Picking inserts the command, or runs a built-in that takes no argument.
  */
@@ -161,7 +161,7 @@ internal class SlashMenu(private val controller: ChatController) {
  */
 @Composable
 internal fun SlashCommandMenu(menu: SlashMenu, query: String, onRan: () -> Unit, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val options = menu.options(query)
   val highlighted = menu.highlighted(query, options.size)
   Box(
@@ -175,7 +175,7 @@ internal fun SlashCommandMenu(menu: SlashMenu, query: String, onRan: () -> Unit,
     if (options.isEmpty()) {
       val text = if (menu.loading) R.string.chat_commands_loading else R.string.chat_commands_empty
       MenuRow(onClick = null) {
-        Text(stringResource(text), color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.sm)
+        Text(stringResource(text), color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.sm)
       }
       return@Box
     }
@@ -188,7 +188,7 @@ internal fun SlashCommandMenu(menu: SlashMenu, query: String, onRan: () -> Unit,
     LazyColumn(
       state = listState,
       reverseLayout = true,
-      contentPadding = PaddingValues(PipkinTokens.Spacing.s6),
+      contentPadding = PaddingValues(OopbotTokens.Spacing.s6),
     ) {
       itemsIndexed(options, key = { _, option -> option.name }) { index, option ->
         CommandRow(option, highlighted = index == highlighted, onClick = { if (menu.select(option)) onRan() })
@@ -199,7 +199,7 @@ internal fun SlashCommandMenu(menu: SlashMenu, query: String, onRan: () -> Unit,
 
 @Composable
 private fun CommandRow(command: SlashCommand, highlighted: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val description = command.builtin?.let { stringResource(it.description) } ?: command.description
   MenuRow(
     onClick = onClick,
@@ -208,7 +208,7 @@ private fun CommandRow(command: SlashCommand, highlighted: Boolean, onClick: () 
     Text(
       text = "/${command.name}",
       color = if (highlighted) colors.accent else colors.foreground,
-      fontFamily = PipkinFonts.mono,
+      fontFamily = OopbotFonts.mono,
       fontSize = 12.5.sp,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1,
@@ -242,7 +242,7 @@ private fun MenuRow(onClick: (() -> Unit)?, modifier: Modifier = Modifier, conte
       .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
       .padding(horizontal = 9.dp, vertical = 7.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     content = content,
   )
 }

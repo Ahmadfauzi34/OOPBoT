@@ -46,7 +46,7 @@ class ExtensionStatusTest {
   }
 
   @Test
-  fun paletteSlotsTakePipkinsRoles() {
+  fun paletteSlotsTakeOopbotsRoles() {
     val line = line(
       "1" to "\u001B[38;5;1mE\u001B[39m",
       "2" to "\u001B[38;5;2mS\u001B[39m",

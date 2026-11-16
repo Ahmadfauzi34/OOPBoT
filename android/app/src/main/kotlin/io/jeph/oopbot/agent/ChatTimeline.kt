@@ -98,7 +98,7 @@ class ChatTimeline(
 
   /**
    * Notices from here on came after the history the next [seed] brings, so they follow its end: Pi is about to move
-   * to another session, whose `session_start` handlers notify before Pipkin has its history.
+   * to another session, whose `session_start` handlers notify before OOPBoT has its history.
    */
   fun awaitHistory() {
     synchronized(lock) {
@@ -316,7 +316,7 @@ class ChatTimeline(
     }
   }
 
-  /** Adds a notice of Pipkin's own, saved with the extensions' notices so it stays through the reload that follows. */
+  /** Adds a notice of OOPBoT's own, saved with the extensions' notices so it stays through the reload that follows. */
   fun addNotice(notice: AppNotice, level: NoticeLevel) {
     synchronized(lock) {
       append(SavedNotice(level, message = "", after = lastMessageAt, afterRun = runEnded, appNotice = notice))

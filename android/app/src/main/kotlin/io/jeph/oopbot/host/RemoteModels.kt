@@ -6,12 +6,12 @@ import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** How Pipkin signs in to a remote host, as `hosts.json` names it in [id]. */
+/** How OOPBoT signs in to a remote host, as `hosts.json` names it in [id]. */
 internal enum class RemoteAuth(val id: String) {
-  /** Pipkin's own ed25519 key, whose public line the user adds to the server. */
+  /** OOPBoT's own ed25519 key, whose public line the user adds to the server. */
   Key("key"),
 
-  /** A password, asked each time Pipkin connects. */
+  /** A password, asked each time OOPBoT connects. */
   Password("password"),
 
   /** An entry of the user's own `~/.ssh/config` in Termux; the address is its `Host` alias and there is no port. */
@@ -87,7 +87,7 @@ internal fun keyFingerprint(line: String): String? {
   return "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(digest)
 }
 
-/** The comment after the public key [line]'s key, which names the phone for Pipkin's key: `pipkin@Pixel 9`. */
+/** The comment after the public key [line]'s key, which names the phone for OOPBoT's key: `oopbot@Pixel 9`. */
 internal fun keyComment(line: String): String = line.trim().split(' ', limit = 3).getOrNull(2).orEmpty()
 
 /** A remote folder: the host [hostId] names and the absolute [path] on it. */
@@ -101,11 +101,11 @@ internal data class RemotePath(val hostId: String, val path: String) {
   }
 }
 
-/** A stand-in folder in Termux, the workspace [cwd] Pipkin uses for the remote folder [path] on host [hostId]. */
+/** A stand-in folder in Termux, the workspace [cwd] OOPBoT uses for the remote folder [path] on host [hostId]. */
 internal data class RemoteWorkspace(val cwd: String, val hostId: String, val path: String)
 
 /**
- * What `remote_hosts` reported: whether Termux has OpenSSH, Pipkin's public key line (null until the key is made),
+ * What `remote_hosts` reported: whether Termux has OpenSSH, OOPBoT's public key line (null until the key is made),
  * the hosts, and every stand-in folder, including those of removed hosts.
  */
 internal data class RemoteHostsState(
@@ -138,7 +138,7 @@ internal data class RemoteHostsState(
 }
 
 /**
- * A remote operation's failure as the host reports it beside a result (`pipkin_places`, the `remote` channel topic):
+ * A remote operation's failure as the host reports it beside a result (`oopbot_places`, the `remote` channel topic):
  * one of the `HostError` codes in [code] and its [text].
  */
 internal data class RemoteFailure(val code: String, val text: HostText) {
@@ -160,7 +160,7 @@ internal data class RemoteFailure(val code: String, val text: HostText) {
     /** Answering a prompt with null ends the connect with this code, which needs no message. */
     const val CONNECT_CANCELLED = "remote_connect_cancelled"
 
-    /** The server refused the password, Pipkin's key, or the key whose passphrase was given. */
+    /** The server refused the password, OOPBoT's key, or the key whose passphrase was given. */
     const val AUTH_FAILED = "remote_auth_failed"
 
     private val CONNECT_CODES = setOf(NOT_CONNECTED, HOST_KEY_UNKNOWN)
@@ -192,8 +192,8 @@ internal data class RemoteFailure(val code: String, val text: HostText) {
 }
 
 /**
- * One `pipkin_remote_prompt` of a `remote_connect`: what `ssh` asks, of [kind], in its own [text]. [savable] and
- * [savedRejected] come from the app rather than the host: whether Pipkin offers to remember the answer, as for a password
+ * One `oopbot_remote_prompt` of a `remote_connect`: what `ssh` asks, of [kind], in its own [text]. [savable] and
+ * [savedRejected] come from the app rather than the host: whether OOPBoT offers to remember the answer, as for a password
  * host's password, and whether it asks because the password it had saved was refused.
  */
 internal data class RemotePrompt(

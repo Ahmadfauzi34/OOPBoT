@@ -37,8 +37,8 @@ import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.CapsLabel
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** One thing the shown tab can do, as a tile in the session sheet; [onClick] is null while it can't be done. */
 internal class TabAction(
@@ -91,13 +91,13 @@ internal fun TabActionGrid(
 ) {
   Column(
     modifier = modifier
-      .padding(horizontal = PipkinTokens.Spacing.s16)
-      .padding(top = PipkinTokens.Spacing.s12, bottom = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s16)
+      .padding(top = OopbotTokens.Spacing.s12, bottom = OopbotTokens.Spacing.s8),
     verticalArrangement = Arrangement.spacedBy(TILE_GAP),
   ) {
     SectionLabel(
       stringResource(R.string.shell_actions_label),
-      modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s4),
+      modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s4),
     )
     actions.chunked(TILES_PER_ROW).forEach { row ->
       // Each row is as tall as its tallest tile, so a label that wraps doesn't leave its neighbours short.
@@ -113,7 +113,7 @@ internal fun TabActionGrid(
 
 @Composable
 private fun ActionTile(action: TabAction, dismiss: (then: () -> Unit) -> Unit, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val tint = if (action.destructive) colors.destructive else colors.foreground
   val onClick = action.onClick
   Column(
@@ -123,11 +123,11 @@ private fun ActionTile(action: TabAction, dismiss: (then: () -> Unit) -> Unit, m
       .background(colors.surface2)
       .clickable(enabled = onClick != null, role = Role.Button) { onClick?.let(dismiss) }
       .alpha(if (onClick != null) 1f else DISABLED_ALPHA)
-      .padding(horizontal = PipkinTokens.Spacing.s6, vertical = PipkinTokens.Spacing.s12),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6, Alignment.CenterVertically),
+      .padding(horizontal = OopbotTokens.Spacing.s6, vertical = OopbotTokens.Spacing.s12),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6, Alignment.CenterVertically),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    LucideIcon(icon = action.icon, contentDescription = null, tint = tint, size = PipkinTokens.IconSize.md)
+    LucideIcon(icon = action.icon, contentDescription = null, tint = tint, size = OopbotTokens.IconSize.md)
     Text(
       text = stringResource(action.label),
       color = tint,
@@ -143,7 +143,7 @@ private fun ActionTile(action: TabAction, dismiss: (then: () -> Unit) -> Unit, m
 /** A muted label in capitals over a part of the session sheet. */
 @Composable
 internal fun SectionLabel(text: String, modifier: Modifier = Modifier) {
-  CapsLabel(text = text, color = pipkinColors.foregroundMuted, modifier = modifier, fontSize = 11.sp)
+  CapsLabel(text = text, color = oopbotColors.foregroundMuted, modifier = modifier, fontSize = 11.sp)
 }
 
 private const val TILES_PER_ROW = 3

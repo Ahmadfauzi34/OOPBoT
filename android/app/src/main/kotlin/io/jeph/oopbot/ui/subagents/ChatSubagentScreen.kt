@@ -57,8 +57,8 @@ import io.jeph.oopbot.ui.chat.SteeringBox
 import io.jeph.oopbot.ui.chat.SteeringSummary
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.atMostHalfTall
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.CloseSplitButton
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.TabsButton
@@ -94,7 +94,7 @@ internal fun ChatSubagentScreen(
   val call = remember(timeline.items, toolCallId) {
     timeline.items.firstOrNull { it is TimelineItem.ToolCall && it.id == toolCallId } as? TimelineItem.ToolCall
   }
-  // Pipkin subagents standing aside after a reload or a reconnect, a call with no result is another extension's and
+  // OOPBoT subagents standing aside after a reload or a reconnect, a call with no result is another extension's and
   // starts nothing to show; the screen closes, so it doesn't come back when the next connection starts.
   val gone = call != null && !subagents.startsSubagent(call)
   val latestOnBack by rememberUpdatedState(onBack)
@@ -188,7 +188,7 @@ private fun PendingSubagentSteering(
   SteeringBox(
     summary = SteeringSummary(run.steering.joinToString("\n"), attachments = 0),
     compact = compact,
-    modifier = modifier.padding(bottom = PipkinTokens.Spacing.s8),
+    modifier = modifier.padding(bottom = OopbotTokens.Spacing.s8),
   ) {
     SteerButton(stringResource(R.string.chat_steering_edit), canEdit, filled = false, onClick = onEdit)
   }
@@ -208,23 +208,23 @@ private fun TextFieldState.putBack(steers: List<String>) {
  */
 @Composable
 private fun SteerBar(run: SubagentRun, draft: TextFieldState, onSteer: (String) -> Unit, onStop: () -> Unit) {
-  val colors = pipkinColors
-  val style = LocalTextStyle.current.copy(color = colors.foreground, fontSize = PipkinTokens.FontSize.content)
+  val colors = oopbotColors
+  val style = LocalTextStyle.current.copy(color = colors.foreground, fontSize = OopbotTokens.FontSize.content)
   Box(
     modifier = Modifier
       .fillMaxWidth()
       .clip(TRAY_SHAPE)
       .background(colors.surface1)
       .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
-      .padding(start = 10.dp, end = 10.dp, bottom = PipkinTokens.Spacing.s4),
+      .padding(start = 10.dp, end = 10.dp, bottom = OopbotTokens.Spacing.s4),
     contentAlignment = Alignment.TopCenter,
   ) {
-    Column(modifier = Modifier.widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth()) {
+    Column(modifier = Modifier.widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth()) {
       BasicTextField(
         state = draft,
         modifier = Modifier
           .fillMaxWidth()
-          .padding(start = PipkinTokens.Spacing.s6, top = PipkinTokens.Spacing.s12, end = PipkinTokens.Spacing.s6)
+          .padding(start = OopbotTokens.Spacing.s6, top = OopbotTokens.Spacing.s12, end = OopbotTokens.Spacing.s6)
           .atMostHalfTall()
           .heightIn(min = 30.dp),
         textStyle = style,
@@ -242,7 +242,7 @@ private fun SteerBar(run: SubagentRun, draft: TextFieldState, onSteer: (String) 
           }
         },
       )
-      Spacer(modifier = Modifier.height(PipkinTokens.Spacing.s8))
+      Spacer(modifier = Modifier.height(OopbotTokens.Spacing.s8))
       Row(verticalAlignment = Alignment.CenterVertically) {
         StopButton(label = stringResource(R.string.subagent_stop), onClick = onStop)
         Spacer(modifier = Modifier.weight(1f))
@@ -258,7 +258,7 @@ private fun SteerBar(run: SubagentRun, draft: TextFieldState, onSteer: (String) 
  */
 @Composable
 private fun SteerSendButton(run: SubagentRun, draft: TextFieldState, onSteer: (String) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val keyboard = LocalSoftwareKeyboardController.current
   val focus = LocalFocusManager.current
   RoundIconButton(

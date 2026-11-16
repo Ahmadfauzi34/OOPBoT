@@ -18,8 +18,8 @@ import io.jeph.oopbot.host.RemoteHost
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * Under a failure in the workspace [cwd] whose connection failure [code] says connecting to its remote host would fix
@@ -42,13 +42,13 @@ internal fun RemoteConnectAction(cwd: String, code: String?, onConnected: () -> 
   if (connector.connecting) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       SimmeringPot()
       Text(
         text = stringResource(R.string.remote_connecting, host.name),
-        color = pipkinColors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        color = oopbotColors.foregroundMuted,
+        fontSize = OopbotTokens.FontSize.sm,
       )
     }
   } else {

@@ -5,7 +5,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.AuthStatus
 
 /**
- * A provider Pi ships that Pipkin connects: a subscription signed in to with OAuth, or, when
+ * A provider Pi ships that OOPBoT connects: a subscription signed in to with OAuth, or, when
  * [usesApiKey], one Pi stores an API key for. [api] is the API its models use.
  */
 internal data class Subscription(
@@ -69,5 +69,5 @@ internal val subscriptions = listOf(
 /** True once Pi holds a credential for the provider [id]. */
 internal fun AuthStatus.isSignedIn(id: String): Boolean = builtin.any { it.id == id && it.configured }
 
-/** True for a provider Pipkin connects with an API key, whose models the user picks after adding it. */
+/** True for a provider OOPBoT connects with an API key, whose models the user picks after adding it. */
 internal fun usesApiKey(providerId: String): Boolean = subscriptions.any { it.id == providerId && it.usesApiKey }

@@ -23,8 +23,8 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,7 +59,7 @@ private sealed interface PluginStep {
 @Composable
 internal fun ClaudePluginOffer(onOpen: (String) -> Unit, onDone: () -> Unit) {
   val accounts = LocalContext.current.appGraph.accountRepository
-  val colors = pipkinColors
+  val colors = oopbotColors
   val scope = rememberCoroutineScope()
   val currentOnDone by rememberUpdatedState(onDone)
   var step by remember { mutableStateOf<PluginStep>(PluginStep.Offered) }
@@ -84,14 +84,14 @@ internal fun ClaudePluginOffer(onOpen: (String) -> Unit, onDone: () -> Unit) {
     currentOnDone()
   }
 
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     LeadingRow(text = stringResource(R.string.claude_plugin_warning)) {
       LucideIcon(icon = R.drawable.ic_lucide_triangle_alert, contentDescription = null, tint = colors.dotWarning)
     }
     Text(
       text = stringResource(R.string.claude_plugin_explanation),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
     )
     TextButton(onClick = { onOpen(CLAUDE_PLUGIN_URL) }) { Text(stringResource(R.string.claude_plugin_link)) }
     PluginStepContent(step = step, onSkip = onDone, onInstall = install)
@@ -100,7 +100,7 @@ internal fun ClaudePluginOffer(onOpen: (String) -> Unit, onDone: () -> Unit) {
 
 @Composable
 private fun PluginStepContent(step: PluginStep, onSkip: () -> Unit, onInstall: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   when (step) {
     PluginStep.Offered -> PluginActions(onSkip = onSkip, onInstall = onInstall)
 
@@ -112,7 +112,7 @@ private fun PluginStepContent(step: PluginStep, onSkip: () -> Unit, onInstall: (
         Text(
           text = it,
           color = colors.foregroundExtraMuted,
-          fontSize = PipkinTokens.FontSize.base,
+          fontSize = OopbotTokens.FontSize.base,
           maxLines = PROGRESS_MAX_LINES,
           overflow = TextOverflow.Ellipsis,
         )
@@ -134,7 +134,7 @@ private fun PluginStepContent(step: PluginStep, onSkip: () -> Unit, onInstall: (
 
 @Composable
 private fun PluginActions(onSkip: () -> Unit, onInstall: () -> Unit) {
-  Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     PillButton(label = stringResource(R.string.claude_plugin_skip), onClick = onSkip, tone = PillTone.Tonal)
     PillButton(label = stringResource(R.string.claude_plugin_install), onClick = onInstall)
   }

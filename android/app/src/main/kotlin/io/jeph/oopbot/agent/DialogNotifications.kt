@@ -19,10 +19,10 @@ import kotlinx.coroutines.launch
 
 /**
  * Tells the user a chat waits on them in a dialog they can't see: one comes up in a chat that isn't on screen, because
- * Pipkin is in the background, another screen covers the panes, or the panes show other chats, terminals, files or
+ * OOPBoT is in the background, another screen covers the panes, or the panes show other chats, terminals, files or
  * commits. It goes in the [inbox] always, and becomes a heads-up notification naming the chat and the dialog's question
- * while Pipkin is in the background, including once Pipkin leaves the screen with the dialog still waiting. Both name
- * the subagent that asked when Pipkin can tell, and take its name in without alerting again when it's known only later.
+ * while OOPBoT is in the background, including once OOPBoT leaves the screen with the dialog still waiting. Both name
+ * the subagent that asked when OOPBoT can tell, and take its name in without alerting again when it's known only later.
  * Tapping the notification opens the chat. Both go away once the chat is on screen or no dialog waits there any more.
  * Works while [watch] runs. Main thread only.
  */
@@ -40,7 +40,7 @@ internal class DialogNotifications(
   /** By chat, the tag its notification was posted under, since a new chat's session file can arrive after. */
   private val postedTags = HashMap<AgentProcess, String>()
 
-  /** By chat, the dialog told only in the inbox while Pipkin was on screen, to notify once Pipkin leaves it. */
+  /** By chat, the dialog told only in the inbox while OOPBoT was on screen, to notify once OOPBoT leaves it. */
   private val toldInApp = HashMap<AgentProcess, FrontDialog>()
   private val alerts = DialogAlerts(post = ::post, retell = ::retell, cancel = ::cancel)
 
@@ -65,7 +65,7 @@ internal class DialogNotifications(
     )
   }
 
-  /** Follows the chats' dialogs, the chats on screen and Pipkin leaving the screen, until cancelled. */
+  /** Follows the chats' dialogs, the chats on screen and OOPBoT leaving the screen, until cancelled. */
   suspend fun watch(): Unit = coroutineScope {
     launch {
       chatDialogs.combine(chatsOnScreen, ::Pair).collect { (dialogs, onScreen) -> alerts.update(dialogs, onScreen) }

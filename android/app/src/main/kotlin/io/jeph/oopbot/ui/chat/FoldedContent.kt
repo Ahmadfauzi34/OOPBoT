@@ -25,8 +25,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
 import io.jeph.oopbot.R
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.roundToInt
 
 /** How far past its last whole line content may run before it counts as longer, since line heights round. */
@@ -51,12 +51,12 @@ internal fun FoldedContent(
   onToggle: () -> Unit,
   content: @Composable ColumnScope.() -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val density = LocalDensity.current
   val linePx = with(density) { lineHeight.toPx() }
   val foldedPx = (linePx * lines).roundToInt()
   val foldsAbovePx = (linePx * (lines + slackLines + LINE_TOLERANCE)).roundToInt()
-  val fadePx = with(density) { PipkinTokens.Spacing.s24.roundToPx() }
+  val fadePx = with(density) { OopbotTokens.Spacing.s24.roundToPx() }
   Layout(
     contents = listOf(
       {
@@ -77,9 +77,9 @@ internal fun FoldedContent(
       {
         Text(
           text = stringResource(if (expanded) R.string.chat_show_less else R.string.chat_show_more),
-          modifier = Modifier.clickable(onClick = onToggle).padding(top = PipkinTokens.Spacing.s8),
+          modifier = Modifier.clickable(onClick = onToggle).padding(top = OopbotTokens.Spacing.s8),
           color = colors.accent,
-          fontSize = PipkinTokens.FontSize.meta,
+          fontSize = OopbotTokens.FontSize.meta,
           fontWeight = FontWeight.Bold,
         )
       },

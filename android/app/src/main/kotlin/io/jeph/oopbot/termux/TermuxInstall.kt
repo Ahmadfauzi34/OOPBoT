@@ -18,19 +18,19 @@ internal object TermuxInstall {
   enum class Status {
     NotInstalled,
 
-    /** Signed by neither F-Droid nor Google Play, e.g. Termux's GitHub builds; Pipkin runs nothing in it. */
+    /** Signed by neither F-Droid nor Google Play, e.g. Termux's GitHub builds; OOPBoT runs nothing in it. */
     UnsupportedBuild,
     FDroidTooOld,
     PlayTooOld,
 
-    /** F-Droid's build: Pipkin starts its hosts with Termux's RUN_COMMAND service. */
+    /** F-Droid's build: OOPBoT starts its hosts with Termux's RUN_COMMAND service. */
     FDroid,
 
-    /** Google Play's build: it has no RUN_COMMAND service, so Pipkin starts its hosts through its helper in Termux. */
+    /** Google Play's build: it has no RUN_COMMAND service, so OOPBoT starts its hosts through its helper in Termux. */
     Play,
     ;
 
-    /** Pipkin runs in this build. A too-old build is still tried; its update is only asked for on the setup page. */
+    /** OOPBoT runs in this build. A too-old build is still tried; its update is only asked for on the setup page. */
     val isTrusted: Boolean get() = this != NotInstalled && this != UnsupportedBuild
 
     val isPlay: Boolean get() = this == Play || this == PlayTooOld
@@ -43,7 +43,7 @@ internal object TermuxInstall {
   private const val PLAY_URL = "https://play.google.com/store/apps/details?id=com.termux"
   private const val MINOR_VERSION_MIN = 118
 
-  /** The first Play build Pipkin was tested with. Play keeps the app current, so an older one only asks for an update. */
+  /** The first Play build OOPBoT was tested with. Play keeps the app current, so an older one only asks for an update. */
   private const val PLAY_VERSION_MIN = "2026.10.09"
 
   /** AOSP Settings' per-app battery page; exported but not in the SDK. */
@@ -67,7 +67,7 @@ internal object TermuxInstall {
 
   /**
    * Identifies one installation of Termux: its build and when it was installed. Reinstalling Termux, or switching
-   * between the F-Droid and Play builds, wipes Termux's home folder, and with it Pi and everything Pipkin set up there.
+   * between the F-Droid and Play builds, wipes Termux's home folder, and with it Pi and everything OOPBoT set up there.
    */
   fun installation(context: Context): String? = packageInfo(context)?.let { info ->
     val build = if (status(info).isPlay) "play" else "fdroid"
@@ -103,7 +103,7 @@ internal object TermuxInstall {
   }
 
   /**
-   * Opens Termux in a new terminal session, whose login shell runs the hook setup wrote to start Pipkin's helper.
+   * Opens Termux in a new terminal session, whose login shell runs the hook setup wrote to start OOPBoT's helper.
    * Termux adds a session for [Intent.ACTION_RUN] (its launcher's "New session" shortcut) only while creating its
    * activity, so the task is cleared first; the sessions themselves live on in Termux's service.
    */
@@ -126,7 +126,7 @@ internal object TermuxInstall {
    * Android's prompt to exempt Termux from battery optimization when Termux [canPromptBackground]. Otherwise Termux's
    * battery page, an undocumented Settings action some phones lack, and failing that its app info.
    */
-  @SuppressLint("BatteryLife") // Pipkin isn't on Google Play; Termux runs its agent, which must not stop mid-task.
+  @SuppressLint("BatteryLife") // OOPBoT isn't on Google Play; Termux runs its agent, which must not stop mid-task.
   fun requestBackground(context: Context) {
     val termux = "package:$PACKAGE_NAME".toUri()
     if (canPromptBackground(context)) {
@@ -136,7 +136,7 @@ internal object TermuxInstall {
     try {
       context.startActivity(Intent(BATTERY_USAGE_DETAIL, termux))
     } catch (_: SecurityException) {
-      // The action isn't in the SDK, so a phone's Settings may guard it with a permission Pipkin lacks.
+      // The action isn't in the SDK, so a phone's Settings may guard it with a permission OOPBoT lacks.
       context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, termux))
     } catch (_: ActivityNotFoundException) {
       context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, termux))

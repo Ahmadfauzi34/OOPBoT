@@ -15,8 +15,8 @@ import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** Restore and Delete for the selection; Restore counts only chats whose folder still exists. */
 @Composable
@@ -27,12 +27,12 @@ internal fun BulkActions(
   onRestore: () -> Unit,
   onDelete: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(modifier = Modifier.fillMaxWidth().background(colors.surface0).navigationBarsPadding()) {
     HorizontalDivider(thickness = 1.dp, color = colors.border)
     Row(
-      modifier = Modifier.fillMaxWidth().padding(PipkinTokens.Spacing.s12),
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      modifier = Modifier.fillMaxWidth().padding(OopbotTokens.Spacing.s12),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     ) {
       PillButton(
         label = stringResource(R.string.archive_restore_count, restoreCount),

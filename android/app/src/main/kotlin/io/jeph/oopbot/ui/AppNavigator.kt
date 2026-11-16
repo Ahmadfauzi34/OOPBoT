@@ -11,7 +11,7 @@ sealed interface Destination {
 
   data object Settings : Destination
 
-  /** Termux setup and Pipkin's Android permissions, reached from Settings. */
+  /** Termux setup and OOPBoT's Android permissions, reached from Settings. */
   data object Permissions : Destination
 
   /** How many chats keep their agent running and when idle ones stop, reached from Settings › Agent. */
@@ -35,7 +35,7 @@ sealed interface Destination {
   /** Picks which kind of provider to add. */
   data object AddProvider : Destination
 
-  /** A subscription Pipkin signs in to (`anthropic` or `openai-codex`). */
+  /** A subscription OOPBoT signs in to (`anthropic` or `openai-codex`). */
   data class Subscription(val id: String) : Destination
 
   /** [id] null adds a provider; otherwise edits the custom provider with that id. */

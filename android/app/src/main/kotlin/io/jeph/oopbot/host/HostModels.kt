@@ -112,7 +112,7 @@ internal data class SubagentSession(
 }
 
 /**
- * A provider Pi ships that Pipkin connects (`BUILTIN_PROVIDERS` in the host). [type] is the
+ * A provider Pi ships that OOPBoT connects (`BUILTIN_PROVIDERS` in the host). [type] is the
  * configured credential type, `oauth` or `api_key`, if any. [models] are every model Pi offers for
  * it with `models.json` overrides applied; [extraIds] are the ones `models.json` adds. [enabled]
  * lists the ids settings.json `enabledModels` shows, or is null when that list is empty and every
@@ -128,7 +128,7 @@ internal data class BuiltinProvider(
   val enabled: List<String>? = null,
 )
 
-/** An entry of `models.json` `providers`, with the model fields Pipkin edits. */
+/** An entry of `models.json` `providers`, with the model fields OOPBoT edits. */
 internal data class CustomProvider(
   val id: String,
   val baseUrl: String,

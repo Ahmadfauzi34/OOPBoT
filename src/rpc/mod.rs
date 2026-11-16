@@ -1356,7 +1356,7 @@ pub async fn run_rpc_mode(
 
 fn default_rpc_system_instruction(cwd: &Path, tools: &ToolRegistry) -> String {
     format!(
-        "Kamu adalah OOPBoT, mesin agen Rust native yang terhubung ke antarmuka Android Pipkin melalui Termux.\n\
+        "Kamu adalah OOPBoT, mesin agen Rust native yang terhubung ke antarmuka Android OOPBoT melalui Termux.\n\
          Direktori kerja (cwd): {}.\n\
          Tool yang tersedia: {}.\n\
          Gunakan tool untuk memeriksa isi file atau menjalankan perintah di Termux bila diperlukan.",

@@ -56,15 +56,15 @@ import io.jeph.oopbot.ui.ShellActions
 import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.HeaderButton
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.PotIcon
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SheetRow
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.SwipeAway
 import io.jeph.oopbot.ui.files.sidebarHighlight
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.rememberPaneItems
 import io.jeph.oopbot.workspace.Pane
 import kotlinx.coroutines.flow.combine
@@ -114,7 +114,7 @@ internal fun Sidebar(
   Column(
     modifier = modifier
       .fillMaxSize()
-      .background(pipkinColors.sidebar)
+      .background(oopbotColors.sidebar)
       .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)),
   ) {
     SidebarHeader(onClose)
@@ -288,13 +288,13 @@ internal fun removalStops(counts: RemovalCounts): List<String> {
 /** A workspace's sheet under its path: Open in split screen when [onOpenInSplit] is given, and Remove workspace. */
 @Composable
 private fun WorkspaceActions(path: String, onDismiss: () -> Unit, onOpenInSplit: (() -> Unit)?, onRemove: () -> Unit) {
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     // A long path keeps its end, the folder that tells workspaces apart.
     Text(
       text = path,
-      modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
-      color = pipkinColors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
+      color = oopbotColors.foregroundMuted,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
       overflow = TextOverflow.StartEllipsis,
     )
@@ -308,7 +308,7 @@ private fun WorkspaceActions(path: String, onDismiss: () -> Unit, onOpenInSplit:
     SheetRow(
       label = stringResource(R.string.archive_remove_workspace),
       icon = R.drawable.ic_lucide_folder_minus,
-      labelColor = pipkinColors.destructive,
+      labelColor = oopbotColors.destructive,
       onClick = { dismiss(onRemove) },
     )
   }
@@ -320,7 +320,7 @@ private fun SidebarHeader(onClose: () -> Unit) {
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 64.dp)
-      .padding(start = 20.dp, end = PipkinTokens.Spacing.s12),
+      .padding(start = 20.dp, end = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
@@ -328,7 +328,7 @@ private fun SidebarHeader(onClose: () -> Unit) {
     Text(
       text = stringResource(R.string.shell_sidebar_title),
       modifier = Modifier.weight(1f),
-      color = pipkinColors.foreground,
+      color = oopbotColors.foreground,
       fontSize = 26.sp,
       fontWeight = FontWeight.ExtraBold,
       letterSpacing = (-0.025).em,
@@ -372,9 +372,9 @@ private fun WorkspaceList(
   LazyColumn(
     modifier = modifier.fillMaxWidth(),
     contentPadding = PaddingValues(
-      start = PipkinTokens.Spacing.s12,
-      end = PipkinTokens.Spacing.s12,
-      bottom = PipkinTokens.Spacing.s12,
+      start = OopbotTokens.Spacing.s12,
+      end = OopbotTokens.Spacing.s12,
+      bottom = OopbotTokens.Spacing.s12,
     ),
   ) {
     items(workspaces, key = { it.cwd }) { workspace ->
@@ -383,7 +383,7 @@ private fun WorkspaceList(
         leaving = cwd in removal.leaving,
         onSwiped = {},
         onLeft = { removal.onLeft(cwd) },
-        containerColor = pipkinColors.sidebar,
+        containerColor = oopbotColors.sidebar,
         modifier = Modifier.animateItem(),
         swipeEnabled = false,
       ) {
@@ -415,14 +415,14 @@ private fun WorkspaceList(
 @Composable
 private fun NoWorkspaces(onAddWorkspace: () -> Unit, modifier: Modifier) {
   Column(
-    modifier = modifier.fillMaxWidth().padding(horizontal = PipkinTokens.Spacing.s12),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s16, Alignment.CenterVertically),
+    modifier = modifier.fillMaxWidth().padding(horizontal = OopbotTokens.Spacing.s12),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s16, Alignment.CenterVertically),
   ) {
     Text(
       text = stringResource(R.string.shell_sidebar_empty),
       modifier = Modifier.fillMaxWidth(),
-      color = pipkinColors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.lg,
+      color = oopbotColors.foregroundMuted,
+      fontSize = OopbotTokens.FontSize.lg,
       textAlign = TextAlign.Center,
     )
     AddWorkspaceRow(onClick = onAddWorkspace)

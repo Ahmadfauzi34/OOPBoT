@@ -24,7 +24,7 @@ internal data class ModelArtifact(
 )
 
 /**
- * A model Pipkin offers, with every build of it; [id] is its model id under the `pipkin-local` provider in Pi.
+ * A model OOPBoT offers, with every build of it; [id] is its model id under the `oopbot-local` provider in Pi.
  * [cacheBytesPerToken] is what its attention cache takes per token of context at 16 bits, which decides whether a phone
  * has the memory for a longer context.
  */

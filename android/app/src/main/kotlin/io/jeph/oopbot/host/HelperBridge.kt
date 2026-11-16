@@ -18,15 +18,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Starts hosts in Termux's Play build, which has no RUN_COMMAND service, through Pipkin's helper there. The helper runs
+ * Starts hosts in Termux's Play build, which has no RUN_COMMAND service, through OOPBoT's helper there. The helper runs
  * the same bash command RUN_COMMAND would and reports the child's exit on the connection that asked for it.
  *
- * A helper that runs another bundle than this APK's is updated before the launch: Pipkin sends the bundle, the helper
+ * A helper that runs another bundle than this APK's is updated before the launch: OOPBoT sends the bundle, the helper
  * restarts with it, and the launch goes to the restarted helper. That costs one launch about a second after each app
  * update, but no launch ever lands on a helper that is just restarting, which would wake Termux for nothing.
  */
 internal object HelperBridge {
-  private const val TAG = "Pipkin"
+  private const val TAG = "OOPBoT"
   private const val CONNECT_TIMEOUT_MILLIS = 1_000
   private const val REPLY_TIMEOUT_MILLIS = 5_000
   private const val RESTART_TIMEOUT_MILLIS = 5_000L
@@ -49,7 +49,7 @@ internal object HelperBridge {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val updateLock = Mutex()
 
-  /** Set once this process has offered its bundle; a helper that refused it isn't asked again until Pipkin restarts. */
+  /** Set once this process has offered its bundle; a helper that refused it isn't asked again until OOPBoT restarts. */
   @Volatile
   private var updateOffered = false
 
@@ -110,7 +110,7 @@ internal object HelperBridge {
     }
   }
 
-  /** Whether Pipkin's helper answers on any port, paired with Pipkin or not. */
+  /** Whether OOPBoT's helper answers on any port, paired with OOPBoT or not. */
   fun listening(context: Context): Boolean = when (val reach = reach(HelperPairing.keys(context).all)) {
     is Reach.Connected -> {
       reach.connection.close()
@@ -122,7 +122,7 @@ internal object HelperBridge {
     Reach.PortsTaken, Reach.Unreachable -> false
   }
 
-  /** Asks the helper to bring Pipkin to the front; Termux may open activities while it is on screen itself. */
+  /** Asks the helper to bring OOPBoT to the front; Termux may open activities while it is on screen itself. */
   fun requestReturn(context: Context) {
     val reach = reach(HelperPairing.keys(context).all) as? Reach.Connected ?: return
     reach.connection.use { connection ->

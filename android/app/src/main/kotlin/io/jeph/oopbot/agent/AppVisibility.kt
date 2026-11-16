@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Whether Pipkin's activity is on screen. ProcessLifecycleOwner reports leaving only 700ms later, which would miss a run
+ * Whether OOPBoT's activity is on screen. ProcessLifecycleOwner reports leaving only 700ms later, which would miss a run
  * that ends just after the user switched away. A rotation stops and restarts the activity, so a stop for a
  * configuration change does not count as leaving. Main thread only.
  */

@@ -28,8 +28,8 @@ import androidx.compose.ui.graphics.vector.toPath
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.Dp
 import io.jeph.oopbot.R
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.PI
 import kotlin.math.sin
 import kotlinx.coroutines.delay
@@ -89,7 +89,7 @@ private val HOP_FRAME = (WISP_LEAVE_MILLIS[1] / FRAME_MILLIS).toInt()
 val LocalPotsSimmer = compositionLocalOf { true }
 
 /**
- * Pipkin's loading indicator: the launcher icon's pot simmering. It shakes on its feet with the lid rattling,
+ * OOPBoT's loading indicator: the launcher icon's pot simmering. It shakes on its feet with the lid rattling,
  * lets out a wisp of steam, rests, and lets out another as the lid hops, every [LOOP_MILLIS]. Every pot on screen
  * steps on the same [FRAME_MILLIS] boundaries, so they share frames with each other. Pots hold still while
  * [LocalPotsSimmer] is false.
@@ -97,8 +97,8 @@ val LocalPotsSimmer = compositionLocalOf { true }
 @Composable
 fun SimmeringPot(
   modifier: Modifier = Modifier,
-  size: Dp = PipkinTokens.IconSize.md,
-  tint: Color = pipkinColors.foregroundMuted,
+  size: Dp = OopbotTokens.IconSize.md,
+  tint: Color = oopbotColors.foregroundMuted,
 ) {
   val icon = ImageVector.vectorResource(R.drawable.ic_launcher_foreground)
   val pot = remember(icon) { Pot(icon) }

@@ -74,11 +74,11 @@ import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.ExtensionWidget
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.RoundIconButton
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 
 private val TAB_HEIGHT = 26.dp
@@ -208,12 +208,12 @@ internal fun WidgetTabStrip(
     LazyRow(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(vertical = PipkinTokens.Spacing.s6)
+        .padding(vertical = OopbotTokens.Spacing.s6)
         .height(TAB_HEIGHT)
         .clipToBounds()
         .fadeScrolledEdges(state, vertical = false),
       state = state,
-      contentPadding = PaddingValues(horizontal = PipkinTokens.Spacing.s2),
+      contentPadding = PaddingValues(horizontal = OopbotTokens.Spacing.s2),
       horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
       // First, so the dot of a subagent waiting on the user never scrolls out of sight behind the widgets.
@@ -247,7 +247,7 @@ internal fun WidgetTabStrip(
  */
 @Composable
 private fun SubagentsTabChip(tab: SubagentsTab, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val numbers = remember { NumberFormat.getIntegerInstance() }
   val count = remember(tab.active) { numbers.format(tab.active) }
   val running = pluralStringResource(R.plurals.subagents_tab_description, tab.running, numbers.format(tab.running))
@@ -266,12 +266,12 @@ private fun SubagentsTabChip(tab: SubagentsTab, modifier: Modifier) {
       .clearAndSetSemantics { contentDescription = description }
       .padding(horizontal = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     LucideIcon(
       icon = R.drawable.ic_lucide_bot,
       contentDescription = null,
-      size = PipkinTokens.IconSize.xs,
+      size = OopbotTokens.IconSize.xs,
       tint = colors.foregroundMuted,
     )
     Text(
@@ -286,7 +286,7 @@ private fun SubagentsTabChip(tab: SubagentsTab, modifier: Modifier) {
         text = count,
         color = colors.foregroundMuted,
         fontSize = 11.5.sp,
-        style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+        style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
         maxLines = 1,
       )
     }
@@ -294,7 +294,7 @@ private fun SubagentsTabChip(tab: SubagentsTab, modifier: Modifier) {
   }
 }
 
-/** The Subagents tab's key among the widgets' in the strip; no widget key starts with Pipkin's own prefix. */
+/** The Subagents tab's key among the widgets' in the strip; no widget key starts with OOPBoT's own prefix. */
 private const val SUBAGENTS_TAB_KEY = "oopbot:subagents"
 
 /**
@@ -310,7 +310,7 @@ private fun WidgetTab(
   onClick: () -> Unit,
   modifier: Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val content = if (open) colors.accent else colors.foregroundMuted
   val description = if (changed) stringResource(R.string.chat_widget_changed, label) else label
   val action = stringResource(if (open) R.string.chat_widget_close else R.string.chat_widget_open)
@@ -326,12 +326,12 @@ private fun WidgetTab(
       }
       .padding(horizontal = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     LucideIcon(
       icon = if (belowEditor) R.drawable.ic_lucide_panel_bottom else R.drawable.ic_lucide_panel_top,
       contentDescription = null,
-      size = PipkinTokens.IconSize.xs,
+      size = OopbotTokens.IconSize.xs,
       tint = content,
     )
     Text(
@@ -347,7 +347,7 @@ private fun WidgetTab(
       open -> LucideIcon(
         icon = if (belowEditor) R.drawable.ic_lucide_chevron_up else R.drawable.ic_lucide_chevron_down,
         contentDescription = null,
-        size = PipkinTokens.IconSize.xs,
+        size = OopbotTokens.IconSize.xs,
         tint = content,
       )
 
@@ -420,17 +420,17 @@ internal fun WidgetPanelSlot(
  */
 @Composable
 private fun WidgetPanel(item: KeyedWidget, belowEditor: Boolean, tight: Boolean, onExpand: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val text = remember(item.widget.lines, colors) { extensionWidgetText(item.widget.lines, colors) }
   val scroll = rememberScrollState()
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(top = if (belowEditor) PipkinTokens.Spacing.s8 else PipkinTokens.Spacing.s2)
+      .padding(top = if (belowEditor) OopbotTokens.Spacing.s8 else OopbotTokens.Spacing.s2)
       .clip(PANEL_SHAPE)
       .background(colors.surface0)
-      .padding(start = 11.dp, top = PipkinTokens.Spacing.s4, end = PipkinTokens.Spacing.s4),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      .padding(start = 11.dp, top = OopbotTokens.Spacing.s4, end = OopbotTokens.Spacing.s4),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
   ) {
     Text(
       text = text,
@@ -440,9 +440,9 @@ private fun WidgetPanel(item: KeyedWidget, belowEditor: Boolean, tight: Boolean,
         .heightIn(max = if (tight) PANEL_TIGHT_MAX_HEIGHT else PANEL_MAX_HEIGHT)
         .fadeScrolledEdges(scroll, vertical = true)
         .verticalScroll(scroll)
-        .padding(bottom = PipkinTokens.Spacing.s8),
+        .padding(bottom = OopbotTokens.Spacing.s8),
       color = colors.foreground,
-      fontFamily = PipkinFonts.mono,
+      fontFamily = OopbotFonts.mono,
       fontSize = PANEL_FONT_SIZE,
       lineHeight = PANEL_LINE_HEIGHT,
     )
@@ -452,7 +452,7 @@ private fun WidgetPanel(item: KeyedWidget, belowEditor: Boolean, tight: Boolean,
       onClick = onExpand,
       modifier = Modifier.size(EXPAND_SIZE),
       tint = colors.foregroundMuted,
-      iconSize = PipkinTokens.IconSize.sm,
+      iconSize = OopbotTokens.IconSize.sm,
     )
   }
 }
@@ -460,31 +460,31 @@ private fun WidgetPanel(item: KeyedWidget, belowEditor: Boolean, tight: Boolean,
 /** The whole widget over the chat, for one too long for its panel: its label over every line, selectable. */
 @Composable
 internal fun WidgetSheet(item: KeyedWidget, tabs: WidgetTabs, onDismiss: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val widget = item.widget
   val text = remember(widget.lines, colors) { extensionWidgetText(widget.lines, colors) }
   LaunchedEffect(widget) { tabs.see(item.key, widget) }
-  PipkinSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) {
+  OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) {
     Row(
       modifier = Modifier.padding(
-        start = PipkinTokens.Spacing.s16,
-        end = PipkinTokens.Spacing.s16,
-        bottom = PipkinTokens.Spacing.s12,
+        start = OopbotTokens.Spacing.s16,
+        end = OopbotTokens.Spacing.s16,
+        bottom = OopbotTokens.Spacing.s12,
       ),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       LucideIcon(
         icon = if (widget.belowEditor) R.drawable.ic_lucide_panel_bottom else R.drawable.ic_lucide_panel_top,
         contentDescription = null,
-        size = PipkinTokens.IconSize.md,
+        size = OopbotTokens.IconSize.md,
         tint = colors.accent,
       )
       Text(
         text = widgetLabel(item.key),
         modifier = Modifier.weight(1f),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.lg,
+        fontSize = OopbotTokens.FontSize.lg,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -494,11 +494,11 @@ internal fun WidgetSheet(item: KeyedWidget, tabs: WidgetTabs, onDismiss: () -> U
         text = text,
         modifier = Modifier
           .verticalScroll(rememberScrollState())
-          .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s16, bottom = PipkinTokens.Spacing.s24),
+          .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s16, bottom = OopbotTokens.Spacing.s24),
         color = colors.foreground,
-        fontFamily = PipkinFonts.mono,
-        fontSize = PipkinTokens.FontSize.code,
-        lineHeight = PipkinTokens.LineHeight.code,
+        fontFamily = OopbotFonts.mono,
+        fontSize = OopbotTokens.FontSize.code,
+        lineHeight = OopbotTokens.LineHeight.code,
       )
     }
   }

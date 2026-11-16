@@ -15,7 +15,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.HeaderBar
 import io.jeph.oopbot.ui.components.HeaderButton
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** The models picked on a provider page, by long-pressing one and then tapping others, for removing together. */
 @Stable
@@ -83,7 +83,7 @@ internal fun ModelSelectionBar(selection: ModelSelection, draft: ModelDraft) {
         icon = R.drawable.ic_lucide_trash_2,
         contentDescription = stringResource(R.string.provider_models_remove_selected),
         onClick = { confirmRemove = true },
-        tint = pipkinColors.destructive,
+        tint = oopbotColors.destructive,
       )
     },
   )

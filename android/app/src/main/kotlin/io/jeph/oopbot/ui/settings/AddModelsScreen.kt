@@ -39,8 +39,8 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.SearchField
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /**
@@ -104,7 +104,7 @@ internal fun AddModelsScreen(draft: ModelDraft, onBack: () -> Unit) {
 }
 
 /** A settings page item [SettingsItemWidth] wide, set apart from the one above. */
-private val SpacedItem = SettingsItemWidth.padding(top = PipkinTokens.Spacing.s12)
+private val SpacedItem = SettingsItemWidth.padding(top = OopbotTokens.Spacing.s12)
 
 /** The models matching the search as one settings card, a lazy item per row, or why there are none to show. */
 private fun LazyListScope.modelRows(draft: ModelDraft, models: List<ModelConfig>, shown: List<ModelConfig>) {
@@ -113,7 +113,7 @@ private fun LazyListScope.modelRows(draft: ModelDraft, models: List<ModelConfig>
       SettingsCaption(
         text = stringResource(R.string.models_list_failed, error),
         modifier = SpacedItem,
-        color = pipkinColors.destructive,
+        color = oopbotColors.destructive,
       )
     }
   }
@@ -129,15 +129,15 @@ private fun LazyListScope.modelRows(draft: ModelDraft, models: List<ModelConfig>
     }
 
     else -> itemsIndexed(shown) { index, config ->
-      val radius = PipkinTokens.Radius.xl
+      val radius = OopbotTokens.Radius.xl
       val top = if (index == 0) radius else 0.dp
       val bottom = if (index == shown.lastIndex) radius else 0.dp
       val shape = RoundedCornerShape(topStart = top, topEnd = top, bottomEnd = bottom, bottomStart = bottom)
       Column(
         modifier = SettingsItemWidth
-          .padding(top = if (index == 0) PipkinTokens.Spacing.s12 else 0.dp)
+          .padding(top = if (index == 0) OopbotTokens.Spacing.s12 else 0.dp)
           .clip(shape)
-          .background(pipkinColors.surface1),
+          .background(oopbotColors.surface1),
       ) {
         if (index > 0) SettingsDivider()
         ModelPickRow(config, draft)
@@ -161,7 +161,7 @@ private fun ModelPickRow(config: ModelConfig, draft: ModelDraft) {
     LucideIcon(
       icon = if (added) R.drawable.ic_lucide_check else R.drawable.ic_lucide_plus,
       contentDescription = null,
-      tint = if (added) pipkinColors.accent else pipkinColors.foregroundMuted,
+      tint = if (added) oopbotColors.accent else oopbotColors.foregroundMuted,
     )
   }
 }
@@ -169,17 +169,17 @@ private fun ModelPickRow(config: ModelConfig, draft: ModelDraft) {
 /** One quiet line offering to add [modelId], searched for but not listed, as a custom model, and why that failed. */
 @Composable
 private fun AddCustomModelRow(modelId: String, lookup: CustomModelLookup, onAdd: () -> Unit) {
-  val colors = pipkinColors
-  Column(modifier = Modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s8)) {
+  val colors = oopbotColors
+  Column(modifier = Modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s8)) {
     Row(
       modifier = Modifier
         .fillMaxWidth()
         .heightIn(min = 40.dp)
-        .clip(RoundedCornerShape(PipkinTokens.Radius.xl))
+        .clip(RoundedCornerShape(OopbotTokens.Radius.xl))
         .clickable(enabled = lookup.addingId == null, onClick = onAdd)
-        .padding(horizontal = PipkinTokens.Spacing.s16),
+        .padding(horizontal = OopbotTokens.Spacing.s16),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     ) {
       if (lookup.addingId == modelId) {
         SimmeringPot()
@@ -190,7 +190,7 @@ private fun AddCustomModelRow(modelId: String, lookup: CustomModelLookup, onAdd:
         text = stringResource(R.string.models_add_custom, modelId),
         modifier = Modifier.weight(1f),
         color = colors.accent,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
       )
     }
     lookup.errorFor(modelId)?.let { SettingsCaption(text = it, color = colors.destructive) }

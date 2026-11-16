@@ -36,8 +36,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -130,7 +130,7 @@ private fun StackColumn(state: SnackbarStackState, modifier: Modifier) {
 
 @Composable
 private fun StackedSnackbar(state: SnackbarStackState, entry: SnackbarEntry) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   LaunchedEffect(entry) {
     snapshotFlow { entry.visibility.isIdle && !entry.visibility.currentState }.first { it }
     state.entries.remove(entry)
@@ -144,7 +144,7 @@ private fun StackedSnackbar(state: SnackbarStackState, entry: SnackbarEntry) {
       state = rememberSwipeToDismissBoxState(),
       backgroundContent = {},
       modifier = Modifier
-        .padding(start = MATERIAL_INSET, end = MATERIAL_INSET, top = PipkinTokens.Spacing.s8)
+        .padding(start = MATERIAL_INSET, end = MATERIAL_INSET, top = OopbotTokens.Spacing.s8)
         .semantics {
           liveRegion = LiveRegionMode.Polite
           // TalkBack users cannot swipe it away, so they get Material's dismiss action instead.

@@ -18,8 +18,8 @@ import io.jeph.oopbot.data.OpenSshInstall
 import io.jeph.oopbot.data.RemoteHosts
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * Settings' row into the remote hosts, counting them. Like the providers row, it shows what the last refresh found
@@ -77,7 +77,7 @@ internal fun RemoteHostsScreen(onBack: () -> Unit, onAdd: () -> Unit, onOpenHost
       icon = R.drawable.ic_lucide_plus,
       onClick = onAdd,
     )
-    refreshError?.let { SettingsCaption(text = it, color = pipkinColors.destructive) }
+    refreshError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
     RemoteKeySection(remoteHosts)
   }
 }
@@ -99,8 +99,8 @@ internal fun OpenSshGate(remoteHosts: RemoteHosts): Boolean {
     loaded && remotes.sshInstalled -> return true
 
     !loaded && error == null ->
-      Box(modifier = Modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s48), Alignment.Center) {
-        SimmeringPot(size = PipkinTokens.IconSize.lg)
+      Box(modifier = Modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s48), Alignment.Center) {
+        SimmeringPot(size = OopbotTokens.IconSize.lg)
       }
 
     !loaded && error != null -> {
@@ -138,5 +138,5 @@ private fun InstallOpenSsh(install: OpenSshInstall, onInstall: () -> Unit) {
 
 @Composable
 internal fun ServerIcon() {
-  LucideIcon(icon = R.drawable.ic_lucide_server, contentDescription = null, tint = pipkinColors.foregroundMuted)
+  LucideIcon(icon = R.drawable.ic_lucide_server, contentDescription = null, tint = oopbotColors.foregroundMuted)
 }

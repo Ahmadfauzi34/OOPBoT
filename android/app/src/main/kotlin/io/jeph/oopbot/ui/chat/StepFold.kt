@@ -29,8 +29,8 @@ import io.jeph.oopbot.agent.StepsOutcome
 import io.jeph.oopbot.agent.TimelineItem
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 
 /**
@@ -55,7 +55,7 @@ internal fun StepFoldRow(
 
 /**
  * A thinking block's or tool call's row, which opens its detail sheet through [onOpenTool]; a call starting one of
- * Pipkin's subagents ([io.jeph.oopbot.ui.subagents.ChatSubagents.startsSubagent]) shows as its [SubagentToolRow]
+ * OOPBoT's subagents ([io.jeph.oopbot.ui.subagents.ChatSubagents.startsSubagent]) shows as its [SubagentToolRow]
  * instead, which opens the subagent.
  */
 @Composable
@@ -75,25 +75,25 @@ internal fun StepRow(
 
 @Composable
 private fun StepFoldLine(fold: TimelineItem.Steps, expanded: Boolean, onToggle: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 30.dp)
-      .clip(RoundedCornerShape(PipkinTokens.Radius.md))
+      .clip(RoundedCornerShape(OopbotTokens.Radius.md))
       .clickable(
         onClickLabel = stringResource(if (expanded) R.string.chat_steps_collapse else R.string.chat_steps_expand),
         onClick = onToggle,
-      ).padding(horizontal = PipkinTokens.Spacing.s4),
+      ).padding(horizontal = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     OutcomeIcon(fold.outcome)
     FoldSummary(fold, Modifier.weight(1f))
     LucideIcon(
       icon = if (expanded) R.drawable.ic_lucide_chevron_up else R.drawable.ic_lucide_chevron_down,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
       tint = colors.foregroundMuted,
     )
   }
@@ -102,7 +102,7 @@ private fun StepFoldLine(fold: TimelineItem.Steps, expanded: Boolean, onToggle: 
 /** The fold's state, then its step count. They sit together, so only the separator's own spaces part them. */
 @Composable
 private fun FoldSummary(fold: TimelineItem.Steps, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val numbers = NumberFormat.getIntegerInstance()
   val separator = stringResource(R.string.separator_dot)
   Row(modifier = modifier) {
@@ -137,7 +137,7 @@ private fun FoldSummary(fold: TimelineItem.Steps, modifier: Modifier) {
  */
 @Composable
 private fun OutcomeIcon(outcome: StepsOutcome) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   when (outcome) {
     StepsOutcome.Working -> SimmeringPot(size = STEP_ICON_SIZE, tint = colors.accent)
 
@@ -162,7 +162,7 @@ private fun OutcomeIcon(outcome: StepsOutcome) {
  * [last] step's icon.
  */
 internal fun Modifier.foldRail(last: Boolean, color: Color): Modifier = drawBehind {
-  val inset = PipkinTokens.Spacing.s4.toPx() + STEP_ICON_SIZE.toPx() / 2
+  val inset = OopbotTokens.Spacing.s4.toPx() + STEP_ICON_SIZE.toPx() / 2
   val x = if (layoutDirection == LayoutDirection.Rtl) size.width - inset else inset
   val gap = RAIL_GAP.toPx()
   val middle = size.height / 2

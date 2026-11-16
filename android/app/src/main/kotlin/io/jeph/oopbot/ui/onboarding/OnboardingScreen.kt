@@ -60,15 +60,15 @@ import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.settings.isSignedIn
 import io.jeph.oopbot.ui.settings.usesApiKey
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * First-run setup, one step per page: welcome, then every [SetupStep] that still needs the user, then a closing page.
  * Steps that are already done are passed over. Finishing the shown step, here or elsewhere (installed Termux, ran the
  * setup command, granted a permission), turns its actions into Continue rather than moving on, so the page doesn't
  * change under a tap the user is about to make. Skipped optional steps and the welcome are remembered, so reopening
- * Pipkin resumes at the first step still open. Opened again after setup (a "needs attention" tap), it starts at the
+ * OOPBoT resumes at the first step still open. Opened again after setup (a "needs attention" tap), it starts at the
  * broken step and [onClose] leaves it. Once an API key is added, [onPickModels] opens its provider's models to pick;
  * [onOpenLocalModels] opens the experimental models that run on the phone.
  */
@@ -97,7 +97,7 @@ internal fun OnboardingScreen(
   val history = rememberSaveable(saver = HistorySaver) { mutableStateListOf(firstPage(state)) }
   val page = history.last()
   val step = stepOf(page)
-  // Installing Termux or running its setup finishes in another app, which may not bring Pipkin back.
+  // Installing Termux or running its setup finishes in another app, which may not bring OOPBoT back.
   SideEffect {
     poll = (step == SetupStep.Termux || step == SetupStep.TermuxSetup) && state.status(step) != StepStatus.Done
   }
@@ -129,7 +129,7 @@ internal fun OnboardingScreen(
   BackHandler(enabled = history.size > 1 || onClose != null) { back() }
 
   Column(
-    modifier = Modifier.fillMaxSize().background(pipkinColors.surface0).windowInsetsPadding(WindowInsets.safeDrawing),
+    modifier = Modifier.fillMaxSize().background(oopbotColors.surface0).windowInsetsPadding(WindowInsets.safeDrawing),
   ) {
     WizardTopBar(
       state = state,
@@ -204,7 +204,7 @@ private fun WelcomePage(onStart: () -> Unit) {
           scaleY = scale
         },
         size = POT_SIZE,
-        tint = pipkinColors.foreground,
+        tint = oopbotColors.foreground,
       )
     },
     title = stringResource(R.string.onboarding_welcome_title),
@@ -216,7 +216,7 @@ private fun WelcomePage(onStart: () -> Unit) {
 @Composable
 private fun DonePage(signedIn: Boolean, onFinish: () -> Unit) {
   WizardPage(
-    illustration = { SimmeringPot(size = POT_SIZE, tint = pipkinColors.foreground) },
+    illustration = { SimmeringPot(size = POT_SIZE, tint = oopbotColors.foreground) },
     title = stringResource(R.string.onboarding_done_title),
     body = stringResource(if (signedIn) R.string.onboarding_done_body else R.string.onboarding_done_body_no_model),
     buttons = { WizardPrimary(stringResource(R.string.onboarding_start), onFinish) },
@@ -235,8 +235,8 @@ private fun StepPage(spec: StepSpec, onContinue: () -> Unit, onSkip: () -> Unit)
       spec.error?.let {
         Text(
           text = it,
-          color = pipkinColors.destructive,
-          fontSize = PipkinTokens.FontSize.base,
+          color = oopbotColors.destructive,
+          fontSize = OopbotTokens.FontSize.base,
           textAlign = TextAlign.Center,
         )
       }
@@ -245,8 +245,8 @@ private fun StepPage(spec: StepSpec, onContinue: () -> Unit, onSkip: () -> Unit)
       spec.note?.let {
         Text(
           text = it,
-          color = pipkinColors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.meta,
+          color = oopbotColors.foregroundMuted,
+          fontSize = OopbotTokens.FontSize.meta,
           lineHeight = NOTE_LINE_HEIGHT,
           textAlign = TextAlign.Center,
         )
@@ -267,7 +267,7 @@ private fun StepIllustration(spec: StepSpec) {
     spec.step == SetupStep.TermuxSetup && !done -> PasteDemo()
 
     spec.step == SetupStep.InstallPi && spec.status == StepStatus.Running ->
-      SimmeringPot(size = POT_SIZE, tint = pipkinColors.foreground)
+      SimmeringPot(size = POT_SIZE, tint = oopbotColors.foreground)
 
     else -> IconTile(icon = spec.icon, done = done)
   }

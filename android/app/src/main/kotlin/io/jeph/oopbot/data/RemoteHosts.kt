@@ -32,7 +32,7 @@ import org.json.JSONObject
 
 /**
  * The remote hosts the user added, their stand-in folders and which are connected, as the host last reported them.
- * [state] starts from the last result Pipkin saw, so remote workspaces are labelled before Termux answers. Changes
+ * [state] starts from the last result OOPBoT saw, so remote workspaces are labelled before Termux answers. Changes
  * re-read it; they throw [HostRejected] or [io.jeph.oopbot.host.HostFailure].
  */
 internal class RemoteHosts(
@@ -62,7 +62,7 @@ internal class RemoteHosts(
   /** Whether each host has a live connection, by id; a host missing from it hasn't been checked yet. */
   val connected: StateFlow<Map<String, Boolean>> = connectedState.asStateFlow()
 
-  /** Hosts whose key no longer matches the one accepted before, seen since Pipkin started; Forget host key fixes them. */
+  /** Hosts whose key no longer matches the one accepted before, seen since OOPBoT started; Forget host key fixes them. */
   val hostKeyChanged: StateFlow<Set<String>> = hostKeyChangedState.asStateFlow()
 
   /** Why the last refresh failed; null after a successful one. */
@@ -74,7 +74,7 @@ internal class RemoteHosts(
   /** The OpenSSH install [installOpenSsh] started, while it runs and after it fails. */
   val install: StateFlow<OpenSshInstall> = installState.asStateFlow()
 
-  /** Hosts with a saved password, by id, each with whether the server rejected it, after which Pipkin stops sending it. */
+  /** Hosts with a saved password, by id, each with whether the server rejected it, after which OOPBoT stops sending it. */
   val savedPasswords: StateFlow<Map<String, Boolean>> = passwords.saved
 
   /** Hosts [reconnect] is signing in again now. */
@@ -130,7 +130,7 @@ internal class RemoteHosts(
 
   /**
    * Connects host [id], asking [ui] what `ssh` needs. A password host's saved password answers its own prompt without
-   * asking; when the server refuses it, Pipkin stops using it and the connect starts again, asking [ui] for the
+   * asking; when the server refuses it, OOPBoT stops using it and the connect starts again, asking [ui] for the
    * password. A password typed with Remember ticked is saved once it signs in. Cancelling the caller, or a null
    * answer, ends it; a null answer throws [HostRejected] with [RemoteFailure.CONNECT_CANCELLED].
    */
@@ -277,7 +277,7 @@ internal class RemoteHosts(
     synchronized(reconnects) { backoffs.remove(id) }
   }
 
-  /** Pipkin's public key line, made first if needed. */
+  /** OOPBoT's public key line, made first if needed. */
   suspend fun publicKey(): String {
     state.value.publicKey?.let { return it }
     val key = hostClient.remoteKey()
@@ -286,8 +286,8 @@ internal class RemoteHosts(
   }
 
   /**
-   * Replaces Pipkin's key with a new one and returns its public line. The hosts that sign in with the key are
-   * disconnected, and refuse Pipkin until the user adds the new line to their `authorized_keys`.
+   * Replaces OOPBoT's key with a new one and returns its public line. The hosts that sign in with the key are
+   * disconnected, and refuse OOPBoT until the user adds the new line to their `authorized_keys`.
    */
   suspend fun newKey(): String {
     val key = hostClient.remoteNewKey()
@@ -358,7 +358,7 @@ internal class RemoteHosts(
   }
 
   private companion object {
-    const val TAG = "PipkinRemoteHosts"
+    const val TAG = "OopbotRemoteHosts"
     const val FIRST_BACKOFF_MILLIS = 30_000L
     const val MAX_BACKOFF_MILLIS = 5 * 60_000L
   }

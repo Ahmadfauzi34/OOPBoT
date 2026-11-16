@@ -107,7 +107,7 @@ internal class AgentProcess(
     @Volatile
     var rejection: HostRejected? = null
 
-    /** The host's `pipkin_exit` record, once Pi ended. */
+    /** The host's `oopbot_exit` record, once Pi ended. */
     @Volatile
     var exit: JSONObject? = null
 
@@ -130,13 +130,13 @@ internal class AgentProcess(
   private val contextUsageRequests = Channel<Unit>(Channel.CONFLATED)
 
   /**
-   * How many of the `pipkin-background` extension's tasks run in this Pi, as it last said over Pipkin's channel. Not
+   * How many of the `oopbot-background` extension's tasks run in this Pi, as it last said over OOPBoT's channel. Not
    * saved: the tasks end with Pi, so every new connection starts at none.
    */
   private val backgroundTasksState = MutableStateFlow(0)
 
   /**
-   * The `pipkin-subagents` extension's runs, as it last listed them over Pipkin's channel. Not saved: the runs live in
+   * The `oopbot-subagents` extension's runs, as it last listed them over OOPBoT's channel. Not saved: the runs live in
    * Pi's process, so every new connection starts with none; finished ones stay reachable from their tool rows.
    */
   private val subagentRunsState = MutableStateFlow<List<SubagentRun>>(emptyList())
@@ -148,7 +148,7 @@ internal class AgentProcess(
   private val subagentsCutOffState = MutableStateFlow<Map<String, Long>>(emptyMap())
 
   /**
-   * Whether the `pipkin-subagents` extension stands aside for another extension's `subagent` tool, as it last said;
+   * Whether the `oopbot-subagents` extension stands aside for another extension's `subagent` tool, as it last said;
    * reset with the runs, since each connection's Pi says so again.
    */
   private val subagentsStandingAsideState = MutableStateFlow(false)
@@ -207,7 +207,7 @@ internal class AgentProcess(
 
   /**
    * The title an extension set with `ctx.ui.setTitle`, shown in place of the chat's name. It lasts until a rename or a
-   * move to another session, and across the Pi restarts Pipkin makes, through [SessionRepository.extensionTitles];
+   * move to another session, and across the Pi restarts OOPBoT makes, through [SessionRepository.extensionTitles];
    * extensions may set another on `session_start`. A rename clears it as in Pi's terminal UI, which puts its own title
    * back when the name changes.
    */
@@ -216,13 +216,13 @@ internal class AgentProcess(
   /**
    * The text extensions set with `ctx.ui.setStatus`, by status key, with Pi's ANSI styling left in. Like the title, the
    * statuses last until a move to another session, where Pi's terminal UI clears them too, and across the Pi restarts
-   * Pipkin makes, through [SessionRepository.extensionStatuses].
+   * OOPBoT makes, through [SessionRepository.extensionStatuses].
    */
   val extensionStatuses: StateFlow<Map<String, String>> = extensionStatusesState.asStateFlow()
 
   /**
    * The widgets extensions set with `ctx.ui.setWidget`, by widget key, in the order the composer shows them. Like the
-   * statuses, they last until a move to another session and across the Pi restarts Pipkin makes, through
+   * statuses, they last until a move to another session and across the Pi restarts OOPBoT makes, through
    * [SessionRepository.extensionWidgets].
    */
   val extensionWidgets: StateFlow<Map<String, ExtensionWidget>> = extensionWidgetsState.asStateFlow()
@@ -235,7 +235,7 @@ internal class AgentProcess(
     timelineState.busy && processState == AgentProcessState.Ready
   }.stateIn(processScope, SharingStarted.Eagerly, false)
 
-  /** The `pipkin-background` extension's running tasks, plus finished ones whose result the agent hasn't started on. */
+  /** The `oopbot-background` extension's running tasks, plus finished ones whose result the agent hasn't started on. */
   val backgroundTasks: StateFlow<Int> = backgroundTasksState.asStateFlow()
 
   /** The chat's subagents since the user's last message, running or finished; see [SubagentRun]. */
@@ -244,7 +244,7 @@ internal class AgentProcess(
   /** When each subagent active as the chat's Pi went away was cut off, by tool call id, in epoch milliseconds. */
   val subagentsCutOff: StateFlow<Map<String, Long>> = subagentsCutOffState.asStateFlow()
 
-  /** Whether the chat's `subagent` tool is another extension's, whose calls are ordinary tool calls to Pipkin. */
+  /** Whether the chat's `subagent` tool is another extension's, whose calls are ordinary tool calls to OOPBoT. */
   val subagentsStandingAside: StateFlow<Boolean> = subagentsStandingAsideState.asStateFlow()
 
   /** Whether the chat's remote host was lost; the user connecting it again [RemoteOutages.clear]s that. */
@@ -258,7 +258,7 @@ internal class AgentProcess(
     .stateIn(processScope, SharingStarted.Eagerly, false)
 
   /**
-   * [working], let go [HOLD_GRACE_MILLIS] late: a task's start and end reach the app on Pipkin's channel, apart from
+   * [working], let go [HOLD_GRACE_MILLIS] late: a task's start and end reach the app on OOPBoT's channel, apart from
    * Pi's events, so a run settling and a task starting, or a task ending and the run it wakes, can arrive a moment
    * apart, and neither the keep-alive nor the registry may let go of Pi in between.
    */
@@ -338,7 +338,7 @@ internal class AgentProcess(
     stoppingSubagents(runId = null) { call("abort") }
   }
 
-  /** Asks Pi's `pipkin-background` extension to stop every task it runs; each one's result still reaches the chat. */
+  /** Asks Pi's `oopbot-background` extension to stop every task it runs; each one's result still reaches the chat. */
   override suspend fun stopBackgroundTasks() {
     val channel = connection?.channel ?: return
     try {
@@ -381,7 +381,7 @@ internal class AgentProcess(
   private suspend fun sendSubagents(data: JSONObject) = sendChannel(SUBAGENTS_TOPIC, data)
 
   /**
-   * Asks `pipkin-remote` to check that the chat's remote host answers now; it tells [remoteOutages] what it found. A
+   * Asks `oopbot-remote` to check that the chat's remote host answers now; it tells [remoteOutages] what it found. A
    * local chat's Pi has no listener, so nothing answers.
    */
   suspend fun checkRemote() = sendChannel(RemoteOutages.TOPIC, JSONObject().put("action", "check"))
@@ -492,7 +492,7 @@ internal class AgentProcess(
   }
 
   /**
-   * Brings the timeline in line with Pi after Pipkin was away, since events can go missing while it is in the
+   * Brings the timeline in line with Pi after OOPBoT was away, since events can go missing while it is in the
    * background. The `get_state` write also surfaces a connection that died unnoticed, which [read] then replaces.
    * A Pi that cannot answer `get_state` in [RESYNC_TIMEOUT_MILLIS] is unreachable, so this process reconnects; the
    * session file keeps the history.
@@ -646,7 +646,7 @@ internal class AgentProcess(
   }
 
   /**
-   * The connection ended unasked. Without the host's `pipkin_exit` the connection dropped rather than Pi exiting,
+   * The connection ended unasked. Without the host's `oopbot_exit` the connection dropped rather than Pi exiting,
    * which the chat notes: what ended it, Termux or the host alone, isn't known. A connection that was working
    * reconnects and reloads the history; Pi stopped with it, so no run survives. Otherwise, or on a second drop within
    * [AUTO_RECONNECT_INTERVAL_MILLIS] (so a failing host cannot loop), the timeline shows an exit banner.
@@ -692,7 +692,7 @@ internal class AgentProcess(
     }
   }
 
-  /** A message from one of Pipkin's bundled extensions; topics the app doesn't know are left alone. */
+  /** A message from one of OOPBoT's bundled extensions; topics the app doesn't know are left alone. */
   private fun onChannel(line: JSONObject) {
     val data = line.optJSONObject("data") ?: return
     when (line.optString("topic")) {
@@ -711,7 +711,7 @@ internal class AgentProcess(
     }
   }
 
-  /** Forgets what the last connection's Pi said over Pipkin's channel, none of which outlives that Pi. */
+  /** Forgets what the last connection's Pi said over OOPBoT's channel, none of which outlives that Pi. */
   private fun forgetChannel() {
     backgroundTasksState.value = 0
     remoteOutages.clear()
@@ -904,7 +904,7 @@ internal class AgentProcess(
   }
 
   private companion object {
-    const val TAG = "PipkinAgent"
+    const val TAG = "OopbotAgent"
 
     /** The `oopbot-background` extension's topic on OOPBoT's channel. */
     const val BACKGROUND_TOPIC = "background"

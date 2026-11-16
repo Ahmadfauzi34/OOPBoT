@@ -289,7 +289,7 @@ internal class ChatServer(
   }
 
   private companion object {
-    const val TAG = "PipkinLiteRt"
+    const val TAG = "OopbotLiteRt"
     const val STATUS_OK = 200
     const val STATUS_BAD_REQUEST = 400
     const val STATUS_UNAUTHORIZED = 401

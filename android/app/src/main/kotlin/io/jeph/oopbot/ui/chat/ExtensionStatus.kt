@@ -6,7 +6,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import io.jeph.oopbot.ui.theme.PipkinColors
+import io.jeph.oopbot.ui.theme.OopbotColors
 import java.text.Collator
 import java.util.Locale
 
@@ -27,10 +27,10 @@ private const val TAB = "   "
 /**
  * The statuses extensions set with `ctx.ui.setStatus` as one line, as Pi's footer shows them: sorted by key, each
  * flattened to one line and trimmed, joined by spaces. Pi's ANSI styling becomes spans: the 16 palette colors Pi's
- * default theme uses map to Pipkin's roles (accent, success, warning, error), other colors show as sent, and dim text is
+ * default theme uses map to OOPBoT's roles (accent, success, warning, error), other colors show as sent, and dim text is
  * muted. Null when no status has visible text.
  */
-internal fun extensionStatusLine(statuses: Map<String, String>, colors: PipkinColors): AnnotatedString? {
+internal fun extensionStatusLine(statuses: Map<String, String>, colors: OopbotColors): AnnotatedString? {
   val collator = Collator.getInstance(Locale.ROOT)
   val parts = statuses.entries
     .sortedWith { a, b -> collator.compare(a.key, b.key) }
@@ -50,7 +50,7 @@ internal fun extensionStatusLine(statuses: Map<String, String>, colors: PipkinCo
  * spaces, and Pi's ANSI styling as spans, as in [extensionStatusLine]. Each line starts unstyled, since Pi's terminal
  * UI resets the style at the end of every line.
  */
-internal fun extensionWidgetText(lines: List<String>, colors: PipkinColors): AnnotatedString =
+internal fun extensionWidgetText(lines: List<String>, colors: OopbotColors): AnnotatedString =
   AnnotatedString.Builder().apply {
     lines.forEachIndexed { index, line ->
       if (index > 0) append('\n')
@@ -77,14 +77,14 @@ internal fun extensionWidgetText(lines: List<String>, colors: PipkinColors): Ann
   }.toAnnotatedString()
 
 /** One status: on one line with single spaces and no outer whitespace, as Pi's footer sanitizes it, and styled. */
-private fun styledStatus(raw: String, colors: PipkinColors): AnnotatedString {
+private fun styledStatus(raw: String, colors: OopbotColors): AnnotatedString {
   val line = OneLine()
   forEachStyledRun(raw, colors, line::append)
   return line.build()
 }
 
 /** Calls [onRun] with each run of [raw]'s text and the SGR style over it; other escapes are dropped. */
-private inline fun forEachStyledRun(raw: String, colors: PipkinColors, onRun: (String, SpanStyle?) -> Unit) {
+private inline fun forEachStyledRun(raw: String, colors: OopbotColors, onRun: (String, SpanStyle?) -> Unit) {
   val text = OSC.replace(raw, "")
   val sgr = SgrState(colors)
   var start = 0
@@ -126,7 +126,7 @@ private class OneLine {
 }
 
 /** The SGR attributes in effect while reading one status or widget line. */
-private class SgrState(private val colors: PipkinColors) {
+private class SgrState(private val colors: OopbotColors) {
   private var foreground: Color? = null
   private var dim = false
   private var bold = false
@@ -223,7 +223,7 @@ private class SgrState(private val colors: PipkinColors) {
 
   /**
    * Palette slots 0-15 by the role Pi's default theme gives them; 16-255 as xterm defines them. Pi's themes make
-   * magenta their accent, so it takes Pipkin's; cyan keeps a hue of its own.
+   * magenta their accent, so it takes OOPBoT's; cyan keeps a hue of its own.
    */
   private fun paletteColor(index: Int): Color? = when (index) {
     in 0..15 -> when (index % 8) {

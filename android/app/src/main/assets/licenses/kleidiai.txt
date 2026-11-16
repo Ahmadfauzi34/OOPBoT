@@ -1,4 +1,4 @@
-KleidiAI v1.32.0 (https://github.com/ARM-software/kleidiai), Apache License 2.0. Built into Pipkin's llama.cpp library for local models on arm64, for its matrix multiplication kernels.
+KleidiAI v1.32.0 (https://github.com/ARM-software/kleidiai), Apache License 2.0. Built into OOPBoT's llama.cpp library for local models on arm64, for its matrix multiplication kernels.
 
 SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 

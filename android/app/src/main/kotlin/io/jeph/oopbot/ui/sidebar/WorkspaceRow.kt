@@ -43,9 +43,9 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.StatusDot
-import io.jeph.oopbot.ui.theme.PipkinColors
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.BreakIterator
 
 /**
@@ -66,7 +66,7 @@ internal fun WorkspaceRow(
   onNewChat: () -> Unit,
   onActions: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val name = names.name(cwd)
   val host = names.hostName(cwd)
   val folder = names.machinePath(cwd)
@@ -90,12 +90,12 @@ internal fun WorkspaceRow(
       .heightIn(min = 56.dp)
       .padding(
         start = 10.dp,
-        end = PipkinTokens.Spacing.s4,
-        top = PipkinTokens.Spacing.s8,
-        bottom = PipkinTokens.Spacing.s8,
+        end = OopbotTokens.Spacing.s4,
+        top = OopbotTokens.Spacing.s8,
+        bottom = OopbotTokens.Spacing.s8,
       ),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     WorkspaceTile(
       letter = remember(name) { tileLetter(name) },
@@ -107,7 +107,7 @@ internal fun WorkspaceRow(
       Text(
         text = name,
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.content,
+        fontSize = OopbotTokens.FontSize.content,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -123,7 +123,7 @@ internal fun WorkspaceRow(
 /** The host a remote workspace is on, on a line of its own so a long path can't cut it off. */
 @Composable
 private fun HostLine(host: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(HOST_ICON_GAP)) {
     LucideIcon(
       icon = R.drawable.ic_lucide_server,
@@ -148,7 +148,7 @@ private fun HostLine(host: String) {
  */
 @Composable
 private fun StatusLine(status: WorkspaceStatus, folder: String?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val tabs = if (status.tabs >
     0
   ) {
@@ -203,14 +203,14 @@ private fun StatusLine(status: WorkspaceStatus, folder: String?) {
 /** A workspace row's actions and New chat; New chat sits on a disc in the row the pane shows. */
 @Composable
 private fun WorkspaceButtons(name: String, shown: Boolean, onActions: () -> Unit, onNewChat: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   RoundIconButton(
     icon = R.drawable.ic_lucide_ellipsis,
     contentDescription = stringResource(R.string.archive_workspace_actions, name),
     onClick = onActions,
     modifier = Modifier.size(BUTTON_SIZE),
     tint = colors.foregroundMuted,
-    iconSize = PipkinTokens.IconSize.lg,
+    iconSize = OopbotTokens.IconSize.lg,
   )
   RoundIconButton(
     icon = R.drawable.ic_lucide_plus,
@@ -219,18 +219,18 @@ private fun WorkspaceButtons(name: String, shown: Boolean, onActions: () -> Unit
     modifier = Modifier.size(BUTTON_SIZE),
     background = if (shown) colors.surface2 else Color.Transparent,
     tint = if (shown) colors.foreground else colors.foregroundMuted,
-    iconSize = PipkinTokens.IconSize.lg,
+    iconSize = OopbotTokens.IconSize.lg,
   )
 }
 
 /** The last row of the workspace list: a dashed outline around a plus tile, opening the add-workspace sheet. */
 @Composable
 internal fun AddWorkspaceRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = modifier
       .fillMaxWidth()
-      .padding(top = PipkinTokens.Spacing.s8)
+      .padding(top = OopbotTokens.Spacing.s8)
       .clip(ROW_SHAPE)
       .drawBehind {
         val stroke = 1.dp.toPx()
@@ -245,9 +245,9 @@ internal fun AddWorkspaceRow(onClick: () -> Unit, modifier: Modifier = Modifier)
       }
       .clickable(onClick = onClick)
       .heightIn(min = 56.dp)
-      .padding(horizontal = 10.dp, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = 10.dp, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Box(
       modifier = Modifier.size(TILE_SIZE).clip(TILE_SHAPE).background(colors.surface2),
@@ -258,7 +258,7 @@ internal fun AddWorkspaceRow(onClick: () -> Unit, modifier: Modifier = Modifier)
     Text(
       text = stringResource(R.string.shell_add_workspace),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.content,
+      fontSize = OopbotTokens.FontSize.content,
       fontWeight = FontWeight.SemiBold,
     )
   }
@@ -270,7 +270,7 @@ internal fun AddWorkspaceRow(onClick: () -> Unit, modifier: Modifier = Modifier)
  */
 @Composable
 private fun WorkspaceTile(letter: String, tint: Color, working: Boolean, remote: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(modifier = Modifier.size(TILE_SIZE).clearAndSetSemantics {}) {
     Box(
       modifier = Modifier
@@ -280,7 +280,7 @@ private fun WorkspaceTile(letter: String, tint: Color, working: Boolean, remote:
       contentAlignment = Alignment.Center,
     ) {
       if (working) {
-        SimmeringPot(size = PipkinTokens.IconSize.lg, tint = colors.accent)
+        SimmeringPot(size = OopbotTokens.IconSize.lg, tint = colors.accent)
       } else {
         Text(text = letter, color = tint, fontSize = TILE_LETTER_SIZE, fontWeight = FontWeight.ExtraBold, maxLines = 1)
       }
@@ -298,7 +298,7 @@ private fun WorkspaceTile(letter: String, tint: Color, working: Boolean, remote:
         LucideIcon(
           icon = R.drawable.ic_lucide_server,
           contentDescription = null,
-          size = PipkinTokens.IconSize.xs,
+          size = OopbotTokens.IconSize.xs,
           tint = colors.foregroundMuted,
         )
       }
@@ -320,7 +320,7 @@ internal fun tileLetter(name: String): String {
 }
 
 /** A colour picked by the workspace's folder, so each workspace keeps its colour across launches. */
-private fun tileColor(cwd: String, colors: PipkinColors): Color {
+private fun tileColor(cwd: String, colors: OopbotColors): Color {
   val tints = listOf(colors.accent, colors.dotSuccess, colors.dotWarning, colors.extension, colors.info)
   return tints[Math.floorMod(cwd.hashCode(), tints.size)]
 }

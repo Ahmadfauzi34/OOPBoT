@@ -3,8 +3,8 @@ package io.jeph.oopbot.ui.theme
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Pipkin's spacing, type and shape scale. */
-object PipkinTokens {
+/** OOPBoT's spacing, type and shape scale. */
+object OopbotTokens {
   object Spacing {
     val s2 = 2.dp
     val s4 = 4.dp

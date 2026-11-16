@@ -46,7 +46,7 @@ internal sealed class HostFailure(
   val needsSetup: Boolean get() = kind in SETUP_KINDS
 
   /**
-   * Fixed by opening Termux, which starts Pipkin's helper there; Pipkin then switches back on its own. Should the
+   * Fixed by opening Termux, which starts OOPBoT's helper there; OOPBoT then switches back on its own. Should the
    * helper still not start, the setup command fixes what Termux reports (no key, Node.js missing, a crashing helper).
    */
   val needsTermuxOpen: Boolean get() = kind == Kind.HelperUnreachable
@@ -56,7 +56,7 @@ internal sealed class HostFailure(
 
   class MissingTermux : HostFailure(Kind.MissingTermux, R.string.host_failure_missing_termux)
 
-  /** The installed Termux is signed by neither F-Droid nor Google Play, so Pipkin won't run anything in it. */
+  /** The installed Termux is signed by neither F-Droid nor Google Play, so OOPBoT won't run anything in it. */
   class UntrustedTermux : HostFailure(Kind.UntrustedTermux, R.string.host_failure_untrusted_termux)
 
   class Permission : HostFailure(Kind.Permission, R.string.host_failure_permission)
@@ -92,21 +92,21 @@ internal sealed class HostFailure(
   class TermuxError : HostFailure(Kind.TermuxError, R.string.host_failure_termux_error)
 
   /**
-   * Termux was reinstalled, or swapped between its F-Droid and Play builds, after Pipkin set it up. Either wipes
-   * Termux's home folder, so Pi, its sign-in and Pipkin's setup there are gone.
+   * Termux was reinstalled, or swapped between its F-Droid and Play builds, after OOPBoT set it up. Either wipes
+   * Termux's home folder, so Pi, its sign-in and OOPBoT's setup there are gone.
    */
   class TermuxChanged : HostFailure(Kind.TermuxChanged, R.string.host_failure_termux_changed)
 
-  /** Play build: Pipkin holds no pairing with a helper in Termux yet. */
+  /** Play build: OOPBoT holds no pairing with a helper in Termux yet. */
   class HelperNotPaired : HostFailure(Kind.HelperNotPaired, R.string.host_failure_helper_not_paired)
 
-  /** Play build: the helper answered but holds another pairing key, e.g. after Pipkin's data was cleared. */
+  /** Play build: the helper answered but holds another pairing key, e.g. after OOPBoT's data was cleared. */
   class HelperRejected : HostFailure(Kind.HelperRejected, R.string.host_failure_helper_rejected)
 
   /** Play build: nothing listens on the helper's ports, so Termux or the helper isn't running. */
   class HelperUnreachable : HostFailure(Kind.HelperUnreachable, R.string.host_failure_helper_unreachable)
 
-  /** Play build: every helper port is held by something other than Pipkin's helper. */
+  /** Play build: every helper port is held by something other than OOPBoT's helper. */
   class HelperPortTaken : HostFailure(Kind.HelperPortTaken, R.string.host_failure_helper_port_taken)
 
   internal companion object {

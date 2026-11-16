@@ -6,8 +6,8 @@ import io.jeph.oopbot.host.HelperPairing
 import io.jeph.oopbot.host.HostFailure
 
 /**
- * Remembers which installation of Termux Pipkin last reached, to notice when Termux was reinstalled or swapped between
- * its F-Droid and Play builds. Either wipes Termux's home folder: Pi, its sign-in and everything Pipkin set up there.
+ * Remembers which installation of Termux OOPBoT last reached, to notice when Termux was reinstalled or swapped between
+ * its F-Droid and Play builds. Either wipes Termux's home folder: Pi, its sign-in and everything OOPBoT set up there.
  */
 internal object TermuxIdentity {
   private const val FILE = "termux_identity"

@@ -18,19 +18,19 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * Pipkin's side of `pipkin-helper/1`, the protocol of its helper in Termux's Play build: a mutual HMAC handshake over
+ * OOPBoT's side of `oopbot-helper/1`, the protocol of its helper in Termux's Play build: a mutual HMAC handshake over
  * a pairing key, then AES-256-GCM frames keyed per direction and per connection, so a relay on the loopback port can
  * neither read, inject, reorder nor replay them. Pure JVM; the sockets come from the caller.
  */
 internal object HelperProtocol {
   /**
-   * The helper listens on the first free one, so Pipkin tries them in this order. The release's are 47310–47314 and
+   * The helper listens on the first free one, so OOPBoT tries them in this order. The release's are 47310–47314 and
    * the debug build's 47320–47324: each build then knocks only on its own helper, whose key it holds.
    */
   val PORTS = List(5) { TermuxBuild.HELPER_FIRST_PORT + it }
   const val KEY_BYTES = 32
 
-  /** The helper replies to the opening at once; anything slower is not Pipkin's helper. */
+  /** The helper replies to the opening at once; anything slower is not OOPBoT's helper. */
   const val REPLY_TIMEOUT_MILLIS = 3_000
 
   const val MAX_PLAINTEXT_BYTES = 4 * 1024 * 1024

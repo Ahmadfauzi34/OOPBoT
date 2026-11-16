@@ -31,8 +31,8 @@ import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.annotator.AnnotatorSettings
 import com.mikepenz.markdown.annotator.annotatorSettings
 import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
@@ -48,7 +48,7 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 internal fun MarkdownTable(content: String, node: ASTNode, style: TextStyle) {
   val table = remember(content, node) { parseTable(content, node) }
   if (table.columns == 0) return
-  val colors = pipkinColors
+  val colors = oopbotColors
   val shape = RoundedCornerShape(16.dp)
   val annotator = annotatorSettings()
   val headerStyle = style.copy(color = colors.foregroundMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -190,9 +190,9 @@ private fun alignment(marker: String?): TextAlign = when {
 
 private val GRID_LINE = 1.dp
 
-private val CELL_PADDING_HORIZONTAL = PipkinTokens.Spacing.s12
+private val CELL_PADDING_HORIZONTAL = OopbotTokens.Spacing.s12
 
-private val CELL_PADDING_VERTICAL = PipkinTokens.Spacing.s8
+private val CELL_PADDING_VERTICAL = OopbotTokens.Spacing.s8
 
 /** The narrowest a column of long text is squeezed to before the table scrolls instead. */
 private val COLUMN_FLOOR = 120.dp

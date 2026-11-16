@@ -109,7 +109,7 @@ private class PaneStack(private val panes: Panes<AgentProcess>, private val pane
 
 /**
  * Tells the dialog notifications and the chat inbox which [chats] the user sees: those shown in a pane with no side
- * panel over them, while Pipkin is on screen and no other screen covers the panes.
+ * panel over them, while OOPBoT is on screen and no other screen covers the panes.
  */
 @Composable
 internal fun ChatsOnScreen(chats: Set<AgentProcess>) {

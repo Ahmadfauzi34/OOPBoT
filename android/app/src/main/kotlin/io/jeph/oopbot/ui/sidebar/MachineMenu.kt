@@ -38,8 +38,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.RemoteHost
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.StatusDot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * The folder picker's machine row: the machine it browses, [host] or the phone when null, with a remote host's
@@ -54,12 +54,12 @@ internal fun MachineRow(
   onPick: (hostId: String?) -> Unit,
   onAddHost: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   var open by remember { mutableStateOf(false) }
   var width by remember { mutableIntStateOf(0) }
   val label = host?.name ?: stringResource(R.string.remote_machine_phone)
   val description = stringResource(R.string.remote_machine_choose, label)
-  val padding = Modifier.padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s4)
+  val padding = Modifier.padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s4)
   Box(modifier = Modifier.fillMaxWidth().then(padding)) {
     Row(
       modifier = Modifier
@@ -70,7 +70,7 @@ internal fun MachineRow(
         .clickable(role = Role.DropdownList) { open = true }
         .semantics { contentDescription = description }
         .heightIn(min = 44.dp)
-        .padding(horizontal = PipkinTokens.Spacing.s12),
+        .padding(horizontal = OopbotTokens.Spacing.s12),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -79,7 +79,7 @@ internal fun MachineRow(
         text = label,
         modifier = Modifier.weight(1f),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -91,7 +91,7 @@ internal fun MachineRow(
       expanded = open,
       onDismissRequest = { open = false },
       modifier = Modifier.width(with(LocalDensity.current) { width.toDp() }),
-      shape = RoundedCornerShape(PipkinTokens.Radius.xl),
+      shape = RoundedCornerShape(OopbotTokens.Radius.xl),
       containerColor = colors.surface1,
     ) {
       MachineItems(
@@ -120,7 +120,7 @@ private fun MachineItems(
   onPick: (hostId: String?) -> Unit,
   onAddHost: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   MachineItem(
     icon = R.drawable.ic_lucide_smartphone,
     title = stringResource(R.string.remote_machine_phone),
@@ -143,7 +143,7 @@ private fun MachineItems(
     }
   }
   HorizontalDivider(
-    modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s12),
+    modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s12),
     thickness = 1.dp,
     color = colors.border,
   )
@@ -152,15 +152,15 @@ private fun MachineItems(
       .fillMaxWidth()
       .clickable(role = Role.Button, onClick = onAddHost)
       .heightIn(min = 48.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s16),
+      .padding(horizontal = OopbotTokens.Spacing.s16),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     LucideIcon(icon = R.drawable.ic_lucide_plus, contentDescription = null, tint = colors.accent)
     Text(
       text = stringResource(R.string.remote_add_host),
       color = colors.accent,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
     )
   }
@@ -179,14 +179,14 @@ internal fun machineIcon(host: RemoteHost?): Int = if (host ==
 /** A green dot and Connected, or a grey one and Not connected. */
 @Composable
 private fun ConnectionState(connected: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val color = if (connected) colors.dotSuccess else colors.foregroundMuted
   Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
     StatusDot(if (connected) colors.dotSuccess else colors.foregroundExtraMuted)
     Text(
       text = stringResource(if (connected) R.string.remote_connected else R.string.remote_not_connected),
       color = color,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       fontWeight = FontWeight.Medium,
       maxLines = 1,
     )
@@ -202,22 +202,22 @@ private fun MachineItem(
   onClick: () -> Unit,
   detail: @Composable () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
       .heightIn(min = 56.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     LucideIcon(icon = icon, contentDescription = null, tint = colors.foregroundMuted)
     Column(modifier = Modifier.weight(1f)) {
       Text(
         text = title,
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -233,8 +233,8 @@ private fun MenuDetail(text: String) {
   Text(
     text = text,
     style = pathTextStyle,
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
   )

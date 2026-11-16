@@ -16,8 +16,8 @@ import androidx.compose.ui.res.stringResource
 import io.jeph.oopbot.R
 import io.jeph.oopbot.termux.TermuxInstall
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** A step's button; the first of a [StepSpec]'s is its main action. */
 internal data class StepButton(val label: String, val enabled: Boolean = true, val onClick: () -> Unit)
@@ -36,7 +36,7 @@ internal class StepSpec(
   val status: StepStatus,
   val buttons: List<StepButton> = emptyList(),
   val error: String? = null,
-  /** Shown with a spinner while Pipkin waits on something it can't hurry, such as Termux finishing the setup. */
+  /** Shown with a spinner while OOPBoT waits on something it can't hurry, such as Termux finishing the setup. */
   val waiting: String? = null,
   /** A quieter line under the step's state, such as what to do if the setup command stops partway. */
   val note: String? = null,
@@ -323,16 +323,16 @@ private fun signInSpec(state: OnboardingState, onAction: (SetupAction) -> Unit):
   )
 }
 
-/** Why Pipkin accepts only the official F-Droid and Play builds, shown until one is installed. */
+/** Why OOPBoT accepts only the official F-Droid and Play builds, shown until one is installed. */
 @Composable
 private fun SecurityNote() {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .background(colors.surface1, RoundedCornerShape(PipkinTokens.Radius.xl))
-      .padding(PipkinTokens.Spacing.s12),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      .background(colors.surface1, RoundedCornerShape(OopbotTokens.Radius.xl))
+      .padding(OopbotTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     LucideIcon(icon = R.drawable.ic_lucide_shield_check, contentDescription = null, tint = colors.foregroundMuted)

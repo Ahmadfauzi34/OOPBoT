@@ -20,7 +20,7 @@ class HostResultReceiver : BroadcastReceiver() {
   }
 
   internal companion object {
-    private const val TAG = "Pipkin"
+    private const val TAG = "OOPBoT"
     private const val ERRMSG_LIMIT = 8192
     private const val STDERR_LOG_LIMIT = 4096
 
@@ -91,7 +91,7 @@ class HostResultReceiver : BroadcastReceiver() {
       else -> HostFailure.Crashed(exitCode)
     }
 
-    /** A host that exited before connecting with no Termux-side error, as Pipkin's helper reports it. */
+    /** A host that exited before connecting with no Termux-side error, as OOPBoT's helper reports it. */
     fun exitFailure(exitCode: Int, expectedVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION): HostFailure =
       failureFor(exitCode, ERRNO_SUCCESS, "", expectedVersion)
   }

@@ -10,9 +10,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
 import io.jeph.oopbot.terminal.TerminalSession
 import io.jeph.oopbot.ui.chat.ConfirmDialog
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SheetRow
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.RenameDialog
 
 /** The name the user gave [session], else "Terminal 2" and so on. */
@@ -35,7 +35,7 @@ internal fun TerminalActionsSheet(session: TerminalSession, onClose: () -> Unit,
   var menuOpen by rememberSaveable(session.id) { mutableStateOf(true) }
   var dialog by rememberSaveable(session.id) { mutableStateOf<TerminalDialog?>(null) }
   if (menuOpen) {
-    PipkinSheet(
+    OopbotSheet(
       onDismissRequest = {
         menuOpen = false
         if (dialog == null) onDismiss()
@@ -49,7 +49,7 @@ internal fun TerminalActionsSheet(session: TerminalSession, onClose: () -> Unit,
       SheetRow(
         label = stringResource(R.string.terminal_close),
         icon = R.drawable.ic_lucide_x,
-        labelColor = pipkinColors.destructive,
+        labelColor = oopbotColors.destructive,
         onClick = { dismiss { dialog = TerminalDialog.ConfirmClose } },
       )
     }

@@ -223,7 +223,7 @@ internal class InferenceProcess(
   }
 
   private companion object {
-    const val TAG = "PipkinLocalModels"
+    const val TAG = "OopbotLocalModels"
     const val DEATH_TIMEOUT_MILLIS = 5_000L
     const val EXIT_INFO_ATTEMPTS = 20
     const val EXIT_INFO_POLL_MILLIS = 100L

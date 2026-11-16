@@ -6,7 +6,7 @@ import io.jeph.oopbot.localmodel.engine.Backend
 import io.jeph.oopbot.localmodel.engine.EngineKind
 
 /**
- * The models Pipkin offers to run on the phone, each with every build of it Pipkin knows. The files are pinned by
+ * The models OOPBoT offers to run on the phone, each with every build of it OOPBoT knows. The files are pinned by
  * SHA-256 rather than taken from whatever Hugging Face serves today, so a repository that changes a file can't swap
  * what runs on the phone, and a download is only kept once it matches.
  */

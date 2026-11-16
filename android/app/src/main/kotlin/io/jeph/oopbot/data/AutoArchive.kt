@@ -10,7 +10,7 @@ internal object AutoArchive {
 
   const val DEFAULT_DAYS = 7
 
-  /** How often auto archive asks for a fresh chat list while Pipkin is on screen, so chats go stale on time. */
+  /** How often auto archive asks for a fresh chat list while OOPBoT is on screen, so chats go stale on time. */
   val SWEEP_INTERVAL_MILLIS = TimeUnit.HOURS.toMillis(1)
 
   /**

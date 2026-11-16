@@ -12,16 +12,16 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.text.TextStyle
 
-val LocalPipkinColors = staticCompositionLocalOf { StoneColors }
+val LocalOopbotColors = staticCompositionLocalOf { StoneColors }
 
 /** Shorthand for the active palette inside composables. */
-val pipkinColors: PipkinColors
+val oopbotColors: OopbotColors
   @Composable
   @ReadOnlyComposable
-  get() = LocalPipkinColors.current
+  get() = LocalOopbotColors.current
 
 @Composable
-fun PipkinTheme(theme: AppTheme, content: @Composable () -> Unit) {
+fun OopbotTheme(theme: AppTheme, content: @Composable () -> Unit) {
   val colors = theme.colors(systemDark = isSystemInDarkTheme())
   val base = if (colors.isDark) darkColorScheme() else lightColorScheme()
   val scheme =
@@ -58,8 +58,8 @@ fun PipkinTheme(theme: AppTheme, content: @Composable () -> Unit) {
       error = colors.destructive,
       onError = colors.destructiveForeground,
     )
-  CompositionLocalProvider(LocalPipkinColors provides colors) {
-    MaterialTheme(colorScheme = scheme, typography = PipkinTypography) {
+  CompositionLocalProvider(LocalOopbotColors provides colors) {
+    MaterialTheme(colorScheme = scheme, typography = OopbotTypography) {
       CompositionLocalProvider(LocalContentColor provides colors.foreground, content = content)
     }
   }
@@ -70,9 +70,9 @@ fun PipkinTheme(theme: AppTheme, content: @Composable () -> Unit) {
  * them: MaterialTheme's LocalTextStyle is bodyLarge and buttons merge into it, so a colour would override their
  * content colour. Text colour comes from LocalContentColor instead.
  */
-private val PipkinTypography = Typography().run {
-  val font = TextStyle(fontFamily = PipkinFonts.ui, fontFeatureSettings = PipkinFonts.FEATURES)
-  val body = font.merge(TextStyle(fontSize = PipkinTokens.FontSize.base))
+private val OopbotTypography = Typography().run {
+  val font = TextStyle(fontFamily = OopbotFonts.ui, fontFeatureSettings = OopbotFonts.FEATURES)
+  val body = font.merge(TextStyle(fontSize = OopbotTokens.FontSize.base))
   Typography(
     displayLarge = displayLarge.merge(font),
     displayMedium = displayMedium.merge(font),

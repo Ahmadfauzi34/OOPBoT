@@ -212,7 +212,7 @@ class ExtensionNoticeTimelineTest {
   }
 
   @Test
-  fun aNoticeOfPipkinsOwnIsSavedAndStaysThroughTheReconnectsReload() {
+  fun aNoticeOfOopbotsOwnIsSavedAndStaysThroughTheReconnectsReload() {
     val history = JSONArray("""[{"role":"user","content":"go","timestamp":10}]""")
     timeline.seed(history)
     timeline.addNotice(AppNotice.ConnectionLost, NoticeLevel.Warning)

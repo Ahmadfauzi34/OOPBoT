@@ -96,8 +96,8 @@ sealed interface TimelineItem {
   ) : TimelineItem
 
   /**
-   * A message an extension showed with `ctx.ui.notify`, or a notice of Pipkin's own ([appNotice]) shown the same way.
-   * Pi keeps no record of either, so Pipkin saves it as a [SavedNotice] and puts it back whenever the chat reloads its
+   * A message an extension showed with `ctx.ui.notify`, or a notice of OOPBoT's own ([appNotice]) shown the same way.
+   * Pi keeps no record of either, so OOPBoT saves it as a [SavedNotice] and puts it back whenever the chat reloads its
    * history.
    */
   data class ExtensionNotice(
@@ -142,13 +142,13 @@ enum class NoticeKind {
   Compacted,
 }
 
-/** A notice of Pipkin's own among a session's saved notices; it's shown in the app's language, whenever that changed. */
+/** A notice of OOPBoT's own among a session's saved notices; it's shown in the app's language, whenever that changed. */
 enum class AppNotice {
   /** The connection to Termux dropped without word of Pi exiting. */
   ConnectionLost,
 }
 
-/** What failed in a [TimelineItem.Error]. The messages are Pi's own words, which Pipkin shows as they are. */
+/** What failed in a [TimelineItem.Error]. The messages are Pi's own words, which OOPBoT shows as they are. */
 sealed interface ErrorCause {
   /** A request to the model failed; [message] is null when Pi gave no reason. */
   data class Request(val message: String?) : ErrorCause
@@ -183,7 +183,7 @@ enum class NoticeLevel {
  * An extension notice as saved with its session, placed back after the message whose Pi `timestamp` is [after], or
  * first when it came before any message or that message is no longer in the history (a compaction drops the oldest).
  * One that came [afterRun], once the run that message ended had finished, follows that run's footer. A notice of
- * Pipkin's own has its [appNotice] and no [message].
+ * OOPBoT's own has its [appNotice] and no [message].
  */
 data class SavedNotice(
   val level: NoticeLevel,

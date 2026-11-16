@@ -30,8 +30,8 @@ import org.json.JSONObject
  * sends one `oopbot_request` and, except for [openRpc], reads lines until `oopbot_result`.
  * Throws [HostFailure] when the host could not run and [HostRejected] when it refused.
  *
- * A launch waits until Pipkin is in the [foreground]. In the background Android may refuse to start Termux, and in
- * Doze it blocks the host's connection back to Pipkin once Pipkin's foreground service stops, so the launch would
+ * A launch waits until OOPBoT is in the [foreground]. In the background Android may refuse to start Termux, and in
+ * Doze it blocks the host's connection back to OOPBoT once OOPBoT's foreground service stops, so the launch would
  * fail. Nothing launched from the background needs to run before the user returns: reconnects and session lists
  * are only seen on screen.
  */
@@ -45,8 +45,8 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   private val utility = SharedHost(scope, UTILITY_IDLE_MILLIS, ::openUtility)
 
   init {
-    // Android freezes Pipkin in the background, and its idle close with it, which would leave the utility host up in
-    // Termux until Pipkin returns. A request made in the background waits for the foreground anyway.
+    // Android freezes OOPBoT in the background, and its idle close with it, which would leave the utility host up in
+    // Termux until OOPBoT returns. A request made in the background waits for the foreground anyway.
     scope.launch { foreground.collect { visible -> if (!visible) utility.retire() } }
   }
 
@@ -176,7 +176,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   }
 
   /**
-   * Makes Pi's `pipkin-local` provider serve exactly [models] from Pipkin's local endpoint at [baseUrl] with [apiKey],
+   * Makes Pi's `oopbot-local` provider serve exactly [models] from OOPBoT's local endpoint at [baseUrl] with [apiKey],
    * compaction sized to each model's context; an empty list removes the provider. True when Pi's configuration
    * changed, false when it already said all of that.
    */
@@ -242,7 +242,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     call("update_extensions", JSONObject(), EXTENSIONS_UPDATE_TIMEOUT_MILLIS, progress(onProgress))
   }
 
-  /** The remote hosts, Pipkin's public key, every stand-in folder, and whether Termux has OpenSSH. */
+  /** The remote hosts, OOPBoT's public key, every stand-in folder, and whether Termux has OpenSSH. */
   suspend fun remoteHosts(): RemoteHostsState = RemoteHostsState.from(utilityCall("remote_hosts", JSONObject()))
 
   /**
@@ -257,10 +257,10 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     utilityCall("remote_host_remove", JSONObject().put("id", id))
   }
 
-  /** Pipkin's public key line, made first if needed. */
+  /** OOPBoT's public key line, made first if needed. */
   suspend fun remoteKey(): String = utilityCall("remote_key", JSONObject()).optString("publicKey")
 
-  /** The public line of a new key that replaces Pipkin's key; every host signing in with the key is disconnected. */
+  /** The public line of a new key that replaces OOPBoT's key; every host signing in with the key is disconnected. */
   suspend fun remoteNewKey(): String = utilityCall("remote_key_new", JSONObject()).getString("publicKey")
 
   /** Whether each of [ids] has a live connection. */
@@ -274,7 +274,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     utilityCall("remote_disconnect", JSONObject().put("id", id))
   }
 
-  /** Forgets the host keys Pipkin accepted for host [id], so the next connect asks about its key again. */
+  /** Forgets the host keys OOPBoT accepted for host [id], so the next connect asks about its key again. */
   suspend fun remoteForgetHostKey(id: String) {
     utilityCall("remote_forget_host_key", JSONObject().put("id", id))
   }
@@ -286,7 +286,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   /**
    * Connects host [hostId], handing what `ssh` asks (its host key, a password, a key's passphrase) to [ui]; the
    * connection stays up afterwards for everything else. Cancelling the caller ends the connect, as a null answer does.
-   * An [unattended] connect, for Pipkin answering with a saved password, is never asked about the host key: `ssh`
+   * An [unattended] connect, for OOPBoT answering with a saved password, is never asked about the host key: `ssh`
    * refuses an unknown or changed one, so the password goes only to a server the user checked.
    */
   suspend fun connectRemote(hostId: String, ui: RemoteConnectUi, unattended: Boolean = false) {
@@ -412,7 +412,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
 
   private suspend fun connect(mode: String): HostChannel {
     if (!foreground.first()) {
-      Log.i(TAG, "Host $mode waits until Pipkin is in the foreground")
+      Log.i(TAG, "Host $mode waits until OOPBoT is in the foreground")
       foreground.first { it }
     }
     val channel = try {

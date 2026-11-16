@@ -47,10 +47,10 @@ import io.jeph.oopbot.agent.text
 import io.jeph.oopbot.ui.components.CapsLabel
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.MarkdownCache
-import io.jeph.oopbot.ui.components.PipkinMarkdown
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.components.OopbotMarkdown
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.roundToInt
 
 /** How many lines a folded extension message or notice shows. */
@@ -74,14 +74,14 @@ internal fun ExtensionMessage(
   markdownCache: MarkdownCache,
   modifier: Modifier = Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
     modifier = modifier
       .fillMaxWidth()
-      .padding(top = PipkinTokens.Spacing.s4)
+      .padding(top = OopbotTokens.Spacing.s4)
       .background(colors.surface1, CardShape)
-      .padding(start = PipkinTokens.Spacing.s12, top = 10.dp, end = PipkinTokens.Spacing.s12, bottom = 10.dp),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      .padding(start = OopbotTokens.Spacing.s12, top = 10.dp, end = OopbotTokens.Spacing.s12, bottom = 10.dp),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
   ) {
     Row(
       verticalAlignment = Alignment.CenterVertically,
@@ -90,13 +90,13 @@ internal fun ExtensionMessage(
       LucideIcon(
         icon = R.drawable.ic_lucide_plug,
         contentDescription = stringResource(R.string.chat_extension_message),
-        size = PipkinTokens.IconSize.sm,
+        size = OopbotTokens.IconSize.sm,
         tint = colors.extension,
       )
       Text(
         text = item.customType,
         color = colors.extension,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -107,18 +107,18 @@ internal fun ExtensionMessage(
       FoldedContent(
         FOLDED_LINES,
         FOLD_SLACK_LINES,
-        PipkinTokens.LineHeight.markdown,
+        OopbotTokens.LineHeight.markdown,
         fadeTo = colors.surface1,
         expanded = expanded,
         onToggle = { expanded = !expanded },
       ) {
-        PipkinMarkdown(markdown = item.markdown, modifier = Modifier.fillMaxWidth(), cache = markdownCache)
+        OopbotMarkdown(markdown = item.markdown, modifier = Modifier.fillMaxWidth(), cache = markdownCache)
       }
     }
     if (item.images.isNotEmpty()) {
       FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+        horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
       ) {
         item.images.forEach { ImageThumbnail(it) }
       }
@@ -132,7 +132,7 @@ internal fun ExtensionMessage(
  */
 @Composable
 internal fun ExtensionNoticeCard(item: TimelineItem.ExtensionNotice, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val look = when (item.level) {
     NoticeLevel.Info -> NoticeLook(R.drawable.ic_lucide_info, R.string.chat_notice_info, colors.info, colors.infoSoft)
 
@@ -152,7 +152,7 @@ internal fun ExtensionNoticeCard(item: TimelineItem.ExtensionNotice, modifier: M
     modifier = modifier
       .fillMaxWidth()
       .background(background, CardShape)
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = 10.dp),
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = 10.dp),
     horizontalArrangement = Arrangement.spacedBy(11.dp),
   ) {
     LucideIcon(icon = look.icon, contentDescription = null, modifier = Modifier.padding(top = 1.dp), tint = look.tint)

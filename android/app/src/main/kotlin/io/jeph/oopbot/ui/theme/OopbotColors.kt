@@ -3,9 +3,9 @@ package io.jeph.oopbot.ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 
-/** One of Pipkin's palettes: its surfaces, text, accent and status colours. */
+/** One of OOPBoT's palettes: its surfaces, text, accent and status colours. */
 @Immutable
-data class PipkinColors(
+data class OopbotColors(
   val isDark: Boolean,
   val surface0: Color,
   val surface1: Color,
@@ -46,7 +46,7 @@ data class PipkinColors(
  * the mockup's #A36A00 and #0E7C8C so they keep 4.5:1 on raised surfaces.
  */
 val PorcelainColors =
-  PipkinColors(
+  OopbotColors(
     isDark = false,
     surface0 = Color(0xFFF6F7FB),
     surface1 = Color(0xFFEBEEF7),
@@ -78,7 +78,7 @@ val PorcelainColors =
  * are a shade darker to keep 4.5:1 on raised surfaces.
  */
 val ClayColors =
-  PipkinColors(
+  OopbotColors(
     isDark = false,
     surface0 = Color(0xFFFBF5EC),
     surface1 = Color(0xFFF3EADD),
@@ -106,7 +106,7 @@ val ClayColors =
 
 /** Navy surfaces with a cobalt accent. */
 val CobaltColors =
-  PipkinColors(
+  OopbotColors(
     isDark = true,
     surface0 = Color(0xFF0C0F1A),
     surface1 = Color(0xFF141828),
@@ -137,7 +137,7 @@ val CobaltColors =
  * neither reads as the accent.
  */
 val ObsidianColors =
-  PipkinColors(
+  OopbotColors(
     isDark = true,
     surface0 = Color(0xFF0B0B0C),
     surface1 = Color(0xFF141416),
@@ -168,7 +168,7 @@ val ObsidianColors =
  * extensions are pink so they don't read as the accent.
  */
 val StoneColors =
-  PipkinColors(
+  OopbotColors(
     isDark = true,
     surface0 = Color(0xFF1C1D20),
     surface1 = Color(0xFF25262A),

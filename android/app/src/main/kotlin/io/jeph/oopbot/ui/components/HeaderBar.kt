@@ -36,9 +36,9 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.sidebar.pathTextStyle
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** The size of [HeaderBar]'s buttons. */
 val HeaderButtonSize = 36.dp
@@ -52,12 +52,12 @@ fun HeaderButton(
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
   filled: Boolean = false,
-  tint: Color = pipkinColors.foreground,
+  tint: Color = oopbotColors.foreground,
 ) {
   Box(
     modifier = modifier.roundButton(
       size = HeaderButtonSize,
-      background = if (filled) pipkinColors.surface2 else Color.Transparent,
+      background = if (filled) oopbotColors.surface2 else Color.Transparent,
       enabled = enabled,
       onClick = onClick,
     ),
@@ -91,19 +91,19 @@ fun HeaderBar(
     modifier =
       modifier
         .fillMaxWidth()
-        .background(pipkinColors.surface0)
+        .background(oopbotColors.surface0)
         .windowInsetsPadding(WindowInsets.statusBars)
         .heightIn(min = HeaderBarHeight)
-        .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s4),
+        .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     leading()
-    Column(modifier = Modifier.weight(1f).padding(horizontal = PipkinTokens.Spacing.s4)) {
+    Column(modifier = Modifier.weight(1f).padding(horizontal = OopbotTokens.Spacing.s4)) {
       Text(
         text = title,
-        color = pipkinColors.foreground,
-        fontSize = PipkinTokens.FontSize.title,
+        color = oopbotColors.foreground,
+        fontSize = OopbotTokens.FontSize.title,
         fontWeight = FontWeight.ExtraBold,
         letterSpacing = TITLE_TRACKING,
         maxLines = 1,
@@ -122,22 +122,22 @@ fun HeaderBar(
 /** The header's folder line; a long path keeps its end, the folder that tells workspaces apart. */
 @Composable
 private fun HeaderFolder(folder: String, @DrawableRes icon: Int) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     LucideIcon(
       icon = icon,
       contentDescription = null,
-      size = PipkinTokens.IconSize.xs,
+      size = OopbotTokens.IconSize.xs,
       tint = colors.foregroundMuted,
     )
     Text(
       text = folder,
       style = pathTextStyle,
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
       overflow = TextOverflow.StartEllipsis,
     )

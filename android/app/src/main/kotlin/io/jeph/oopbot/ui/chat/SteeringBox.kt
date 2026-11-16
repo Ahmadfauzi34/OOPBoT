@@ -32,8 +32,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.TimelineState
 import io.jeph.oopbot.ui.components.CapsLabel
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** Long enough to read several queued messages, short enough to leave the stream most of the screen. */
 private const val STEERING_MAX_LINES = 6
@@ -55,7 +55,7 @@ internal fun PendingSteeringBox(controller: ChatController, timeline: TimelineSt
   SteeringBox(
     summary = controller.steering.summary(timeline.queue),
     compact = compact,
-    modifier = Modifier.padding(bottom = PipkinTokens.Spacing.s8),
+    modifier = Modifier.padding(bottom = OopbotTokens.Spacing.s8),
   ) {
     SteerButton(stringResource(R.string.chat_steering_edit), !timeline.queueInFlight, filled = false) {
       controller.steering.edit()
@@ -81,20 +81,20 @@ internal fun SteeringBox(
   modifier: Modifier = Modifier,
   actions: @Composable RowScope.() -> Unit = {},
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp), Alignment.TopCenter) {
     Column(
       modifier =
         Modifier
-          .widthIn(max = PipkinTokens.contentMaxWidth)
+          .widthIn(max = OopbotTokens.contentMaxWidth)
           .fillMaxWidth()
           .clip(BOX_SHAPE)
           .background(colors.surface1)
           .padding(
-            start = PipkinTokens.Spacing.s12,
-            top = PipkinTokens.Spacing.s4,
-            end = PipkinTokens.Spacing.s6,
-            bottom = if (compact) PipkinTokens.Spacing.s4 else 10.dp,
+            start = OopbotTokens.Spacing.s12,
+            top = OopbotTokens.Spacing.s4,
+            end = OopbotTokens.Spacing.s6,
+            bottom = if (compact) OopbotTokens.Spacing.s4 else 10.dp,
           ),
     ) {
       // As tall as the buttons, so a box with none keeps its height.
@@ -110,7 +110,7 @@ internal fun SteeringBox(
       if (summary.text.isNotEmpty()) {
         Text(
           text = summary.text,
-          modifier = Modifier.padding(top = PipkinTokens.Spacing.s2, end = PipkinTokens.Spacing.s6),
+          modifier = Modifier.padding(top = OopbotTokens.Spacing.s2, end = OopbotTokens.Spacing.s6),
           color = colors.foreground,
           fontSize = LINE_SIZE,
           lineHeight = LINE_HEIGHT,
@@ -126,17 +126,17 @@ internal fun SteeringBox(
 /** A steering action: cobalt text, on a cobalt-tinted pill when [filled]. */
 @Composable
 internal fun SteerButton(label: String, enabled: Boolean, filled: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Text(
     text = label,
     modifier = Modifier
-      .padding(start = PipkinTokens.Spacing.s4)
+      .padding(start = OopbotTokens.Spacing.s4)
       .alpha(if (enabled) 1f else DISABLED_ALPHA)
       .heightIn(min = BUTTON_HEIGHT)
       .clip(CircleShape)
       .background(if (filled) colors.accentSoft else Color.Transparent)
       .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-      .padding(horizontal = if (filled) PipkinTokens.Spacing.s12 else 10.dp, vertical = 7.dp),
+      .padding(horizontal = if (filled) OopbotTokens.Spacing.s12 else 10.dp, vertical = 7.dp),
     color = colors.accent,
     fontSize = 12.5.sp,
     fontWeight = FontWeight.Bold,
@@ -147,14 +147,14 @@ internal fun SteerButton(label: String, enabled: Boolean, filled: Boolean, onCli
 /** The compact steering box's text: the first queued line, or the attachment count when there is no text, and "+N". */
 @Composable
 private fun SteeringLine(summary: SteeringSummary, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val lines = summary.text.lines().filter { it.isNotBlank() }
   val first = lines.firstOrNull()
     ?: pluralStringResource(R.plurals.chat_steering_attachments, summary.attachments, summary.attachments)
   Row(
     modifier = modifier,
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     Text(
       text = first,
@@ -168,7 +168,7 @@ private fun SteeringLine(summary: SteeringSummary, modifier: Modifier) {
       Text(
         text = stringResource(R.string.chat_steering_more, lines.size - 1),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         fontWeight = FontWeight.SemiBold,
       )
     }
@@ -177,16 +177,16 @@ private fun SteeringLine(summary: SteeringSummary, modifier: Modifier) {
 
 @Composable
 private fun SteeringAttachments(count: Int) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
-    modifier = Modifier.padding(top = PipkinTokens.Spacing.s4),
+    modifier = Modifier.padding(top = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     LucideIcon(
       R.drawable.ic_lucide_paperclip,
       contentDescription = null,
-      size = PipkinTokens.IconSize.xs,
+      size = OopbotTokens.IconSize.xs,
       tint = colors.foregroundMuted,
     )
     Text(

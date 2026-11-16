@@ -376,7 +376,7 @@ class AgentRegistryTest {
     assertEquals(2, registry.processes.value.size)
   }
 
-  // A task's result reaches the app on Pipkin's channel just before the run it wakes reaches it in Pi's events.
+  // A task's result reaches the app on OOPBoT's channel just before the run it wakes reaches it in Pi's events.
   @Test
   fun aHiddenChatOverALoweredLimitKeepsItsPiFromATaskEndingToTheRunItWakes() = registryTest { registry ->
     holdGraceMillis = 200

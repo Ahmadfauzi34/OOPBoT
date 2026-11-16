@@ -32,10 +32,10 @@ import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.data.AccountRepository
 import io.jeph.oopbot.host.ProviderConfig
 import io.jeph.oopbot.ui.components.DialogConfirm
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /**
@@ -66,8 +66,8 @@ internal fun ProviderEditorScreen(
     topBar = if (selection.active) ({ ModelSelectionBar(selection, form) }) else null,
   ) {
     if (loading) {
-      Box(modifier = Modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s48), Alignment.Center) {
-        SimmeringPot(size = PipkinTokens.IconSize.lg)
+      Box(modifier = Modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s48), Alignment.Center) {
+        SimmeringPot(size = OopbotTokens.IconSize.lg)
       }
       return@SettingsPage
     }
@@ -110,7 +110,7 @@ internal fun ProviderEditorScreen(
 }
 
 /**
- * Reads a saved provider's details afresh, so changes made outside Pipkin (for example by the agent) show, then checks
+ * Reads a saved provider's details afresh, so changes made outside OOPBoT (for example by the agent) show, then checks
  * its connection so models can be added straight away. True until the details are in: the page waits for them instead
  * of showing an empty form that fills in a moment later.
  */
@@ -134,7 +134,7 @@ private fun loadSavedProvider(form: ProviderForm, accounts: AccountRepository, f
 @Composable
 private fun IdAndUrlFields(form: ProviderForm) {
   val idError = form.idError
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(stringResource(R.string.provider_id))
     OutlinedTextField(
       value = form.id,
@@ -161,7 +161,7 @@ private fun IdAndUrlFields(form: ProviderForm) {
       singleLine = true,
     )
   }
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(stringResource(R.string.provider_base_url))
     OutlinedTextField(
       value = form.baseUrl,
@@ -187,7 +187,7 @@ private fun modelsEmptyText(form: ProviderForm): Int = when {
 @Composable
 private fun ApiKeyField(form: ProviderForm) {
   var visible by remember { mutableStateOf(false) }
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(stringResource(R.string.provider_api_key))
     OutlinedTextField(
       value = form.apiKey,
@@ -210,8 +210,8 @@ private fun ApiKeyField(form: ProviderForm) {
 
 @Composable
 private fun ApiTypeField(form: ProviderForm) {
-  val colors = pipkinColors
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  val colors = oopbotColors
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(stringResource(R.string.provider_api_type))
     SegmentedControl(
       options = listOf(ProviderConfig.API_COMPLETIONS, ProviderConfig.API_RESPONSES),
@@ -229,7 +229,7 @@ private fun ApiTypeField(form: ProviderForm) {
           },
         ),
         color = if (isSelected) colors.foreground else colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
       )
     }
   }
@@ -237,7 +237,7 @@ private fun ApiTypeField(form: ProviderForm) {
 
 @Composable
 private fun ProviderActions(form: ProviderForm, onSave: () -> Unit, onRemove: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   form.formError?.let { ErrorPanel(title = null, message = it) }
   SettingsSaveButton(
     label = stringResource(R.string.provider_save),
@@ -259,7 +259,7 @@ private fun ProviderActions(form: ProviderForm, onSave: () -> Unit, onRemove: ()
 
 @Composable
 private fun RemoveDialog(id: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.provider_remove_title, id),
     text = stringResource(R.string.provider_remove_text),
     icon = R.drawable.ic_lucide_trash_2,

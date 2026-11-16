@@ -18,7 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Setup of Pipkin's helper in Termux's Play build. Each copied command opens a session on [HostServer]'s loopback
+ * Setup of OOPBoT's helper in Termux's Play build. Each copied command opens a session on [HostServer]'s loopback
  * port that serves the installer, the helper's files and, encrypted to the command's token, a fresh pairing key.
  * A newer command supersedes the session; it also ends after [SESSION_MILLIS] or once a helper uses its key.
  */
@@ -34,8 +34,8 @@ internal object PlaySetup {
 
   /**
    * Opens a session, superseding the previous one, and returns the one-line command that runs its installer. While
-   * the user is in Termux, Android would freeze Pipkin and stall the installer's downloads, so [keepAlive] holds
-   * Pipkin in the foreground until a helper pairs or the session expires.
+   * the user is in Termux, Android would freeze OOPBoT and stall the installer's downloads, so [keepAlive] holds
+   * OOPBoT in the foreground until a helper pairs or the session expires.
    */
   fun newCommand(context: Context, keepAlive: KeepAlive): String {
     val app = context.applicationContext

@@ -54,9 +54,9 @@ import androidx.compose.ui.window.PopupProperties
 import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.ContextUsage
 import io.jeph.oopbot.ui.settings.formatTokens
-import io.jeph.oopbot.ui.theme.PipkinColors
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.roundToInt
 
 /**
@@ -97,7 +97,7 @@ internal fun ContextMeter(usage: ContextUsage?, open: Boolean, onOpenChange: (Bo
     ContextRing(usage?.percent)
     if (open) {
       BackHandler { onOpenChange(false) }
-      val gap = with(LocalDensity.current) { PipkinTokens.Spacing.s8.roundToPx() }
+      val gap = with(LocalDensity.current) { OopbotTokens.Spacing.s8.roundToPx() }
       // Not focusable, so the keyboard stays up; the chat closes it on outside presses instead of the popup.
       Popup(
         popupPositionProvider = remember(gap) { AboveAnchor(gap) },
@@ -121,7 +121,7 @@ internal fun Modifier.closeContextDetailsOnPress(controller: ChatController): Mo
 /** A 23dp ring; the arc runs clockwise from twelve and turns amber at 70% and red past 90%. */
 @Composable
 private fun ContextRing(percent: Double?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val progress = percent?.let { ringColor(it, colors) }
   Canvas(modifier = Modifier.size(RING_SIZE)) {
     val stroke = RING_STROKE.toPx()
@@ -143,7 +143,7 @@ private fun ContextRing(percent: Double?) {
   }
 }
 
-private fun ringColor(percent: Double, colors: PipkinColors): Color = when {
+private fun ringColor(percent: Double, colors: OopbotColors): Color = when {
   percent > 90 -> colors.destructive
   percent >= 70 -> colors.dotWarning
   else -> colors.foregroundMuted
@@ -152,16 +152,16 @@ private fun ringColor(percent: Double, colors: PipkinColors): Color = when {
 /** The popover: its title, the share of the window used over a bar in the ring's colour, then the details. */
 @Composable
 private fun ContextDetails(usage: ContextUsage?, percent: Int?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val shape = RoundedCornerShape(22.dp)
   Column(
     modifier =
       Modifier
         .shadow(8.dp, shape, ambientColor = SHADOW, spotColor = SHADOW)
         .background(colors.surface2, shape)
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = 14.dp)
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = 14.dp)
         .widthIn(min = 220.dp, max = 280.dp),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
   ) {
     Text(
       stringResource(R.string.context_window_title),
@@ -192,8 +192,8 @@ private fun ContextDetails(usage: ContextUsage?, percent: Int?) {
 /** An 8dp bar filled to [percent] in [fill]. */
 @Composable
 private fun UsageBar(percent: Double, fill: Color) {
-  val track = pipkinColors.surface3
-  Canvas(modifier = Modifier.fillMaxWidth().padding(vertical = PipkinTokens.Spacing.s4).height(BAR_HEIGHT)) {
+  val track = oopbotColors.surface3
+  Canvas(modifier = Modifier.fillMaxWidth().padding(vertical = OopbotTokens.Spacing.s4).height(BAR_HEIGHT)) {
     val radius = CornerRadius(size.height / 2)
     drawRoundRect(track, cornerRadius = radius)
     val width = size.width * (percent.coerceIn(0.0, 100.0) / 100.0).toFloat()
@@ -208,7 +208,7 @@ private fun UsageBar(percent: Double, fill: Color) {
 private fun Detail(text: String) {
   Text(
     text = text,
-    color = pipkinColors.foregroundMuted,
+    color = oopbotColors.foregroundMuted,
     fontSize = DETAIL_SIZE,
     lineHeight = DETAIL_LINE_HEIGHT,
   )

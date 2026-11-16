@@ -13,13 +13,13 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /**
- * A remote chat's host can't be reached; [failure] says why, or is null when `pipkin-remote` didn't say. [hostId] is
+ * A remote chat's host can't be reached; [failure] says why, or is null when `oopbot-remote` didn't say. [hostId] is
  * null while the app's list of stand-in folders doesn't have the chat's yet, as before the first `remote_hosts`.
  */
 internal data class RemoteOutage(val hostId: String?, val failure: RemoteFailure?)
 
 /**
- * Whether the remote host of the chat in [cwd] was lost, as its Pi's `pipkin-remote` extension last said over Pipkin's
+ * Whether the remote host of the chat in [cwd] was lost, as its Pi's `oopbot-remote` extension last said over OOPBoT's
  * channel ([TOPIC]) after a check or a tool call, or as the host said when Pi couldn't start there. [remoteHosts]
  * learns each of these too, and gives the host the chat's stand-in folder stands for. A host with a saved password is
  * signed in again in [scope], and [send] tells the extension so on [TOPIC].
@@ -37,7 +37,7 @@ internal class RemoteOutages(
   val state: StateFlow<RemoteOutage?> = stateFlow.asStateFlow()
 
   /**
-   * `pipkin-remote` found the chat's host lost or back, on a check or a tool call, which [remoteHosts] learns too when
+   * `oopbot-remote` found the chat's host lost or back, on a check or a tool call, which [remoteHosts] learns too when
    * it knows the host; the chat shows it either way, since the host list may not have loaded yet. A call that needs the
    * host signed in again gets the answer to its `reconnect`; a check that found it signed out is checked again once it's
    * signed in, which takes the outage down.
@@ -96,7 +96,7 @@ internal class RemoteOutages(
 
   companion object {
     /**
-     * The `pipkin-remote` extension's topic: from it, whether the chat's host was reachable on the last check or tool
+     * The `oopbot-remote` extension's topic: from it, whether the chat's host was reachable on the last check or tool
      * call, and `{ reconnect: true }` when a call needs a password host signed in again; to it, `{ action: "check" }`
      * ([AgentProcess.checkRemote]) and `{ action: "reconnected", connected }`, the answer to a reconnect.
      */

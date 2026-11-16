@@ -45,8 +45,8 @@ import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.StatusDot
 import io.jeph.oopbot.ui.files.fileIcon
 import io.jeph.oopbot.ui.terminal.terminalTitle
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * One chat in the tab menu: what Pi is doing in it, its title, and the statuses its extensions set, else its age;
@@ -63,7 +63,7 @@ internal fun ChatTabRow(
   onActions: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val status = remember(statuses, colors) { extensionStatusLine(statuses, colors) }
   TabRow(
     mark = { if (process != null) ActivityMark(process) else IdleMark() },
@@ -91,7 +91,7 @@ internal fun TerminalTabRow(
       LucideIcon(
         icon = R.drawable.ic_lucide_square_terminal,
         contentDescription = null,
-        tint = pipkinColors.foregroundMuted,
+        tint = oopbotColors.foregroundMuted,
       )
     },
     title = terminalTitle(session),
@@ -118,7 +118,7 @@ internal fun FileTabRow(
       Image(
         painter = painterResource(fileIcon(file.name)),
         contentDescription = null,
-        modifier = Modifier.size(PipkinTokens.IconSize.md),
+        modifier = Modifier.size(OopbotTokens.IconSize.md),
       )
     },
     title = file.name,
@@ -145,7 +145,7 @@ internal fun CommitTabRow(
       LucideIcon(
         icon = R.drawable.ic_lucide_git_commit_horizontal,
         contentDescription = null,
-        tint = pipkinColors.foregroundMuted,
+        tint = oopbotColors.foregroundMuted,
       )
     },
     title = commit.title,
@@ -171,18 +171,18 @@ private fun TabRow(
   actionsDescription: String,
   modifier: Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = modifier
       .fillMaxWidth()
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = 1.dp)
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = 1.dp)
       .clip(ROW_SHAPE)
       .background(if (current) colors.surface2 else Color.Transparent)
       .combinedClickable(onClick = onOpen, onLongClick = onActions)
       .heightIn(min = 56.dp)
-      .padding(start = 10.dp, end = PipkinTokens.Spacing.s4),
+      .padding(start = 10.dp, end = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Box(
       modifier = Modifier
@@ -191,7 +191,7 @@ private fun TabRow(
         .background(if (current) colors.surface3 else colors.surface2),
       contentAlignment = Alignment.Center,
     ) { mark() }
-    Column(modifier = Modifier.weight(1f).padding(vertical = PipkinTokens.Spacing.s8)) {
+    Column(modifier = Modifier.weight(1f).padding(vertical = OopbotTokens.Spacing.s8)) {
       Text(
         text = title,
         color = colors.foreground,
@@ -222,8 +222,8 @@ private val TITLE_SIZE = 14.5.sp
 private fun DetailText(text: String) {
   Text(
     text = text,
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
     maxLines = 1,
     overflow = TextOverflow.StartEllipsis,
   )
@@ -243,14 +243,14 @@ private fun ActivityMark(process: AgentProcess) {
   val crashed = (state as? AgentProcessState.Exited)?.code.let { it != null && it != 0 }
   when {
     working -> SimmeringPot()
-    crashed -> StatusDot(pipkinColors.dotDanger)
+    crashed -> StatusDot(oopbotColors.dotDanger)
     else -> IdleMark()
   }
 }
 
 @Composable
 private fun IdleMark() {
-  LucideIcon(icon = R.drawable.ic_lucide_bot, contentDescription = null, tint = pipkinColors.foregroundMuted)
+  LucideIcon(icon = R.drawable.ic_lucide_bot, contentDescription = null, tint = oopbotColors.foregroundMuted)
 }
 
 /** `now`, `5m`, `2h`, `3d`, then a short date. */

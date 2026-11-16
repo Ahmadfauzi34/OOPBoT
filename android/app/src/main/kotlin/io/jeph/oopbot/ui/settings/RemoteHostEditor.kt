@@ -44,15 +44,15 @@ import io.jeph.oopbot.host.RemoteHost
 import io.jeph.oopbot.ui.ShellActions
 import io.jeph.oopbot.ui.components.DialogConfirm
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.RemoteConnector
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
 import io.jeph.oopbot.ui.sidebar.pathTextStyle
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -238,7 +238,7 @@ private fun EditorField(
   warning: String? = null,
 ) {
   val note = error ?: warning
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(label)
     OutlinedTextField(
       value = value,
@@ -248,7 +248,7 @@ private fun EditorField(
       colors = settingsFieldColors(),
       placeholder = hint?.let { { Text(it) } },
       supportingText = note?.let {
-        { Text(it, color = if (error == null) pipkinColors.dotWarning else Color.Unspecified) }
+        { Text(it, color = if (error == null) oopbotColors.dotWarning else Color.Unspecified) }
       },
       isError = error != null,
       keyboardOptions = KeyboardOptions(
@@ -262,7 +262,7 @@ private fun EditorField(
 }
 
 /**
- * The three ways to sign in, as radio rows. Pipkin's key shows its public line to copy, made first if needed; a saved
+ * The three ways to sign in, as radio rows. OOPBoT's key shows its public line to copy, made first if needed; a saved
  * password host's Password says the password is saved, with Forget.
  */
 @Composable
@@ -294,7 +294,7 @@ private fun AuthRow(
   onSelect: () -> Unit,
   extra: @Composable () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val (title, detail) = when (auth) {
     RemoteAuth.Key -> R.string.remote_auth_key to R.string.remote_auth_key_detail
 
@@ -308,22 +308,22 @@ private fun AuthRow(
     modifier = Modifier
       .fillMaxWidth()
       .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
-      .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s8),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
   ) {
     // The row is the selectable target; the button only shows the state.
     RadioButton(
       selected = selected,
       onClick = null,
-      modifier = Modifier.padding(PipkinTokens.Spacing.s8),
+      modifier = Modifier.padding(OopbotTokens.Spacing.s8),
       colors = RadioButtonDefaults.colors(selectedColor = colors.accent, unselectedColor = colors.foregroundMuted),
     )
     Column(
-      modifier = Modifier.weight(1f).padding(top = PipkinTokens.Spacing.s6, end = PipkinTokens.Spacing.s8),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      modifier = Modifier.weight(1f).padding(top = OopbotTokens.Spacing.s6, end = OopbotTokens.Spacing.s8),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
     ) {
-      Text(stringResource(title), color = colors.foreground, fontSize = PipkinTokens.FontSize.base)
-      Text(stringResource(detail), color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.sm)
+      Text(stringResource(title), color = colors.foreground, fontSize = OopbotTokens.FontSize.base)
+      Text(stringResource(detail), color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.sm)
       extra()
     }
   }
@@ -332,33 +332,33 @@ private fun AuthRow(
 /** That the host's password is saved on this phone, or that the server [rejected] it, with Forget. */
 @Composable
 private fun SavedPasswordLine(rejected: Boolean, enabled: Boolean, onForget: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
-    modifier = Modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s8),
+    modifier = Modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     LucideIcon(
       icon = if (rejected) R.drawable.ic_lucide_triangle_alert else R.drawable.ic_lucide_shield_check,
       contentDescription = null,
       tint = if (rejected) colors.dotWarning else colors.dotSuccess,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
     )
     Text(
       text = stringResource(if (rejected) R.string.remote_password_saved_rejected else R.string.remote_password_saved),
       modifier = Modifier.weight(1f),
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       fontWeight = FontWeight.SemiBold,
     )
     SmallButton(label = stringResource(R.string.remote_forget_password), onClick = onForget, enabled = enabled)
   }
 }
 
-/** Pipkin's public key line in the code font with Copy; asking for it makes the key the first time. */
+/** OOPBoT's public key line in the code font with Copy; asking for it makes the key the first time. */
 @Composable
 private fun PublicKeyLine(remoteHosts: RemoteHosts) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   val remotes by remoteHosts.state.collectAsStateWithLifecycle()
   var keyError by remember { mutableStateOf<String?>(null) }
@@ -374,7 +374,7 @@ private fun PublicKeyLine(remoteHosts: RemoteHosts) {
     }
   }
   keyError?.let {
-    Text(it, color = colors.destructive, fontSize = PipkinTokens.FontSize.sm)
+    Text(it, color = colors.destructive, fontSize = OopbotTokens.FontSize.sm)
     return
   }
   val key = remotes.publicKey ?: return
@@ -382,9 +382,9 @@ private fun PublicKeyLine(remoteHosts: RemoteHosts) {
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(top = PipkinTokens.Spacing.s4)
-      .background(colors.surface0, RoundedCornerShape(PipkinTokens.Radius.md))
-      .padding(start = PipkinTokens.Spacing.s12, top = PipkinTokens.Spacing.s8, bottom = PipkinTokens.Spacing.s8),
+      .padding(top = OopbotTokens.Spacing.s4)
+      .background(colors.surface0, RoundedCornerShape(OopbotTokens.Radius.md))
+      .padding(start = OopbotTokens.Spacing.s12, top = OopbotTokens.Spacing.s8, bottom = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.Top,
   ) {
     Text(
@@ -392,15 +392,15 @@ private fun PublicKeyLine(remoteHosts: RemoteHosts) {
       modifier = Modifier.weight(1f),
       style = pathTextStyle,
       color = colors.foreground,
-      fontFamily = PipkinFonts.mono,
-      fontSize = PipkinTokens.FontSize.code,
-      lineHeight = PipkinTokens.LineHeight.code,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
     )
     RoundIconButton(
       icon = R.drawable.ic_lucide_copy,
       contentDescription = stringResource(R.string.remote_copy_key),
       onClick = { copyToClipboard(context, label, key) },
-      modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s4),
+      modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s4),
       tint = colors.accent,
     )
   }
@@ -409,7 +409,7 @@ private fun PublicKeyLine(remoteHosts: RemoteHosts) {
 /** A saved host's connection, with Connect or Disconnect. */
 @Composable
 private fun StatusSection(editor: HostEditor, host: RemoteHost) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val connected by editor.remoteHosts.connected.collectAsStateWithLifecycle()
   val isConnected = connected[host.id] == true
   SettingsSection(title = stringResource(R.string.remote_status)) {
@@ -477,7 +477,7 @@ private fun EditorActions(editor: HostEditor, saved: RemoteHost?, dirty: Boolean
     onClick = { editor.dialog = EditorDialog.Remove },
     modifier = Modifier.fillMaxWidth(),
     enabled = !busy,
-    colors = ButtonDefaults.textButtonColors(contentColor = pipkinColors.destructive),
+    colors = ButtonDefaults.textButtonColors(contentColor = oopbotColors.destructive),
   ) {
     Text(stringResource(R.string.remote_remove))
   }
@@ -498,7 +498,7 @@ private fun EditorDialogs(editor: HostEditor, host: RemoteHost?, onDiscard: () -
     )
 
     EditorDialog.ForgetKey -> if (host != null) {
-      PipkinDialog(
+      OopbotDialog(
         title = stringResource(R.string.remote_forget_key_title, host.name),
         text = stringResource(R.string.remote_forget_key_text),
         icon = R.drawable.ic_lucide_triangle_alert,
@@ -516,7 +516,7 @@ private fun EditorDialogs(editor: HostEditor, host: RemoteHost?, onDiscard: () -
     }
 
     EditorDialog.ForgetPassword -> if (host != null) {
-      PipkinDialog(
+      OopbotDialog(
         title = stringResource(R.string.remote_forget_password_title, host.name),
         text = stringResource(R.string.remote_forget_password_text, host.name),
         icon = R.drawable.ic_lucide_key_round,

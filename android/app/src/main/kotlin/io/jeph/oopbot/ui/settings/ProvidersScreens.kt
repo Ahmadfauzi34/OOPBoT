@@ -46,8 +46,8 @@ import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.components.StatusDot
 import io.jeph.oopbot.ui.components.scrollFades
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.launch
 
@@ -100,8 +100,8 @@ internal fun ProvidersScreen(
       }
     }
     DashedActionRow(label = stringResource(R.string.providers_add), icon = R.drawable.ic_lucide_plus, onClick = onAdd)
-    current?.modelsError?.let { SettingsCaption(text = it.localized(), color = pipkinColors.destructive) }
-    refreshError?.let { SettingsCaption(text = it, color = pipkinColors.destructive) }
+    current?.modelsError?.let { SettingsCaption(text = it.localized(), color = oopbotColors.destructive) }
+    refreshError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
     LocalModelsSection(preferences = graph.preferences, onOpenLocalModels = onOpenLocalModels)
   }
 }
@@ -141,7 +141,7 @@ internal fun AddProviderScreen(onBack: () -> Unit, onAddCompatible: () -> Unit, 
         leading = { RowIcon(R.drawable.ic_lucide_key_round) },
       ) { Chevron() }
     }
-    refreshError?.let { SettingsCaption(text = it, color = pipkinColors.destructive) }
+    refreshError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
   }
   signingIn?.let { id ->
     LoginSheet(
@@ -174,12 +174,12 @@ internal fun SettingsPage(
           .verticalScroll(rememberScrollState())
           .imePadding()
           .navigationBarsPadding()
-          .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s24),
+          .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s24),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       Column(
         modifier = SettingsItemWidth,
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
         content = content,
       )
     }
@@ -201,8 +201,8 @@ internal fun LazySettingsPage(
   footer: @Composable () -> Unit,
   content: LazyListScope.() -> Unit,
 ) {
-  val spacing = PipkinTokens.Spacing
-  val background = pipkinColors.surface0
+  val spacing = OopbotTokens.Spacing
+  val background = oopbotColors.surface0
   SettingsPageFrame(title, onBack, snackbar = null, topBar = null) {
     Column(
       modifier = Modifier.fillMaxSize().imePadding().navigationBarsPadding(),
@@ -226,7 +226,7 @@ internal fun LazySettingsPage(
 }
 
 /** The width of a settings page's content, capped on wide screens. */
-internal val SettingsItemWidth = Modifier.widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth()
+internal val SettingsItemWidth = Modifier.widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth()
 
 @Composable
 private fun SettingsPageFrame(
@@ -236,7 +236,7 @@ private fun SettingsPageFrame(
   topBar: (@Composable () -> Unit)?,
   body: @Composable () -> Unit,
 ) {
-  Box(modifier = Modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Box(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     Column(modifier = Modifier.fillMaxSize()) {
       if (topBar != null) {
         topBar()
@@ -257,7 +257,7 @@ private fun SettingsPageFrame(
     if (snackbar != null) {
       SnackbarStack(
         snackbar,
-        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(PipkinTokens.Spacing.s16),
+        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(OopbotTokens.Spacing.s16),
       )
     }
   }
@@ -265,10 +265,10 @@ private fun SettingsPageFrame(
 
 @Composable
 internal fun Chevron() {
-  LucideIcon(icon = R.drawable.ic_lucide_chevron_right, contentDescription = null, tint = pipkinColors.foregroundMuted)
+  LucideIcon(icon = R.drawable.ic_lucide_chevron_right, contentDescription = null, tint = oopbotColors.foregroundMuted)
 }
 
 @Composable
 private fun RowIcon(icon: Int) {
-  LucideIcon(icon = icon, contentDescription = null, tint = pipkinColors.foregroundMuted)
+  LucideIcon(icon = icon, contentDescription = null, tint = oopbotColors.foregroundMuted)
 }

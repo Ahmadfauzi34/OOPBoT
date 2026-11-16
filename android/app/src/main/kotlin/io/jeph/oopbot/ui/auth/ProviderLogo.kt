@@ -5,8 +5,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** Claude's brand orange; the other marks are monochrome, so they follow the theme's foreground. */
 private val ClaudeOrange = Color(0xFFD97757)
@@ -27,7 +27,7 @@ internal fun ProviderLogo(providerId: String, modifier: Modifier = Modifier) {
     icon = icon,
     contentDescription = null,
     modifier = modifier,
-    size = PipkinTokens.IconSize.lg,
-    tint = if (providerId == "anthropic") ClaudeOrange else pipkinColors.foreground,
+    size = OopbotTokens.IconSize.lg,
+    tint = if (providerId == "anthropic") ClaudeOrange else oopbotColors.foreground,
   )
 }

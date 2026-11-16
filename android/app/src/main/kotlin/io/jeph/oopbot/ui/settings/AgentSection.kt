@@ -15,8 +15,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.termux.TermuxInstall
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.launch
 
@@ -120,8 +120,8 @@ private fun ReinstallRow(
   if (outcome is ReinstallOutcome.Failed && !installing) {
     SettingsCaption(
       text = outcome.message,
-      modifier = Modifier.padding(start = PipkinTokens.Spacing.s12, bottom = PipkinTokens.Spacing.s12),
-      color = pipkinColors.destructive,
+      modifier = Modifier.padding(start = OopbotTokens.Spacing.s12, bottom = OopbotTokens.Spacing.s12),
+      color = oopbotColors.destructive,
     )
   }
 }

@@ -72,9 +72,9 @@ import io.jeph.oopbot.agent.UiAnswer
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.delay
 
 /**
@@ -93,7 +93,7 @@ internal fun ExtensionUiCard(
   onAnswer: (UiAnswer) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   // The pill naming who asked, with its gap to the title, measured rather than counted in sp, as Android scales large
   // sizes less. It comes on top of the card's half of the chat, rather than out of the answers.
   val measurer = rememberTextMeasurer(cacheSize = 0)
@@ -104,7 +104,7 @@ internal fun ExtensionUiCard(
     if (!askerShown) return@remember 0
     with(density) {
       maxOf(measurer.measure("", pillStyle).size.height, PILL_MIN_HEIGHT.roundToPx()) +
-        PipkinTokens.Spacing.s4.roundToPx()
+        OopbotTokens.Spacing.s4.roundToPx()
     }
   }
   Box(
@@ -113,14 +113,14 @@ internal fun ExtensionUiCard(
   ) {
     key(request.id) {
       val cardModifier = Modifier
-        .widthIn(max = PipkinTokens.contentMaxWidth)
+        .widthIn(max = OopbotTokens.contentMaxWidth)
         .fillMaxWidth()
         .clip(CARD_SHAPE)
         .background(colors.surface1)
         .padding(
-          start = PipkinTokens.Spacing.s12,
-          top = PipkinTokens.Spacing.s12,
-          end = PipkinTokens.Spacing.s12,
+          start = OopbotTokens.Spacing.s12,
+          top = OopbotTokens.Spacing.s12,
+          end = OopbotTokens.Spacing.s12,
           bottom = 10.dp,
         )
       val header: @Composable () -> Unit = { CardHeader(request, asker, number, count) }
@@ -226,7 +226,7 @@ private class CardMeasurePolicy(
   private fun headerFloor(need: Int) = minOf(need, headerLines)
 
   private fun Density.answersFloor(need: Int) =
-    if (answersScroll) minOf(need, twoLines + 2 * PipkinTokens.Spacing.s12.roundToPx()) else need
+    if (answersScroll) minOf(need, twoLines + 2 * OopbotTokens.Spacing.s12.roundToPx()) else need
 
   private fun Density.headerHeight(headerNeed: Int, answersNeed: Int, room: Int) =
     cardHeaderHeight(headerNeed, answersNeed, room, headerFloor(headerNeed), answersFloor(answersNeed), answersScroll)
@@ -264,7 +264,7 @@ private fun split(room: Int, headerWants: Int, answersWants: Int) = when {
  */
 @Composable
 private fun CardHeader(request: ExtensionUiRequest, asker: SubagentAsker, number: Int, count: Int) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val title = request.title ?: stringResource(
     when (request.method) {
       "select" -> R.string.chat_choose
@@ -274,12 +274,12 @@ private fun CardHeader(request: ExtensionUiRequest, asker: SubagentAsker, number
   )
   val named = (asker as? SubagentAsker.One)?.run?.names?.joinToString(stringResource(R.string.separator_dot))
     ?.ifEmpty { null }
-  Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     Column(
       modifier = Modifier.weight(
         1f,
-      ).verticalScroll(rememberScrollState()).padding(horizontal = PipkinTokens.Spacing.s4),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      ).verticalScroll(rememberScrollState()).padding(horizontal = OopbotTokens.Spacing.s4),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
     ) {
       if (asker != SubagentAsker.Unknown) {
         HeaderPill(
@@ -320,7 +320,7 @@ private fun SecondsLeft(expiresAt: Long) {
     }
   }
   val seconds = ((expiresAt - now + MILLIS_PER_SECOND - 1) / MILLIS_PER_SECOND).coerceAtLeast(0)
-  val colors = pipkinColors
+  val colors = oopbotColors
   HeaderPill(
     text = stringResource(R.string.chat_dialog_seconds_left, seconds),
     color = colors.dotWarning,
@@ -350,7 +350,7 @@ private fun HeaderPill(
     horizontalArrangement = Arrangement.spacedBy(5.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    icon?.let { LucideIcon(icon = it, contentDescription = null, size = PipkinTokens.IconSize.xs, tint = color) }
+    icon?.let { LucideIcon(icon = it, contentDescription = null, size = OopbotTokens.IconSize.xs, tint = color) }
     Text(
       text = text,
       color = color,
@@ -381,7 +381,7 @@ private fun ChoiceCard(
     answers = {
       Column(
         modifier = Modifier.verticalScroll(rememberScrollState()).selectableGroup(),
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s2),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s2),
       ) {
         choices.forEachIndexed { index, choice -> ChoiceRow(choice, picked = index == picked) { picked = index } }
       }
@@ -395,7 +395,7 @@ private fun ChoiceCard(
 /** A radio row: the picked one is tinted cobalt, with a cobalt dot in its circle. */
 @Composable
 private fun ChoiceRow(label: String, picked: Boolean, onPick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
@@ -403,7 +403,7 @@ private fun ChoiceRow(label: String, picked: Boolean, onPick: () -> Unit) {
       .background(if (picked) colors.accentSoft else Color.Transparent)
       .selectable(selected = picked, role = Role.RadioButton, onClick = onPick)
       .heightIn(min = 40.dp)
-      .padding(horizontal = 10.dp, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = 10.dp, vertical = OopbotTokens.Spacing.s8),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
@@ -432,14 +432,14 @@ private fun TextCard(
   onAnswer: (UiAnswer) -> Unit,
   modifier: Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val multiline = request.method == "editor"
   val state = rememberTextFieldState(request.prefill.orEmpty())
   val focusRequester = remember { FocusRequester() }
   LaunchedEffect(Unit) { focusRequester.requestFocus() }
   val interaction = remember { MutableInteractionSource() }
   val focused by interaction.collectIsFocusedAsState()
-  val style = LocalTextStyle.current.merge(TextStyle(color = colors.foreground, fontSize = PipkinTokens.FontSize.base))
+  val style = LocalTextStyle.current.merge(TextStyle(color = colors.foreground, fontSize = OopbotTokens.FontSize.base))
   CardLayout(
     header = header,
     askerRoom = askerRoom,
@@ -452,7 +452,7 @@ private fun TextCard(
           .clip(FIELD_SHAPE)
           .background(colors.surface0)
           .border(if (focused) 2.dp else 1.dp, if (focused) colors.accent else colors.border, FIELD_SHAPE)
-          .padding(PipkinTokens.Spacing.s12)
+          .padding(OopbotTokens.Spacing.s12)
           .focusRequester(focusRequester),
         interactionSource = interaction,
         textStyle = style,
@@ -488,7 +488,7 @@ private fun TextCard(
 /** Dismiss, when [onDismiss] is given, then Submit, side by side as pills. */
 @Composable
 private fun SubmitButtons(canSubmit: Boolean, onSubmit: () -> Unit, onDismiss: (() -> Unit)?) {
-  Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     onDismiss?.let {
       PillButton(
         label = stringResource(R.string.chat_dismiss),
@@ -520,7 +520,7 @@ private val CARD_GAP = 10.dp
 private val PILL_TEXT_STYLE = TextStyle(
   fontSize = 11.5.sp,
   fontWeight = FontWeight.Bold,
-  fontFeatureSettings = PipkinFonts.TABULAR,
+  fontFeatureSettings = OopbotFonts.TABULAR,
 )
 private val PILL_MIN_HEIGHT = 22.dp
 

@@ -53,8 +53,8 @@ import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
 import io.jeph.oopbot.ui.subagents.ChatSubagents
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.sessionTitle
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -98,7 +98,7 @@ internal fun ArchivedChatScreen(
   var confirmingDelete by remember { mutableStateOf(false) }
   var busy by remember { mutableStateOf(false) }
   LaunchedEffect(marks) { if (path !in marks) onBack() }
-  Column(modifier = Modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     TranscriptHeader(session, deleteEnabled = !busy, onBack, onDelete = { confirmingDelete = true })
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
       TranscriptBody(
@@ -107,7 +107,7 @@ internal fun ArchivedChatScreen(
         onOpenTool = { toolKey = it },
         onOpenSubagent = onOpenSubagent,
       )
-      SnackbarStack(snackbar, Modifier.align(Alignment.BottomCenter).padding(PipkinTokens.Spacing.s16))
+      SnackbarStack(snackbar, Modifier.align(Alignment.BottomCenter).padding(OopbotTokens.Spacing.s16))
     }
     ReadOnlyBar(
       session = session,
@@ -194,7 +194,7 @@ private fun TranscriptHeader(session: SessionInfo?, deleteEnabled: Boolean, onBa
         contentDescription = stringResource(R.string.archive_delete),
         onClick = onDelete,
         enabled = deleteEnabled,
-        tint = pipkinColors.destructive,
+        tint = oopbotColors.destructive,
       )
     },
   )
@@ -207,16 +207,16 @@ private fun TranscriptBody(
   onOpenTool: (String) -> Unit,
   onOpenSubagent: (String) -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   when (transcript) {
     Transcript.Loading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { SimmeringPot() }
 
     is Transcript.Failed -> Column(
-      modifier = Modifier.fillMaxSize().padding(PipkinTokens.Spacing.s24),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8, Alignment.CenterVertically),
+      modifier = Modifier.fillMaxSize().padding(OopbotTokens.Spacing.s24),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8, Alignment.CenterVertically),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-      Text(text = transcript.message, color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+      Text(text = transcript.message, color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
       PillButton(label = stringResource(R.string.archive_retry), onClick = onRetry)
     }
 
@@ -226,7 +226,7 @@ private fun TranscriptBody(
           Text(
             text = stringResource(R.string.archive_transcript_empty),
             color = colors.foregroundMuted,
-            fontSize = PipkinTokens.FontSize.base,
+            fontSize = OopbotTokens.FontSize.base,
           )
         }
         return
@@ -253,19 +253,19 @@ private fun TranscriptBody(
  */
 @Composable
 private fun ReadOnlyBar(session: SessionInfo?, enabled: Boolean, onRestore: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val restorable = session?.cwdExists == true
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .background(colors.surface0)
       .navigationBarsPadding()
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s8)
-      .clip(RoundedCornerShape(PipkinTokens.Radius.xxl))
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s8)
+      .clip(RoundedCornerShape(OopbotTokens.Radius.xxl))
       .background(colors.surface1)
-      .padding(start = PipkinTokens.Spacing.s12, end = PipkinTokens.Spacing.s8, top = 10.dp, bottom = 10.dp),
+      .padding(start = OopbotTokens.Spacing.s12, end = OopbotTokens.Spacing.s8, top = 10.dp, bottom = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Box(
       modifier = Modifier.size(32.dp).clip(CircleShape).background(colors.surface2),
@@ -279,7 +279,7 @@ private fun ReadOnlyBar(session: SessionInfo?, enabled: Boolean, onRestore: () -
       ),
       modifier = Modifier.weight(1f),
       color = if (session != null && !restorable) colors.destructive else colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.meta,
+      fontSize = OopbotTokens.FontSize.meta,
     )
     PillButton(
       label = stringResource(R.string.archive_restore),

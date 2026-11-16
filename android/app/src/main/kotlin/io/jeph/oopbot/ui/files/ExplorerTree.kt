@@ -57,8 +57,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.FileEntry
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.remote.RemoteConnectAction
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * [state]'s tree as [entries], the rows [explorerRows] gives for it: its failure, or a spinner until the top folder is
@@ -84,11 +84,11 @@ internal fun ExplorerTree(
   }
   if (!listed || state.restoringScroll) {
     CenterNote(modifier) {
-      Spinner(PipkinTokens.IconSize.md, contentDescription = null)
+      Spinner(OopbotTokens.IconSize.md, contentDescription = null)
       Text(
         stringResource(R.string.files_loading),
-        color = pipkinColors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.base,
+        color = oopbotColors.foregroundMuted,
+        fontSize = OopbotTokens.FontSize.base,
       )
     }
     return
@@ -99,8 +99,8 @@ internal fun ExplorerTree(
     CenterNote(modifier) {
       Text(
         text = stringResource(if (folderEmpty) R.string.files_empty else R.string.files_empty_visible),
-        color = pipkinColors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.base,
+        color = oopbotColors.foregroundMuted,
+        fontSize = OopbotTokens.FontSize.base,
       )
     }
     return
@@ -110,8 +110,8 @@ internal fun ExplorerTree(
     modifier = modifier.fillMaxWidth(),
     state = state.list,
     contentPadding = PaddingValues(
-      top = PipkinTokens.Spacing.s8,
-      bottom = PipkinTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
+      top = OopbotTokens.Spacing.s8,
+      bottom = OopbotTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
     ),
   ) {
     items(rows, key = { row -> if (row is ExplorerRow.Entry) row.entry.path else NEW_FOLDER_KEY }) { row ->
@@ -147,25 +147,25 @@ private fun EntryRow(
   TreeRow(
     depth,
     modifier = Modifier
-      .background(if (selected) pipkinColors.accentSoft else Color.Transparent)
+      .background(if (selected) oopbotColors.accentSoft else Color.Transparent)
       .clickable(onClick = onClick),
   ) {
     when {
       !entry.isDirectory -> Image(
         painter = painterResource(fileIcon(entry.name)),
         contentDescription = null,
-        modifier = Modifier.size(PipkinTokens.IconSize.md),
+        modifier = Modifier.size(OopbotTokens.IconSize.md),
       )
 
-      loading -> Spinner(PipkinTokens.IconSize.sm, contentDescription = null)
+      loading -> Spinner(OopbotTokens.IconSize.sm, contentDescription = null)
 
       else -> Chevron(expanded)
     }
     Text(
       text = entry.name,
       modifier = Modifier.weight(1f),
-      color = pipkinColors.foreground.copy(alpha = NAME_ALPHA),
-      fontSize = PipkinTokens.FontSize.base,
+      color = oopbotColors.foreground.copy(alpha = NAME_ALPHA),
+      fontSize = OopbotTokens.FontSize.base,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )
@@ -178,7 +178,7 @@ private fun EntryRow(
  */
 @Composable
 private fun NewFolderRow(onCommit: (String) -> Unit, onCancel: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   var name by remember { mutableStateOf("") }
   var settled by remember { mutableStateOf(false) }
   var focused by remember { mutableStateOf(false) }
@@ -205,7 +205,7 @@ private fun NewFolderRow(onCommit: (String) -> Unit, onCancel: () -> Unit) {
         },
       singleLine = true,
       textStyle = LocalTextStyle.current.merge(
-        TextStyle(color = colors.foreground, fontSize = PipkinTokens.FontSize.base),
+        TextStyle(color = colors.foreground, fontSize = OopbotTokens.FontSize.base),
       ),
       cursorBrush = SolidColor(colors.accent),
       keyboardOptions = KeyboardOptions(
@@ -220,7 +220,7 @@ private fun NewFolderRow(onCommit: (String) -> Unit, onCancel: () -> Unit) {
             Text(
               text = stringResource(R.string.files_folder_placeholder),
               color = colors.foregroundExtraMuted,
-              fontSize = PipkinTokens.FontSize.base,
+              fontSize = OopbotTokens.FontSize.base,
             )
           }
           field()
@@ -235,18 +235,18 @@ private fun NewFolderRow(onCommit: (String) -> Unit, onCancel: () -> Unit) {
 private fun TreeRow(depth: Int, modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
   Row(
     modifier = Modifier
-      .padding(horizontal = PipkinTokens.Spacing.s8)
+      .padding(horizontal = OopbotTokens.Spacing.s8)
       .fillMaxWidth()
-      .clip(RoundedCornerShape(PipkinTokens.Radius.md))
+      .clip(RoundedCornerShape(OopbotTokens.Radius.md))
       .then(modifier)
       .padding(
-        start = PipkinTokens.Spacing.s8 + INDENT_PER_LEVEL * depth,
-        end = PipkinTokens.Spacing.s8,
-        top = PipkinTokens.Spacing.s8,
-        bottom = PipkinTokens.Spacing.s8,
+        start = OopbotTokens.Spacing.s8 + INDENT_PER_LEVEL * depth,
+        end = OopbotTokens.Spacing.s8,
+        top = OopbotTokens.Spacing.s8,
+        bottom = OopbotTokens.Spacing.s8,
       ),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     content()
   }
@@ -259,7 +259,7 @@ private fun Chevron(expanded: Boolean) {
     icon = R.drawable.ic_lucide_chevron_right,
     contentDescription = null,
     modifier = Modifier.rotate(if (expanded) 90f else 0f),
-    tint = pipkinColors.foregroundExtraMuted,
+    tint = oopbotColors.foregroundExtraMuted,
   )
 }
 
@@ -268,13 +268,13 @@ private fun Chevron(expanded: Boolean) {
 internal fun Spinner(size: Dp, contentDescription: String?) {
   Box(
     modifier = Modifier
-      .size(PipkinTokens.IconSize.md)
+      .size(OopbotTokens.IconSize.md)
       .semantics { if (contentDescription != null) this.contentDescription = contentDescription },
     contentAlignment = Alignment.Center,
   ) {
     CircularProgressIndicator(
       modifier = Modifier.size(size),
-      color = pipkinColors.foregroundMuted,
+      color = oopbotColors.foregroundMuted,
       strokeWidth = 1.5.dp,
     )
   }
@@ -283,12 +283,12 @@ internal fun Spinner(size: Dp, contentDescription: String?) {
 /** Why [state]'s top folder couldn't be listed, Connect when connecting to its remote host would fix it, and Retry. */
 @Composable
 private fun TreeFailure(message: String, state: FileExplorerState, onRetry: () -> Unit, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   CenterNote(modifier) {
     Text(
       text = message,
       color = colors.destructive,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       textAlign = TextAlign.Center,
     )
     RemoteConnectAction(cwd = state.root, code = state.failureCode, onConnected = onRetry)
@@ -298,9 +298,9 @@ private fun TreeFailure(message: String, state: FileExplorerState, onRetry: () -
         .clip(CircleShape)
         .background(colors.surface2)
         .clickable(onClick = onRetry)
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
     )
   }
@@ -309,8 +309,8 @@ private fun TreeFailure(message: String, state: FileExplorerState, onRetry: () -
 @Composable
 private fun CenterNote(modifier: Modifier, content: @Composable () -> Unit) {
   Column(
-    modifier = modifier.fillMaxSize().padding(PipkinTokens.Spacing.s16),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8, Alignment.CenterVertically),
+    modifier = modifier.fillMaxSize().padding(OopbotTokens.Spacing.s16),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8, Alignment.CenterVertically),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     content()
@@ -319,7 +319,7 @@ private fun CenterNote(modifier: Modifier, content: @Composable () -> Unit) {
 
 /** The side panels' highlight for a selected row: one surface step above the panel's surface0. */
 @Composable
-internal fun sidebarHighlight(): Color = pipkinColors.surface2
+internal fun sidebarHighlight(): Color = oopbotColors.surface2
 
 /** Tree names sit at 76% strength, so the file icons' colours lead. */
 private const val NAME_ALPHA = 0.76f

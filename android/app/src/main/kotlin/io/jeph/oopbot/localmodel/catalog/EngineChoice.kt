@@ -13,7 +13,7 @@ import io.jeph.oopbot.localmodel.engine.OpenClProbe
 /**
  * What [EngineChoice] needs to know about the phone, gathered once so the choice itself is a pure function the tests
  * can run for any phone. [socModel] is `Build.SOC_MODEL`, which Android reports from API 31. [gpu] is the name the
- * vendor's OpenCL driver gives the GPU, or null when Pipkin can't load one; both engines' GPU backends run on OpenCL.
+ * vendor's OpenCL driver gives the GPU, or null when OOPBoT can't load one; both engines' GPU backends run on OpenCL.
  * [memoryBytes] is the phone's total memory as Android reports it. [failedBuilds] are the [ModelArtifact.kind]s that
  * failed to load a model here, which aren't chosen again.
  */
@@ -23,7 +23,7 @@ internal data class DeviceProfile(
   val memoryBytes: Long,
   val failedBuilds: Set<String> = emptySet(),
 ) {
-  /** Whether this phone can run [artifact]'s engine on its backend, as far as Pipkin can tell before loading it. */
+  /** Whether this phone can run [artifact]'s engine on its backend, as far as OOPBoT can tell before loading it. */
   fun runs(artifact: ModelArtifact): Boolean {
     if (artifact.kind in failedBuilds) return false
     return when (artifact.backend) {

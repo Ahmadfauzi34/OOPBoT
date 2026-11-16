@@ -49,8 +49,8 @@ import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /**
@@ -68,7 +68,7 @@ internal fun SettingsScreen(
 ) {
   val graph = LocalContext.current.appGraph
   val snackbar = remember { SnackbarStackState() }
-  Box(modifier = Modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Box(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     Column(modifier = Modifier.fillMaxSize()) {
       HeaderBar(
         title = stringResource(R.string.settings_title),
@@ -93,7 +93,7 @@ internal fun SettingsScreen(
     }
     SnackbarStack(
       snackbar,
-      Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(PipkinTokens.Spacing.s16),
+      Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(OopbotTokens.Spacing.s16),
     )
   }
 }
@@ -115,12 +115,12 @@ private fun SettingsContent(
         .fillMaxSize()
         .verticalScroll(rememberScrollState())
         .navigationBarsPadding()
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s24),
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s24),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Column(
-      modifier = Modifier.widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth(),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s24),
+      modifier = Modifier.widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s24),
     ) {
       ModelsSection(accounts = graph.accountRepository, onOpenProviders = onOpenProviders)
       ChatsSection(preferences = graph.preferences)
@@ -156,7 +156,7 @@ private fun ModelsSection(accounts: AccountRepository, onOpenProviders: () -> Un
       subtitle = summary,
       onClick = onOpenProviders,
       leading = {
-        LucideIcon(icon = R.drawable.ic_lucide_plug, contentDescription = null, tint = pipkinColors.foregroundMuted)
+        LucideIcon(icon = R.drawable.ic_lucide_plug, contentDescription = null, tint = oopbotColors.foregroundMuted)
       },
     ) {
       Chevron()
@@ -173,14 +173,14 @@ private fun AppearanceSection(preferences: Preferences) {
 }
 
 /**
- * A switch for each extension Pipkin bundles that the user can turn off, and updating the Pi extensions installed in
+ * A switch for each extension OOPBoT bundles that the user can turn off, and updating the Pi extensions installed in
  * its settings. A switch reloads idle chats so they pick the change up at once; a working chat picks it up when its
  * agent next starts.
  */
 @Composable
 private fun ExtensionsSection(graph: AppGraph, snackbar: SnackbarStackState) {
   val disabled by graph.preferences.disabledExtensions.collectAsStateWithLifecycle()
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12)) {
     SettingsSection(title = stringResource(R.string.settings_section_extensions)) {
       BundledExtension.entries.forEach { extension ->
         val switch = extension.switch ?: return@forEach
@@ -273,7 +273,7 @@ private fun ConfigurationSection(graph: AppGraph, snackbar: SnackbarStackState, 
           icon = R.drawable.ic_lucide_copy,
           contentDescription = stringResource(R.string.settings_copy),
           onClick = { copyToClipboard(context, configFolder, configDir) },
-          tint = pipkinColors.foregroundMuted,
+          tint = oopbotColors.foregroundMuted,
         )
       }
     }
@@ -294,7 +294,7 @@ private fun ConfigurationSection(graph: AppGraph, snackbar: SnackbarStackState, 
         LucideIcon(
           icon = R.drawable.ic_lucide_archive_restore,
           contentDescription = null,
-          tint = pipkinColors.foregroundMuted,
+          tint = oopbotColors.foregroundMuted,
         )
       },
     ) {
@@ -321,7 +321,7 @@ private fun AboutSection(onOpenLicenses: () -> Unit) {
       LucideIcon(
         icon = R.drawable.ic_lucide_external_link,
         contentDescription = null,
-        tint = pipkinColors.foregroundMuted,
+        tint = oopbotColors.foregroundMuted,
       )
     }
   }

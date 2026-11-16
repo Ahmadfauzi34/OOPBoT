@@ -41,8 +41,8 @@ import io.jeph.oopbot.localmodel.engine.Backend
 import io.jeph.oopbot.localmodel.engine.EngineKind
 import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** Providers and models › Experimental: one row into [LocalModelsScreen], saying whether local models are on. */
 @Composable
@@ -54,7 +54,7 @@ internal fun LocalModelsSection(preferences: Preferences, onOpenLocalModels: () 
       subtitle = stringResource(if (enabled) R.string.local_models_row_on else R.string.local_models_row_off),
       onClick = onOpenLocalModels,
       leading = {
-        LucideIcon(icon = R.drawable.ic_lucide_brain, contentDescription = null, tint = pipkinColors.foregroundMuted)
+        LucideIcon(icon = R.drawable.ic_lucide_brain, contentDescription = null, tint = oopbotColors.foregroundMuted)
       },
     ) {
       Chevron()
@@ -80,7 +80,7 @@ internal fun LocalModelsScreen(onBack: () -> Unit) {
           LucideIcon(
             icon = R.drawable.ic_lucide_triangle_alert,
             contentDescription = null,
-            tint = pipkinColors.dotWarning,
+            tint = oopbotColors.dotWarning,
           )
         },
       )
@@ -199,7 +199,7 @@ private fun ModelEntry(model: CatalogModel, device: DeviceProfile, localModels: 
     // Stacked, so the build's description keeps its width when Download and Delete both apply.
     Column(
       horizontalAlignment = Alignment.End,
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
     ) {
       ModelActions(
         running = download is DownloadState.Running,
@@ -218,11 +218,11 @@ private fun ModelEntry(model: CatalogModel, device: DeviceProfile, localModels: 
     is DownloadState.Failed -> SettingsCaption(
       text = failureText(context, download.failure),
       modifier = Modifier.padding(
-        start = PipkinTokens.Spacing.s12,
-        end = PipkinTokens.Spacing.s12,
-        bottom = PipkinTokens.Spacing.s12,
+        start = OopbotTokens.Spacing.s12,
+        end = OopbotTokens.Spacing.s12,
+        bottom = OopbotTokens.Spacing.s12,
       ),
-      color = pipkinColors.destructive,
+      color = oopbotColors.destructive,
     )
 
     null -> Unit
@@ -280,14 +280,14 @@ private fun DownloadProgress(download: DownloadState.Running) {
   Column(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s16, bottom = PipkinTokens.Spacing.s12),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+      .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s16, bottom = OopbotTokens.Spacing.s12),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     LinearProgressIndicator(
       progress = { download.downloadedBytes.toFloat() / total },
       modifier = Modifier.fillMaxWidth(),
-      color = pipkinColors.accent,
-      trackColor = pipkinColors.surface3,
+      color = oopbotColors.accent,
+      trackColor = oopbotColors.surface3,
       drawStopIndicator = {},
     )
     Text(
@@ -296,8 +296,8 @@ private fun DownloadProgress(download: DownloadState.Running) {
         Formatter.formatShortFileSize(context, download.downloadedBytes),
         Formatter.formatShortFileSize(context, total),
       ),
-      color = pipkinColors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      color = oopbotColors.foregroundMuted,
+      fontSize = OopbotTokens.FontSize.sm,
     )
   }
 }

@@ -49,12 +49,12 @@ import io.jeph.oopbot.agent.text
 import io.jeph.oopbot.ui.components.CapsLabel
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.MarkdownCache
-import io.jeph.oopbot.ui.components.PipkinMarkdown
+import io.jeph.oopbot.ui.components.OopbotMarkdown
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.util.Date
 import kotlinx.coroutines.delay
 
@@ -78,18 +78,18 @@ internal fun UserMessage(
   modifier: Modifier = Modifier,
   task: Boolean = false,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
     modifier = modifier
       .fillMaxWidth()
       .clip(PromptShape)
       .background(colors.surface1)
-      .padding(start = 14.dp, top = PipkinTokens.Spacing.s4, end = PipkinTokens.Spacing.s4, bottom = 11.dp),
+      .padding(start = 14.dp, top = OopbotTokens.Spacing.s4, end = OopbotTokens.Spacing.s4, bottom = 11.dp),
   ) {
     PromptHeader(item, task)
     Column(
-      modifier = Modifier.padding(end = PipkinTokens.Spacing.s8),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      modifier = Modifier.padding(end = OopbotTokens.Spacing.s8),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       if (item.images.isNotEmpty()) UserImages(item.images)
       if (item.text.isNotEmpty()) {
@@ -112,7 +112,7 @@ internal fun UserMessage(
 
 @Composable
 private fun PromptHeader(item: TimelineItem.User, task: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   val time = remember(item.timestamp, context) { DateFormat.getTimeFormat(context).format(Date(item.timestamp)) }
   Row(modifier = Modifier.heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -134,7 +134,7 @@ private fun PromptHeader(item: TimelineItem.User, task: Boolean) {
         text = item.text,
         contentDescription = stringResource(R.string.chat_copy_message),
         tint = colors.foregroundMuted,
-        iconSize = PipkinTokens.IconSize.sm,
+        iconSize = OopbotTokens.IconSize.sm,
       )
     }
   }
@@ -143,8 +143,8 @@ private fun PromptHeader(item: TimelineItem.User, task: Boolean) {
 @Composable
 private fun UserImages(images: List<ImagePart>) {
   FlowRow(
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     images.forEach { ImageThumbnail(it) }
   }
@@ -153,10 +153,10 @@ private fun UserImages(images: List<ImagePart>) {
 @Composable
 internal fun ImageThumbnail(part: ImagePart) {
   val bitmap by produceState<ImageBitmap?>(null, part) { value = ChatImages.thumbnail(part) }
-  val shape = RoundedCornerShape(PipkinTokens.Radius.md)
+  val shape = RoundedCornerShape(OopbotTokens.Radius.md)
   val image = bitmap
   if (image == null) {
-    Box(modifier = Modifier.size(ImageMaxEdge).clip(shape).background(pipkinColors.surface2))
+    Box(modifier = Modifier.size(ImageMaxEdge).clip(shape).background(oopbotColors.surface2))
     return
   }
   val aspect = image.width.toFloat() / image.height.coerceAtLeast(1)
@@ -183,26 +183,26 @@ internal fun AssistantMessage(
   markdownCache: MarkdownCache,
   modifier: Modifier = Modifier,
 ) {
-  Column(modifier = modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s12)) {
-    PipkinMarkdown(
+  Column(modifier = modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s12)) {
+    OopbotMarkdown(
       markdown = item.markdown,
       modifier = Modifier.fillMaxWidth(),
       cache = markdownCache.takeUnless { item.streaming },
     )
     if (item.streaming) {
-      Spacer(modifier = Modifier.height(PipkinTokens.Spacing.s12))
+      Spacer(modifier = Modifier.height(OopbotTokens.Spacing.s12))
       return@Column
     }
     Row(
-      modifier = Modifier.padding(top = PipkinTokens.Spacing.s4),
+      modifier = Modifier.padding(top = OopbotTokens.Spacing.s4),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       CopyButton(
         text = item.markdown,
         contentDescription = stringResource(R.string.chat_copy_reply),
-        tint = pipkinColors.foregroundMuted,
-        iconSize = PipkinTokens.IconSize.sm,
+        tint = oopbotColors.foregroundMuted,
+        iconSize = OopbotTokens.IconSize.sm,
       )
       MessageTime(item.timestamp)
     }
@@ -214,5 +214,5 @@ internal fun AssistantMessage(
 internal fun MessageTime(timestamp: Long) {
   val context = LocalContext.current
   val time = remember(timestamp, context) { DateFormat.getTimeFormat(context).format(Date(timestamp)) }
-  Text(text = time, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.meta)
+  Text(text = time, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.meta)
 }

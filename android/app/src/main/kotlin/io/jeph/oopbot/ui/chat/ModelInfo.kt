@@ -18,7 +18,7 @@ internal fun acceptsImages(model: JSONObject?): Boolean {
 /** Pi marks models that can think with `reasoning: true`; the others only offer "off". */
 internal fun supportsThinking(model: JSONObject?): Boolean = model?.optBoolean("reasoning") == true
 
-/** The name of Pi's thinking [level] in the app's language; a level Pipkin doesn't know shows capitalized as Pi names it. */
+/** The name of Pi's thinking [level] in the app's language; a level OOPBoT doesn't know shows capitalized as Pi names it. */
 @Composable
 internal fun thinkingLevelLabel(level: String): String {
   val label = when (level) {

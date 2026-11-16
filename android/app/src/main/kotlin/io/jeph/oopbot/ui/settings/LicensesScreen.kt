@@ -11,9 +11,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -48,10 +48,10 @@ internal fun LicenseScreen(path: String, onBack: () -> Unit) {
       SelectionContainer {
         Text(
           text = it,
-          color = pipkinColors.foreground,
-          fontFamily = PipkinFonts.mono,
-          fontSize = PipkinTokens.FontSize.code,
-          lineHeight = PipkinTokens.LineHeight.code,
+          color = oopbotColors.foreground,
+          fontFamily = OopbotFonts.mono,
+          fontSize = OopbotTokens.FontSize.code,
+          lineHeight = OopbotTokens.LineHeight.code,
         )
       }
     }
@@ -67,7 +67,7 @@ private fun LicenseSection(title: String, paths: List<String>, onOpenLicense: (p
         LucideIcon(
           icon = R.drawable.ic_lucide_chevron_right,
           contentDescription = null,
-          tint = pipkinColors.foregroundMuted,
+          tint = oopbotColors.foregroundMuted,
         )
       }
     }

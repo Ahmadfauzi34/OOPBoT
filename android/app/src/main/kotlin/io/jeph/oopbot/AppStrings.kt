@@ -7,7 +7,7 @@ import androidx.annotation.StringRes
 /**
  * The app's string resources for code that has no Context at hand, such as an exception's message, which is read
  * wherever the exception lands. Each read goes through the application, so it follows a change of the app's language.
- * [PipkinApplication] sets it up before anything else runs.
+ * [OopbotApplication] sets it up before anything else runs.
  */
 internal object AppStrings {
   private lateinit var application: Application

@@ -51,7 +51,7 @@ import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.HeaderBar
 import io.jeph.oopbot.ui.components.HeaderButton
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SearchField
 import io.jeph.oopbot.ui.components.SelectionCircle
@@ -61,8 +61,8 @@ import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.sidebar.FolderNames
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.relativeTime
 import io.jeph.oopbot.ui.workspace.sessionTitle
 import kotlinx.coroutines.CoroutineScope
@@ -88,7 +88,7 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
   val shown = remember(archived, query, names) { archived.filter { it.session.matches(query.trim(), names) } }
   val selectedSessions = archived.map { it.session }.filter { it.path in page.selected }
   val restorable = selectedSessions.filter { it.cwdExists }
-  Box(modifier = Modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Box(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     Column(modifier = Modifier.fillMaxSize()) {
       ArchiveHeader(
         selectedCount = page.selected.size,
@@ -100,7 +100,7 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
         query = query,
         onQueryChange = { query = it },
         placeholder = stringResource(R.string.archive_search),
-        modifier = Modifier.padding(vertical = PipkinTokens.Spacing.s8),
+        modifier = Modifier.padding(vertical = OopbotTokens.Spacing.s8),
       )
       ArchiveList(
         page = page,
@@ -125,7 +125,7 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
       modifier = Modifier
         .align(Alignment.BottomCenter)
         .navigationBarsPadding()
-        .padding(PipkinTokens.Spacing.s16)
+        .padding(OopbotTokens.Spacing.s16)
         .padding(bottom = if (page.selected.isNotEmpty()) 72.dp else 0.dp),
     )
   }
@@ -223,8 +223,8 @@ private fun ArchiveList(
       shown.isEmpty() -> Text(
         text = stringResource(if (archiveEmpty) R.string.archive_empty else R.string.archive_no_matches),
         modifier = Modifier.align(Alignment.Center),
-        color = pipkinColors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.base,
+        color = oopbotColors.foregroundMuted,
+        fontSize = OopbotTokens.FontSize.base,
       )
 
       else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -305,7 +305,7 @@ private fun ArchiveHeader(
     },
     trailing = {
       TextButton(onClick = onSelectAll) {
-        Text(stringResource(R.string.archive_select_all), color = pipkinColors.accent)
+        Text(stringResource(R.string.archive_select_all), color = oopbotColors.accent)
       }
     },
   )
@@ -327,7 +327,7 @@ private fun ArchivedRow(
   onActions: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val session = entry.session
   val title = sessionTitle(session)
   val clickLabel = when {
@@ -344,26 +344,26 @@ private fun ArchivedRow(
   Row(
     modifier = modifier
       .fillMaxWidth()
-      .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s2)
+      .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s2)
       .clip(shape)
       .then(highlight)
       .combinedClickable(onClickLabel = clickLabel, onClick = onClick, onLongClick = onLongClick)
       .heightIn(min = 56.dp)
       .padding(
-        start = PipkinTokens.Spacing.s12,
-        end = PipkinTokens.Spacing.s4,
-        top = PipkinTokens.Spacing.s8,
-        bottom = PipkinTokens.Spacing.s8,
+        start = OopbotTokens.Spacing.s12,
+        end = OopbotTokens.Spacing.s4,
+        top = OopbotTokens.Spacing.s8,
+        bottom = OopbotTokens.Spacing.s8,
       ),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     if (selecting) SelectionCircle(selected)
     Column(modifier = Modifier.weight(1f)) {
       Text(
         text = title,
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -373,7 +373,7 @@ private fun ArchivedRow(
     Text(
       text = relativeTime(entry.archivedAt),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
     )
     if (!selecting) {
@@ -393,7 +393,7 @@ private const val SELECTED_RING_ALPHA = 0.5f
 /** The chat's [FolderLine], then how many subagents it ran, whose transcripts stay with it. */
 @Composable
 private fun FolderAndSubagents(session: SessionInfo, names: FolderNames) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(verticalAlignment = Alignment.CenterVertically) {
     FolderLine(session, names, Modifier.weight(1f, fill = false))
     val count = session.subagents
@@ -401,19 +401,19 @@ private fun FolderAndSubagents(session: SessionInfo, names: FolderNames) {
     Text(
       text = stringResource(R.string.separator_dot),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
     )
     LucideIcon(
       icon = R.drawable.ic_lucide_bot,
       contentDescription = null,
-      modifier = Modifier.padding(end = PipkinTokens.Spacing.s4),
-      size = PipkinTokens.IconSize.xs,
+      modifier = Modifier.padding(end = OopbotTokens.Spacing.s4),
+      size = OopbotTokens.IconSize.xs,
       tint = colors.foregroundMuted,
     )
     Text(
       text = pluralStringResource(R.plurals.archive_subagents, count, count),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
       softWrap = false,
     )
@@ -426,20 +426,20 @@ private fun FolderAndSubagents(session: SessionInfo, names: FolderNames) {
  */
 @Composable
 internal fun FolderLine(session: SessionInfo, names: FolderNames, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
-  Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  val colors = oopbotColors
+  Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     if (!session.cwdExists) {
       Text(
         text = stringResource(R.string.archive_folder_missing),
         color = colors.destructive,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         maxLines = 1,
       )
     }
     Text(
       text = names.path(session.cwd),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )
@@ -455,7 +455,7 @@ internal fun ArchivedChatActions(
   onRestore: () -> Unit,
   onDelete: () -> Unit,
 ) {
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     SheetRow(
       label = stringResource(R.string.archive_restore),
       icon = R.drawable.ic_lucide_archive_restore,
@@ -466,7 +466,7 @@ internal fun ArchivedChatActions(
     SheetRow(
       label = stringResource(R.string.archive_delete),
       icon = R.drawable.ic_lucide_trash_2,
-      labelColor = pipkinColors.destructive,
+      labelColor = oopbotColors.destructive,
       enabled = enabled,
       onClick = { dismiss(onDelete) },
     )

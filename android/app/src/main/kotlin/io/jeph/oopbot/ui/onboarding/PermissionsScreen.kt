@@ -31,8 +31,8 @@ import io.jeph.oopbot.ui.components.HeaderButton
 import kotlinx.coroutines.launch
 
 /**
- * The setup steps that prepare Termux and grant Pipkin access, as cards, without the agent install and sign-in.
- * Reached from Settings; steps re-check whenever Pipkin comes back, like onboarding.
+ * The setup steps that prepare Termux and grant OOPBoT access, as cards, without the agent install and sign-in.
+ * Reached from Settings; steps re-check whenever OOPBoT comes back, like onboarding.
  */
 @Composable
 internal fun PermissionsScreen(onBack: () -> Unit) {
@@ -159,7 +159,7 @@ private fun openNotificationSettings(context: Context) {
 }
 
 /**
- * Android's own exemption prompt rather than the settings list: Pipkin is the client of a long-running agent and is
+ * Android's own exemption prompt rather than the settings list: OOPBoT is the client of a long-running agent and is
  * not distributed through Google Play, whose policy restricts this request.
  */
 @SuppressLint("BatteryLife")

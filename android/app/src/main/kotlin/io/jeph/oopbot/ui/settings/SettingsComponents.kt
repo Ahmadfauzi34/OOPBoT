@@ -41,9 +41,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** A settings section: an optional small bold muted label over a flat surface1 card. */
 @Composable
@@ -52,9 +52,9 @@ internal fun SettingsSection(
   modifier: Modifier = Modifier,
   content: @Composable ColumnScope.() -> Unit,
 ) {
-  val colors = pipkinColors
-  val shape = RoundedCornerShape(PipkinTokens.Radius.xl)
-  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  val colors = oopbotColors
+  val shape = RoundedCornerShape(OopbotTokens.Radius.xl)
+  Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     if (title != null) SectionLabel(title)
     Column(
       modifier =
@@ -69,7 +69,7 @@ internal fun SettingsSection(
 
 @Composable
 internal fun SettingsDivider() {
-  HorizontalDivider(thickness = 1.dp, color = pipkinColors.border)
+  HorizontalDivider(thickness = 1.dp, color = oopbotColors.border)
 }
 
 /** A 56dp settings card row: optional leading icon, title, optional muted subtitle that wraps in full, trailing control. */
@@ -78,13 +78,13 @@ internal fun SettingsRow(
   title: String,
   modifier: Modifier = Modifier,
   subtitle: String? = null,
-  titleColor: Color = pipkinColors.foreground,
+  titleColor: Color = oopbotColors.foreground,
   enabled: Boolean = true,
   onClick: (() -> Unit)? = null,
   leading: (@Composable () -> Unit)? = null,
   trailing: @Composable RowScope.() -> Unit = {},
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier =
       modifier
@@ -92,20 +92,20 @@ internal fun SettingsRow(
         .heightIn(min = 54.dp)
         .alpha(if (enabled) 1f else 0.5f)
         .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     if (leading != null) {
       Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) { leading() }
     }
     Column(modifier = Modifier.weight(1f)) {
-      Text(text = title, color = titleColor, fontSize = PipkinTokens.FontSize.base, fontWeight = FontWeight.Medium)
+      Text(text = title, color = titleColor, fontSize = OopbotTokens.FontSize.base, fontWeight = FontWeight.Medium)
       if (subtitle != null) {
         Text(
           text = subtitle,
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
         )
       }
     }
@@ -116,17 +116,17 @@ internal fun SettingsRow(
 /** Muted trailing value of a [SettingsRow]. */
 @Composable
 internal fun SettingsValue(text: String) {
-  Text(text = text, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.base, maxLines = 1)
+  Text(text = text, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.base, maxLines = 1)
 }
 
 /** A 12sp line under a section or field; destructive for errors. */
 @Composable
-internal fun SettingsCaption(text: String, modifier: Modifier = Modifier, color: Color = pipkinColors.foregroundMuted) {
+internal fun SettingsCaption(text: String, modifier: Modifier = Modifier, color: Color = oopbotColors.foregroundMuted) {
   Text(
     text = text,
-    modifier = modifier.padding(horizontal = PipkinTokens.Spacing.s4),
+    modifier = modifier.padding(horizontal = OopbotTokens.Spacing.s4),
     color = color,
-    fontSize = PipkinTokens.FontSize.sm,
+    fontSize = OopbotTokens.FontSize.sm,
   )
 }
 
@@ -144,7 +144,7 @@ internal fun ErrorPanel(
   detail: String? = null,
   standalone: Boolean = true,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val wash = colors.dangerSoft
   Row(
     modifier =
@@ -152,27 +152,27 @@ internal fun ErrorPanel(
         .fillMaxWidth()
         .background(wash, if (standalone) RoundedCornerShape(PANEL_RADIUS) else RectangleShape)
         .padding(
-          start = if (standalone) PipkinTokens.Spacing.s12 else CARD_TEXT_START,
-          top = PipkinTokens.Spacing.s12,
-          end = if (standalone) PipkinTokens.Spacing.s12 else PipkinTokens.Spacing.s16,
-          bottom = PipkinTokens.Spacing.s12,
+          start = if (standalone) OopbotTokens.Spacing.s12 else CARD_TEXT_START,
+          top = OopbotTokens.Spacing.s12,
+          end = if (standalone) OopbotTokens.Spacing.s12 else OopbotTokens.Spacing.s16,
+          bottom = OopbotTokens.Spacing.s12,
         ),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     if (standalone) {
       LucideIcon(
         icon = R.drawable.ic_lucide_circle_alert,
         contentDescription = null,
-        modifier = Modifier.padding(top = PipkinTokens.Spacing.s2),
+        modifier = Modifier.padding(top = OopbotTokens.Spacing.s2),
         tint = colors.destructive,
       )
     }
-    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4)) {
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4)) {
       if (title != null) {
         Text(
           text = title,
           color = colors.foreground,
-          fontSize = PipkinTokens.FontSize.base,
+          fontSize = OopbotTokens.FontSize.base,
           fontWeight = FontWeight.SemiBold,
         )
       }
@@ -180,7 +180,7 @@ internal fun ErrorPanel(
       Text(
         text = message,
         color = if (title == null) colors.foreground else colors.foregroundMuted,
-        fontSize = if (title == null) PipkinTokens.FontSize.base else PipkinTokens.FontSize.sm,
+        fontSize = if (title == null) OopbotTokens.FontSize.base else OopbotTokens.FontSize.sm,
         lineHeight = if (title == null) 20.sp else 17.sp,
       )
       if (detail != null) ErrorDetail(detail)
@@ -191,19 +191,19 @@ internal fun ErrorPanel(
 /** A server's own words, on an inset in the code font, selectable for copying into a bug report or search. */
 @Composable
 private fun ErrorDetail(detail: String) {
-  val colors = pipkinColors
-  SelectionContainer(modifier = Modifier.padding(top = PipkinTokens.Spacing.s4)) {
+  val colors = oopbotColors
+  SelectionContainer(modifier = Modifier.padding(top = OopbotTokens.Spacing.s4)) {
     Text(
       text = detail,
       modifier =
         Modifier
           .fillMaxWidth()
-          .background(colors.surface0.copy(alpha = DETAIL_BACKGROUND_ALPHA), RoundedCornerShape(PipkinTokens.Radius.md))
-          .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s6),
+          .background(colors.surface0.copy(alpha = DETAIL_BACKGROUND_ALPHA), RoundedCornerShape(OopbotTokens.Radius.md))
+          .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s6),
       color = colors.foreground,
-      fontFamily = PipkinFonts.mono,
-      fontSize = PipkinTokens.FontSize.code,
-      lineHeight = PipkinTokens.LineHeight.code,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
     )
   }
 }
@@ -212,7 +212,7 @@ private val PANEL_RADIUS = 16.dp
 private const val DETAIL_BACKGROUND_ALPHA = 0.7f
 
 /** Where a [SettingsRow]'s text starts after its leading icon: the row's padding, the 20dp icon box and the gap. */
-private val CARD_TEXT_START = PipkinTokens.Spacing.s16 + 20.dp + PipkinTokens.Spacing.s12
+private val CARD_TEXT_START = OopbotTokens.Spacing.s16 + 20.dp + OopbotTokens.Spacing.s12
 
 /** A segmented control: a pill-shaped surface2 track with the selected segment raised on surface3. */
 @Composable
@@ -223,14 +223,14 @@ internal fun <T> SegmentedControl(
   modifier: Modifier = Modifier,
   segment: @Composable (option: T, isSelected: Boolean) -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier =
       modifier
         .clip(CircleShape)
         .background(colors.surface2)
         .padding(3.dp),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s2),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s2),
   ) {
     options.forEach { option ->
       val isSelected = option == selected
@@ -241,7 +241,7 @@ internal fun <T> SegmentedControl(
             .clip(CircleShape)
             .background(if (isSelected) colors.surface3 else Color.Transparent)
             .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onSelect(option) })
-            .padding(horizontal = PipkinTokens.Spacing.s12),
+            .padding(horizontal = OopbotTokens.Spacing.s12),
         contentAlignment = Alignment.Center,
       ) {
         segment(option, isSelected)
@@ -258,7 +258,7 @@ internal fun DashedActionRow(
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val radius = PANEL_RADIUS
   Row(
     modifier =
@@ -278,15 +278,15 @@ internal fun DashedActionRow(
         }
         .clip(RoundedCornerShape(radius))
         .clickable(onClick = onClick)
-        .padding(horizontal = PipkinTokens.Spacing.s16),
+        .padding(horizontal = OopbotTokens.Spacing.s16),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     LucideIcon(icon = icon, contentDescription = null, tint = colors.foregroundMuted)
     Text(
       text = label,
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
     )
   }
@@ -295,7 +295,7 @@ internal fun DashedActionRow(
 /** A small tonal pill for row actions. */
 @Composable
 internal fun SmallButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(
     modifier =
       modifier
@@ -304,13 +304,13 @@ internal fun SmallButton(label: String, onClick: () -> Unit, modifier: Modifier 
         .background(colors.surface2)
         .alpha(if (enabled) 1f else 0.5f)
         .clickable(enabled = enabled, onClick = onClick)
-        .padding(horizontal = PipkinTokens.Spacing.s12),
+        .padding(horizontal = OopbotTokens.Spacing.s12),
     contentAlignment = Alignment.Center,
   ) {
     Text(
       text = label,
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.meta,
+      fontSize = OopbotTokens.FontSize.meta,
       fontWeight = FontWeight.SemiBold,
     )
   }

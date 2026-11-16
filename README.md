@@ -2,7 +2,7 @@
 
 Fondasi *agent harness* berbasis Rust yang menggabungkan:
 1. **Binary CLI & RPC Native Rust (`oopbot`)** untuk Termux (`aarch64-linux-android`).
-2. **Aplikasi Android (`android/`)** berbasis UI Pipkin yang terhubung kuat ke Termux (**Konsep 2: Termux Rust Host**) — menggunakan binary Rust `oopbot --mode rpc` (~2.9 MB) dan SDK bawaan (`oopbot-sdk.ts`) sebagai pengganti penuh `@earendil-works/pi-coding-agent` (`pi` Node.js ~150 MB).
+2. **Aplikasi Android (`android/`)** berbasis UI OOPBoT yang terhubung kuat ke Termux (**Konsep 2: Termux Rust Host**) — menggunakan binary Rust `oopbot --mode rpc` (~2.9 MB) dan SDK bawaan (`oopbot-sdk.ts`) sebagai pengganti penuh `@earendil-works/pi-coding-agent` (`pi` Node.js ~150 MB).
 3. **Shared Library C-ABI (`liboopbot.so`)** siap untuk ekspansi JNI in-process (Konsep 1).
 
 Setiap rilis di GitHub Actions otomatis menghasilkan **3 artefak**:
@@ -22,7 +22,7 @@ flowchart LR
     RPC -->|"HTTP/2 + Rustls"| LLM["Gemini API &<br/>OpenAI-Compatible Providers"]
 ```
 
-- **Tanpa `npm ci` 150 MB di Termux**: Saat aplikasi Android menjalankan mode `ensure` di Termux (`android/host/src/modes/ensure.ts`), host langsung mengunduh/menyalin binary native `oopbot-aarch64-linux-android` ke `$PIPKIN_ROOT/bin/oopbot` dan `$PREFIX/bin/oopbot`.
+- **Tanpa `npm ci` 150 MB di Termux**: Saat aplikasi Android menjalankan mode `ensure` di Termux (`android/host/src/modes/ensure.ts`), host langsung mengunduh/menyalin binary native `oopbot-aarch64-linux-android` ke `$OOPBOT_ROOT/bin/oopbot` dan `$PREFIX/bin/oopbot`.
 - **Manajemen Settings, Multi-Provider & Auto-Scan Model (`android/host/src/oopbot-sdk.ts`)**: Saat Anda menambahkan API key provider pilihan Anda (OpenRouter, DeepSeek, Google Gemini, Anthropic, OpenAI, Z.ai, atau Kimi) di menu **Settings → Providers** pada aplikasi Android atau via terminal, sistem otomatis memindai daftar model live dari endpoint provider (`/v1beta/models` atau `/v1/models`) dan menyimpannya ke `models.json`.
 - **Protokol RPC JSONL Penuh (`src/rpc.rs`)**: Setiap tab percakapan di aplikasi Android menjalankan `oopbot --mode rpc` yang mengirimkan stream event real-time (`thinking_start/end`, `toolcall_start/end`, `tool_execution_start/end`, `text_start/delta/end`, `turn_end`, `agent_end`, `agent_settled`) langsung ke komponen UI `ChatTimeline.kt` dan `StepFigure.kt`.
 

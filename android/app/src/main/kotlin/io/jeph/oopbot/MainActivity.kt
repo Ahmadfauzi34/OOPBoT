@@ -65,8 +65,8 @@ import io.jeph.oopbot.ui.settings.usesApiKey
 import io.jeph.oopbot.ui.sidebar.SidebarLinks
 import io.jeph.oopbot.ui.stackTransition
 import io.jeph.oopbot.ui.subagents.ArchivedSubagentScreen
-import io.jeph.oopbot.ui.theme.PipkinTheme
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTheme
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
@@ -85,12 +85,12 @@ class MainActivity : ComponentActivity() {
     val graph = appGraph
     setContent {
       val theme by graph.preferences.theme.collectAsStateWithLifecycle()
-      PipkinTheme(theme) {
+      OopbotTheme(theme) {
         // The app's theme can differ from the system's, so the bars' icons follow the app's.
-        val dark = pipkinColors.isDark
+        val dark = oopbotColors.isDark
         LaunchedEffect(dark) { enableEdgeToEdge(statusBarStyle(dark), navigationBarStyle(dark)) }
-        Surface(modifier = Modifier.fillMaxSize(), color = pipkinColors.surface0) {
-          PipkinApp(graph, requestedChat)
+        Surface(modifier = Modifier.fillMaxSize(), color = oopbotColors.surface0) {
+          OopbotApp(graph, requestedChat)
         }
       }
     }
@@ -110,12 +110,12 @@ class MainActivity : ComponentActivity() {
 
   override fun onStart() {
     super.onStart()
-    TermuxWaker.pipkinShown()
+    TermuxWaker.oopbotShown()
   }
 
   override fun onStop() {
     super.onStop()
-    TermuxWaker.pipkinCovered(this)
+    TermuxWaker.oopbotCovered(this)
   }
 }
 
@@ -127,7 +127,7 @@ private const val DARK_NAV_SCRIM = 0x801B1B1B.toInt()
  * screens slide in from the right over the one below, and slide back out when popped.
  */
 @Composable
-private fun PipkinApp(graph: AppGraph, requestedChat: MutableStateFlow<ChatLocation?>) {
+private fun OopbotApp(graph: AppGraph, requestedChat: MutableStateFlow<ChatLocation?>) {
   val navigator = rememberSaveable(saver = AppNavigator.Saver) {
     AppNavigator(listOf(if (graph.preferences.setupComplete.value) Destination.Main else Destination.Onboarding))
   }
@@ -138,7 +138,7 @@ private fun PipkinApp(graph: AppGraph, requestedChat: MutableStateFlow<ChatLocat
   val chat by requestedChat.collectAsStateWithLifecycle()
   ForgetPopped(stack, holder)
   LaunchedEffect(stack) { if (stack.none(::ownsDraft)) drafts.release() }
-  // Only while Pipkin is on screen: each sweep asks Termux for the chat list, which Android may stop in the background.
+  // Only while OOPBoT is on screen: each sweep asks Termux for the chat list, which Android may stop in the background.
   val lifecycle = LocalLifecycleOwner.current.lifecycle
   LaunchedEffect(actions, lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { actions.autoArchive() } }
   // The main screen opens the requested chat once it is on top; before setup there is no main screen yet.
@@ -168,7 +168,7 @@ private fun PipkinApp(graph: AppGraph, requestedChat: MutableStateFlow<ChatLocat
   }
 }
 
-/** Pipkin opened Termux to start its helper and is waiting for it, on whichever screen asked, below its header bar. */
+/** OOPBoT opened Termux to start its helper and is waiting for it, on whichever screen asked, below its header bar. */
 @Composable
 private fun WakingPill() {
   val waking by TermuxWaker.waking.collectAsStateWithLifecycle()

@@ -44,12 +44,12 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.components.EvenRows
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SearchField
 import io.jeph.oopbot.ui.components.SheetRow
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import org.json.JSONObject
 
 /** The picker wraps its content up to this share of the screen, then scrolls inside. */
@@ -94,7 +94,7 @@ internal fun ModelSheet(
       else -> models?.filter { "${it.optString("provider")}/${it.optString("id")}" in scope }
     }
   }
-  PipkinSheet(onDismissRequest = onDismiss, maxHeightFraction = PICKER_MAX_HEIGHT) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = PICKER_MAX_HEIGHT) { dismiss ->
     // The sheet shows the pick at once and switches Pi once it has slid away, so Pi's answer can't reshape it on the
     // way; other taps meanwhile are ignored. A finger that catches the sheet keeps it open to pick again.
     fun pickAndClose(picked: Pick, switch: () -> Unit) {
@@ -128,7 +128,7 @@ private fun ThinkingLevels(controller: ChatController, model: JSONObject?, curre
   var levels by remember { mutableStateOf<List<String>?>(null) }
   // Pi clamps the available levels to the model, so they reload whenever it changes.
   LaunchedEffect(controller, model) { levels = controller.query { availableThinkingLevels() }.orEmpty() }
-  val colors = pipkinColors
+  val colors = oopbotColors
   SectionLabel(stringResource(R.string.chat_reasoning))
   val shown = levels
   if (shown == null) {
@@ -139,7 +139,7 @@ private fun ThinkingLevels(controller: ChatController, model: JSONObject?, curre
     gap = LEVEL_GAP,
     modifier = Modifier
       .fillMaxWidth()
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s4)
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s4)
       .selectableGroup(),
   ) {
     shown.forEach { level ->
@@ -155,7 +155,7 @@ private fun ThinkingLevels(controller: ChatController, model: JSONObject?, curre
           .clip(LEVEL_SHAPE)
           .background(fill)
           .selectable(selected = picked, role = Role.RadioButton, onClick = { onPick(level) })
-          .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s8),
+          .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s8),
         contentAlignment = Alignment.Center,
       ) {
         Text(
@@ -229,10 +229,10 @@ private fun ModelList(
   val groups = remember(models, query) { buildModelGroups(models, query) }
   if (groups.isEmpty()) {
     val empty = if (models.isEmpty()) R.string.chat_no_model else R.string.chat_model_search_empty
-    SheetRow(label = stringResource(empty), labelColor = pipkinColors.foregroundMuted)
+    SheetRow(label = stringResource(empty), labelColor = oopbotColors.foregroundMuted)
     return
   }
-  LazyColumn(modifier = modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s4)) {
+  LazyColumn(modifier = modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s4)) {
     groups.forEach { group ->
       item(key = "provider:${group.provider}") { SectionLabel(group.provider) }
       items(group.entries, key = { "model:${group.provider}/${it.id}" }) { entry ->
@@ -248,21 +248,21 @@ private fun ModelList(
 
 @Composable
 private fun ModelRow(entry: ModelSheetEntry, selected: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 44.dp)
       .clickable(onClick = onClick)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Column(modifier = Modifier.weight(1f)) {
       Text(
         text = entry.label,
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
@@ -270,7 +270,7 @@ private fun ModelRow(entry: ModelSheetEntry, selected: Boolean, onClick: () -> U
         Text(
           text = entry.subtitle,
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
         )
       }
     }
@@ -292,9 +292,9 @@ private fun matches(model: JSONObject, query: String): Boolean = query.isEmpty()
 private fun SectionLabel(text: String) {
   Text(
     text = text,
-    modifier = Modifier.fillMaxWidth().padding(PipkinTokens.Spacing.s16, PipkinTokens.Spacing.s8),
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    modifier = Modifier.fillMaxWidth().padding(OopbotTokens.Spacing.s16, OopbotTokens.Spacing.s8),
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
   )
 }
 
@@ -305,5 +305,5 @@ private fun Loading() {
 
 @Composable
 private fun CheckIcon() {
-  LucideIcon(icon = R.drawable.ic_lucide_check, contentDescription = null, tint = pipkinColors.accent)
+  LucideIcon(icon = R.drawable.ic_lucide_check, contentDescription = null, tint = oopbotColors.accent)
 }

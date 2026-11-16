@@ -40,8 +40,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -173,7 +173,7 @@ private suspend fun PointerInputScope.swipeDrag(
 /** The [icon] the swipe uncovers; it lights up and grows once letting go would remove the row. */
 @Composable
 private fun SwipeMark(@DrawableRes icon: Int, armed: Boolean, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val background by animateColorAsState(if (armed) colors.accent else colors.surface3, label = "swipeMark")
   val scale by animateFloatAsState(
     targetValue = if (armed) 1.2f else 0.9f,
@@ -181,7 +181,7 @@ private fun SwipeMark(@DrawableRes icon: Int, armed: Boolean, modifier: Modifier
     label = "swipeMarkScale",
   )
   Box(
-    modifier = modifier.background(background).padding(start = PipkinTokens.Spacing.s24),
+    modifier = modifier.background(background).padding(start = OopbotTokens.Spacing.s24),
     contentAlignment = Alignment.CenterStart,
   ) {
     LucideIcon(

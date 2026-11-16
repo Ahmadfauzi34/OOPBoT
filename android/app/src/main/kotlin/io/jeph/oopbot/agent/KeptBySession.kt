@@ -6,8 +6,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
- * What extensions showed in chats whose Pi Pipkin stopped (parked, reloaded, closed), by session file, such as the
- * title or statuses they set. Pipkin restarts Pi far more often than someone running it in a terminal would, so these
+ * What extensions showed in chats whose Pi OOPBoT stopped (parked, reloaded, closed), by session file, such as the
+ * title or statuses they set. OOPBoT restarts Pi far more often than someone running it in a terminal would, so these
  * outlive those restarts as they would in a Pi that kept running. Kept in memory only: like Pi itself, a restarted app
  * starts without them.
  */

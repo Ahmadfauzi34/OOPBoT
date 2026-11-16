@@ -90,7 +90,7 @@ internal class ChatController(
 
   /**
    * Sends the draft; Pi steers a working run with it. A built-in command such as `/compact` runs in
-   * Pipkin instead. Returns false when nothing was sent, as while Pi starts: the history shown then is only a copy,
+   * OOPBoT instead. Returns false when nothing was sent, as while Pi starts: the history shown then is only a copy,
    * and the prompt or most built-in commands would reach no Pi. So it does while a remote chat's host is lost, where
    * every tool the agent reached for would fail; the draft stays for when the host is back.
    */

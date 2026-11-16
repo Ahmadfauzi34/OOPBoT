@@ -20,8 +20,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** A single-line search field: a search icon and [placeholder] in a surface2 pill. */
 @Composable
@@ -32,16 +32,16 @@ fun SearchField(
   modifier: Modifier = Modifier,
   keyboardOptions: KeyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   BasicTextField(
     value = query,
     onValueChange = onQueryChange,
     modifier = modifier.fillMaxWidth().padding(
-      horizontal = PipkinTokens.Spacing.s16,
-      vertical = PipkinTokens.Spacing.s4,
+      horizontal = OopbotTokens.Spacing.s16,
+      vertical = OopbotTokens.Spacing.s4,
     ),
     textStyle = LocalTextStyle.current.merge(
-      TextStyle(color = colors.foreground, fontSize = PipkinTokens.FontSize.base),
+      TextStyle(color = colors.foreground, fontSize = OopbotTokens.FontSize.base),
     ),
     cursorBrush = SolidColor(colors.accent),
     keyboardOptions = keyboardOptions,
@@ -53,14 +53,14 @@ fun SearchField(
             .fillMaxWidth()
             .heightIn(min = 40.dp)
             .background(colors.surface2, CircleShape)
-            .padding(horizontal = PipkinTokens.Spacing.s16),
+            .padding(horizontal = OopbotTokens.Spacing.s16),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
       ) {
         LucideIcon(icon = R.drawable.ic_lucide_search, contentDescription = null, tint = colors.foregroundMuted)
         Box(modifier = Modifier.weight(1f)) {
           if (query.isEmpty()) {
-            Text(text = placeholder, color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+            Text(text = placeholder, color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
           }
           field()
         }

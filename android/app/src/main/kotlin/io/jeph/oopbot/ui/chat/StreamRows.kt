@@ -63,12 +63,12 @@ import io.jeph.oopbot.agent.TimelineItem
 import io.jeph.oopbot.agent.text
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.MarkdownCache
-import io.jeph.oopbot.ui.components.PipkinMarkdown
+import io.jeph.oopbot.ui.components.OopbotMarkdown
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 import java.util.Date
 import java.util.Locale
@@ -90,18 +90,18 @@ internal fun ToolRow(
   description: String? = null,
   trailing: @Composable RowScope.() -> Unit = {},
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier =
       modifier
         .fillMaxWidth()
         .heightIn(min = 30.dp)
-        .clip(RoundedCornerShape(PipkinTokens.Radius.md))
+        .clip(RoundedCornerShape(OopbotTokens.Radius.md))
         .clickable(onClickLabel = onClickLabel, onClick = onClick)
         .then(description?.let { Modifier.clearAndSetSemantics { contentDescription = it } } ?: Modifier)
-        .padding(horizontal = PipkinTokens.Spacing.s4),
+        .padding(horizontal = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     StepIcon(presentation.icon, running = presentation.running, failed = presentation.isError)
     Text(
@@ -116,7 +116,7 @@ internal fun ToolRow(
       modifier = Modifier.weight(1f),
       color = if (presentation.isError) colors.destructive else colors.foregroundMuted,
       fontSize = if (presentation.code) 11.5.sp else 12.5.sp,
-      fontFamily = if (presentation.code) PipkinFonts.mono else null,
+      fontFamily = if (presentation.code) OopbotFonts.mono else null,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )
@@ -128,7 +128,7 @@ internal fun ToolRow(
 /** A step's figure: lines added and removed, or how a shell command ended. Never cut short; the summary gives way. */
 @Composable
 private fun FigureText(figure: StepFigure) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val numbers = NumberFormat.getIntegerInstance()
   val text = when (figure) {
     is StepFigure.Lines -> buildAnnotatedString {
@@ -155,7 +155,7 @@ private fun FigureText(figure: StepFigure) {
     StepFigure.Stopped -> colored(stringResource(R.string.chat_figure_stopped), colors.foregroundMuted)
   }
   if (text.isEmpty()) return
-  Text(text = text, fontSize = 11.5.sp, fontFamily = PipkinFonts.mono, maxLines = 1, softWrap = false)
+  Text(text = text, fontSize = 11.5.sp, fontFamily = OopbotFonts.mono, maxLines = 1, softWrap = false)
 }
 
 private fun colored(text: String, color: Color) = AnnotatedString(text, SpanStyle(color = color))
@@ -163,7 +163,7 @@ private fun colored(text: String, color: Color) = AnnotatedString(text, SpanStyl
 /** A step's tool icon, coloured by its status. */
 @Composable
 private fun StepIcon(@DrawableRes icon: Int, running: Boolean, failed: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   LucideIcon(
     icon = icon,
     contentDescription = null,
@@ -181,9 +181,9 @@ internal val STEP_ICON_SIZE = 14.dp
 
 @Composable
 internal fun ErrorRow(message: String, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
-    modifier = modifier.fillMaxWidth().padding(vertical = PipkinTokens.Spacing.s6),
+    modifier = modifier.fillMaxWidth().padding(vertical = OopbotTokens.Spacing.s6),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
     LucideIcon(
@@ -201,9 +201,9 @@ internal fun ErrorRow(message: String, modifier: Modifier = Modifier) {
 /** A centred pill noting Pi's own work on the chat, such as retrying or compacting. */
 @Composable
 internal fun NoticeRow(kind: NoticeKind, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(
-    modifier = modifier.fillMaxWidth().padding(vertical = PipkinTokens.Spacing.s4),
+    modifier = modifier.fillMaxWidth().padding(vertical = OopbotTokens.Spacing.s4),
     contentAlignment = Alignment.Center,
   ) {
     Row(
@@ -211,20 +211,20 @@ internal fun NoticeRow(kind: NoticeKind, modifier: Modifier = Modifier) {
         .heightIn(min = 27.dp)
         .clip(CircleShape)
         .background(colors.surface1)
-        .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s4),
+        .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s4),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
       LucideIcon(
         icon = kind.icon,
         contentDescription = null,
-        size = PipkinTokens.IconSize.sm,
+        size = OopbotTokens.IconSize.sm,
         tint = colors.foregroundMuted,
       )
       Text(
         text = stringResource(kind.text),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         fontWeight = FontWeight.SemiBold,
         textAlign = TextAlign.Center,
       )
@@ -270,7 +270,7 @@ internal fun TurnFooterRow(
   Row(
     modifier = modifier.fillMaxWidth().heightIn(min = 28.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     val duration = item.durationMillis
     val backgroundTasks = status.backgroundTasks
@@ -278,7 +278,7 @@ internal fun TurnFooterRow(
       FooterText(durationText(duration))
       return@Row
     }
-    SimmeringPot(size = PipkinTokens.IconSize.sm)
+    SimmeringPot(size = OopbotTokens.IconSize.sm)
     RunningElapsed(item.startedAt)
     val localModel = status.chat?.takeIf { duration == null }?.let { localModelActivity(it, status.model) }
     if (localModel != null) {
@@ -303,11 +303,11 @@ private fun FooterText(text: String, modifier: Modifier = Modifier, maxLines: In
   Text(
     text = text,
     modifier = modifier,
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
     maxLines = maxLines,
     overflow = TextOverflow.Ellipsis,
-    style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+    style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
   )
 }
 

@@ -9,7 +9,7 @@ import io.jeph.oopbot.host.GitDiff
 import io.jeph.oopbot.host.GitFile
 import io.jeph.oopbot.host.GitFileKind
 import io.jeph.oopbot.host.GitHunk
-import io.jeph.oopbot.ui.theme.PipkinColors
+import io.jeph.oopbot.ui.theme.OopbotColors
 
 internal enum class DiffLineKind { Context, Added, Removed }
 
@@ -31,7 +31,7 @@ internal sealed interface DiffRow {
 
 /** A side's highlighted lines, coloured for [theme]'s palette. */
 internal class SideHighlight(
-  val theme: PipkinColors,
+  val theme: OopbotColors,
   val oldLines: List<AnnotatedString>,
   val newLines: List<AnnotatedString>,
 )

@@ -15,7 +15,7 @@ import io.jeph.oopbot.agent.AgentRegistry
 import io.jeph.oopbot.agent.IdleStop
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** How many chats keep their agent running at once, and how long an idle one keeps it. */
 @Composable
@@ -52,7 +52,7 @@ internal fun RunningAgentsScreen(onBack: () -> Unit) {
             Modifier.selectable(selected = selected, role = Role.RadioButton) { preferences.setIdleStop(stop) },
         ) {
           if (selected) {
-            LucideIcon(icon = R.drawable.ic_lucide_check, contentDescription = null, tint = pipkinColors.accent)
+            LucideIcon(icon = R.drawable.ic_lucide_check, contentDescription = null, tint = oopbotColors.accent)
           }
         }
       }

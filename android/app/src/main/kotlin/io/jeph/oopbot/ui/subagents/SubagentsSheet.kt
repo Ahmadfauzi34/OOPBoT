@@ -45,19 +45,19 @@ import io.jeph.oopbot.agent.TimelineState
 import io.jeph.oopbot.agent.askingSubagent
 import io.jeph.oopbot.ui.components.CapsLabel
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.components.OopbotSheet
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 
 private const val SHEET_MAX_HEIGHT = 0.9f
 private val RING_SIZE = 14.dp
 
 /**
- * [process]'s subagents as its [timeline] shows them now. Standing aside, Pipkin subagents lists no runs, so the chat
+ * [process]'s subagents as its [timeline] shows them now. Standing aside, OOPBoT subagents lists no runs, so the chat
  * shows no Subagents tab and names no subagent as a question's asker, and of its `subagent` calls only the finished
- * ones Pipkin subagents made draw as subagents.
+ * ones OOPBoT subagents made draw as subagents.
  */
 @Composable
 internal fun rememberChatSubagents(process: AgentProcess, timeline: TimelineState): ChatSubagents {
@@ -66,7 +66,7 @@ internal fun rememberChatSubagents(process: AgentProcess, timeline: TimelineStat
   val standingAside by process.subagentsStandingAside.collectAsStateWithLifecycle()
   val cutOff by process.subagentsCutOff.collectAsStateWithLifecycle()
   return remember(runs, timeline, busy, standingAside, cutOff) {
-    val tool = if (standingAside) SubagentTool.Other else SubagentTool.Pipkin
+    val tool = if (standingAside) SubagentTool.Other else SubagentTool.Oopbot
     ChatSubagents(runs, askingSubagent(timeline, runs), busy, tool, cutOff)
   }
 }
@@ -87,7 +87,7 @@ internal fun SubagentsSheet(
   onDismiss: () -> Unit,
 ) {
   val groups = subagents.groups()
-  PipkinSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) { dismiss ->
     LaunchedEffect(subagents.runs.isEmpty()) { if (subagents.runs.isEmpty()) dismiss {} }
     SheetHeader(subagents)
     LazyColumn(modifier = Modifier.weight(1f, fill = false)) {
@@ -98,7 +98,7 @@ internal fun SubagentsSheet(
       group(R.string.subagents_group_finished, groups.finished, row)
     }
     if (subagents.active > 0) {
-      Box(modifier = Modifier.padding(PipkinTokens.Spacing.s16)) {
+      Box(modifier = Modifier.padding(OopbotTokens.Spacing.s16)) {
         StopButton(
           label = stringResource(R.string.subagents_stop_all),
           onClick = onStopAll,
@@ -115,7 +115,7 @@ internal fun SubagentsSheet(
  */
 @Composable
 private fun SheetHeader(subagents: ChatSubagents) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val numbers = remember { NumberFormat.getIntegerInstance() }
   val runs = subagents.runs.size
   val running = subagents.running
@@ -129,24 +129,24 @@ private fun SheetHeader(subagents: ChatSubagents) {
   ).joinToString(stringResource(R.string.separator_dot))
   Row(
     modifier = Modifier.padding(
-      start = PipkinTokens.Spacing.s16,
-      end = PipkinTokens.Spacing.s16,
-      bottom = PipkinTokens.Spacing.s12,
+      start = OopbotTokens.Spacing.s16,
+      end = OopbotTokens.Spacing.s16,
+      bottom = OopbotTokens.Spacing.s12,
     ),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     LucideIcon(
       icon = R.drawable.ic_lucide_bot,
       contentDescription = null,
-      size = PipkinTokens.IconSize.md,
+      size = OopbotTokens.IconSize.md,
       tint = colors.accent,
     )
     Column(modifier = Modifier.weight(1f)) {
       Text(
         text = stringResource(R.string.subagents_title),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.lg,
+        fontSize = OopbotTokens.FontSize.lg,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -155,7 +155,7 @@ private fun SheetHeader(subagents: ChatSubagents) {
       Text(
         text = summary,
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
       )
@@ -172,21 +172,21 @@ private fun LazyListScope.group(
 ) {
   if (runs.isEmpty()) return
   item(key = "group:$label") {
-    val colors = pipkinColors
+    val colors = oopbotColors
     CapsLabel(
       text = stringResource(label),
       color = if (warning) colors.dotWarning else colors.foregroundMuted,
       modifier = Modifier.padding(
-        start = PipkinTokens.Spacing.s16,
-        end = PipkinTokens.Spacing.s16,
-        top = PipkinTokens.Spacing.s12,
-        bottom = PipkinTokens.Spacing.s6,
+        start = OopbotTokens.Spacing.s16,
+        end = OopbotTokens.Spacing.s16,
+        top = OopbotTokens.Spacing.s12,
+        bottom = OopbotTokens.Spacing.s6,
       ),
     )
   }
   items(runs, key = { it.id }) { run ->
     Column {
-      HorizontalDivider(color = pipkinColors.border)
+      HorizontalDivider(color = oopbotColors.border)
       row(run)
     }
   }
@@ -198,16 +198,16 @@ private fun LazyListScope.group(
  */
 @Composable
 private fun RunRow(run: SubagentRun, subagents: ChatSubagents, question: String?, onOpen: (String) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val phase = subagents.phase(run)
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 56.dp)
       .clickable(onClickLabel = stringResource(R.string.subagent_open)) { onOpen(run.toolCallId) }
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.Top,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     PhaseIcon(phase, Modifier.padding(top = 3.dp))
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -218,7 +218,7 @@ private fun RunRow(run: SubagentRun, subagents: ChatSubagents, question: String?
           if (run.description.isNotEmpty()) append(separator + run.description)
         },
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -227,14 +227,14 @@ private fun RunRow(run: SubagentRun, subagents: ChatSubagents, question: String?
     Text(
       text = runTime(run).orEmpty(),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
-      style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+      fontSize = OopbotTokens.FontSize.sm,
+      style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
       maxLines = 1,
     )
     LucideIcon(
       icon = R.drawable.ic_lucide_chevron_right,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
       tint = colors.foregroundMuted,
     )
   }
@@ -246,7 +246,7 @@ private fun RunRow(run: SubagentRun, subagents: ChatSubagents, question: String?
  */
 @Composable
 private fun RunLine(run: SubagentRun, phase: SubagentPhase, question: String?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val separator = stringResource(R.string.separator_dot)
   val numbers = remember { NumberFormat.getIntegerInstance() }
   val (text, color, code) = when (phase) {
@@ -281,8 +281,8 @@ private fun RunLine(run: SubagentRun, phase: SubagentPhase, question: String?) {
   Text(
     text = text,
     color = color,
-    fontSize = if (code) 11.5.sp else PipkinTokens.FontSize.sm,
-    fontFamily = if (code) PipkinFonts.mono else null,
+    fontSize = if (code) 11.5.sp else OopbotTokens.FontSize.sm,
+    fontFamily = if (code) OopbotFonts.mono else null,
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
   )
@@ -322,7 +322,7 @@ private fun RingDot(color: Color) {
 /** An outlined red button with a square, which stops subagents. */
 @Composable
 internal fun StopButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val shape = RoundedCornerShape(20.dp)
   Row(
     modifier = modifier
@@ -330,20 +330,20 @@ internal fun StopButton(label: String, onClick: () -> Unit, modifier: Modifier =
       .clip(shape)
       .border(1.5.dp, colors.destructive, shape)
       .clickable(onClick = onClick)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6, Alignment.CenterHorizontally),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6, Alignment.CenterHorizontally),
   ) {
     LucideIcon(
       icon = R.drawable.ic_lucide_square,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
       tint = colors.destructive,
     )
     Text(
       text = label,
       color = colors.destructive,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
       maxLines = 1,
     )

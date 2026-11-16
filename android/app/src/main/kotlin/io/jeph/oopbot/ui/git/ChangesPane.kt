@@ -42,7 +42,7 @@ import io.jeph.oopbot.data.folderKey
 import io.jeph.oopbot.host.GitCommit
 import io.jeph.oopbot.host.GitDiffMode
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.files.Spinner
@@ -52,8 +52,8 @@ import io.jeph.oopbot.ui.remote.AutoReconnect
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /**
@@ -142,26 +142,26 @@ internal fun ChangesPane(
  */
 @Composable
 internal fun TrustPrompt(onTrust: () -> Unit, onNotNow: () -> Unit, modifier: Modifier = Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
-    modifier = modifier.fillMaxSize().padding(PipkinTokens.Spacing.s24),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12, Alignment.CenterVertically),
+    modifier = modifier.fillMaxSize().padding(OopbotTokens.Spacing.s24),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12, Alignment.CenterVertically),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Text(
       text = stringResource(R.string.git_trust_title),
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.title,
+      fontSize = OopbotTokens.FontSize.title,
       fontWeight = FontWeight.Bold,
       textAlign = TextAlign.Center,
     )
     Text(
       text = stringResource(R.string.git_trust_text),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       textAlign = TextAlign.Center,
     )
-    Spacer(modifier = Modifier.height(PipkinTokens.Spacing.s4))
+    Spacer(modifier = Modifier.height(OopbotTokens.Spacing.s4))
     PrimaryButton(text = stringResource(R.string.git_trust), onClick = onTrust, modifier = Modifier.fillMaxWidth())
     SecondaryButton(text = stringResource(R.string.git_not_now), onClick = onNotNow, modifier = Modifier.fillMaxWidth())
   }
@@ -179,7 +179,7 @@ private fun ChangesToolbar(
   onSelectMode: (GitDiffMode) -> Unit,
   onRefresh: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   var modesOpen by remember { mutableStateOf(false) }
   var optionsOpen by remember { mutableStateOf(false) }
   val loaded = workspace.changes as? ChangesContent.Loaded
@@ -187,9 +187,9 @@ private fun ChangesToolbar(
     modifier = Modifier
       .fillMaxWidth()
       .height(48.dp)
-      .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s8),
+      .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     branchLabel(loaded?.changes?.branch)?.let { BranchName(it, Modifier.weight(1f, fill = false)) }
     ModeTrigger(mode, onClick = { modesOpen = true })
@@ -221,8 +221,8 @@ private fun BranchName(branch: String, modifier: Modifier) {
   Text(
     text = branch,
     modifier = modifier,
-    color = pipkinColors.foreground,
-    fontSize = PipkinTokens.FontSize.base,
+    color = oopbotColors.foreground,
+    fontSize = OopbotTokens.FontSize.base,
     fontWeight = FontWeight.Bold,
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
@@ -234,7 +234,7 @@ private fun BranchName(branch: String, modifier: Modifier) {
 private fun RefreshButton(refreshing: Boolean, onRefresh: () -> Unit) {
   if (refreshing) {
     Box(modifier = Modifier.size(TOOLBAR_BUTTON_SIZE), contentAlignment = Alignment.Center) {
-      Spinner(PipkinTokens.IconSize.md, stringResource(R.string.git_refreshing))
+      Spinner(OopbotTokens.IconSize.md, stringResource(R.string.git_refreshing))
     }
   } else {
     RoundIconButton(
@@ -242,7 +242,7 @@ private fun RefreshButton(refreshing: Boolean, onRefresh: () -> Unit) {
       contentDescription = stringResource(R.string.git_refresh),
       onClick = onRefresh,
       modifier = Modifier.size(TOOLBAR_BUTTON_SIZE),
-      tint = pipkinColors.foregroundMuted,
+      tint = oopbotColors.foregroundMuted,
     )
   }
 }
@@ -250,7 +250,7 @@ private fun RefreshButton(refreshing: Boolean, onRefresh: () -> Unit) {
 /** The comparison selector: its name and a small chevron, in an outlined pill. */
 @Composable
 private fun ModeTrigger(mode: GitDiffMode, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val description = stringResource(R.string.git_diff_mode)
   Row(
     modifier = Modifier
@@ -259,15 +259,15 @@ private fun ModeTrigger(mode: GitDiffMode, onClick: () -> Unit) {
       .border(1.dp, colors.border, CircleShape)
       .clickable(onClick = onClick)
       .semantics { contentDescription = description }
-      .padding(start = PipkinTokens.Spacing.s12, end = PipkinTokens.Spacing.s8),
+      .padding(start = OopbotTokens.Spacing.s12, end = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
   ) {
-    Text(text = modeLabel(mode), color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.meta, maxLines = 1)
+    Text(text = modeLabel(mode), color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.meta, maxLines = 1)
     LucideIcon(
       icon = R.drawable.ic_lucide_chevron_down,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
       tint = colors.foregroundMuted,
     )
   }
@@ -289,7 +289,7 @@ private fun ModeSheet(
   onSelect: (GitDiffMode) -> Unit,
   onDismiss: () -> Unit,
 ) {
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     for (option in GitDiffMode.entries) {
       MenuRow(
         label = modeLabel(option),
@@ -316,7 +316,7 @@ private fun OptionsSheet(workspace: GitWorkspace, onDismiss: () -> Unit) {
   val wrapLines by preferences.diffWrapLines.collectAsStateWithLifecycle()
   val paths = (workspace.changes as? ChangesContent.Loaded)?.document?.sections.orEmpty().map { it.file.path }
   val allCollapsed = paths.isNotEmpty() && workspace.collapsed.containsAll(paths)
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     MenuRow(
       label = stringResource(if (allCollapsed) R.string.git_expand_all else R.string.git_collapse_all),
       description = null,
@@ -328,7 +328,7 @@ private fun OptionsSheet(workspace: GitWorkspace, onDismiss: () -> Unit) {
       checked = false,
       onClick = { dismiss { workspace.collapsed = if (allCollapsed) emptySet() else paths.toSet() } },
     )
-    HorizontalDivider(thickness = 1.dp, color = pipkinColors.border)
+    HorizontalDivider(thickness = 1.dp, color = oopbotColors.border)
     MenuRow(
       label = stringResource(if (hideWhitespace) R.string.git_show_whitespace else R.string.git_hide_whitespace),
       description = null,
@@ -349,24 +349,24 @@ private fun OptionsSheet(workspace: GitWorkspace, onDismiss: () -> Unit) {
 /** A sheet menu item: its icon, its label over an optional [description], and a check while [checked]. */
 @Composable
 private fun MenuRow(label: String, description: String?, icon: Int?, checked: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 44.dp)
       .clickable(onClick = onClick)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s6),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s6),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     if (icon != null) LucideIcon(icon = icon, contentDescription = null, tint = colors.foregroundMuted)
     Column(modifier = Modifier.weight(1f)) {
-      Text(text = label, color = colors.foreground, fontSize = PipkinTokens.FontSize.base)
+      Text(text = label, color = colors.foreground, fontSize = OopbotTokens.FontSize.base)
       if (description != null) {
         Text(
           text = description,
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )

@@ -59,7 +59,7 @@ internal sealed interface SetupAction {
   data object OpenLocalModels : SetupAction
 }
 
-/** What Android reports about Termux and Pipkin's permissions; re-read whenever Pipkin comes back. */
+/** What Android reports about Termux and OOPBoT's permissions; re-read whenever OOPBoT comes back. */
 internal data class DeviceChecks(
   val termux: TermuxInstall.Status,
   val termuxVersion: String?,
@@ -68,13 +68,13 @@ internal data class DeviceChecks(
   val runCommandGranted: Boolean,
   /** Null below API 33, where notifications need no runtime permission and the step is hidden. */
   val notificationsGranted: Boolean?,
-  /** Pipkin is exempt from battery optimization, so Android keeps its connection to the agent while the screen is off. */
+  /** OOPBoT is exempt from battery optimization, so Android keeps its connection to the agent while the screen is off. */
   val backgroundAllowed: Boolean,
   /** Termux is exempt from battery optimization, so Android doesn't stop it, and Pi running in it, mid-task. */
   val termuxBackgroundAllowed: Boolean,
   /** Android can ask for [termuxBackgroundAllowed] in a prompt, rather than the user finding it in Termux's app info. */
   val termuxBackgroundPromptable: Boolean,
-  /** Pipkin holds a pairing key for a helper in the Play build of Termux. */
+  /** OOPBoT holds a pairing key for a helper in the Play build of Termux. */
   val helperPaired: Boolean,
   /** Termux was reinstalled or swapped since a host last ran, so its setup is gone. */
   val termuxChanged: Boolean,
@@ -117,9 +117,9 @@ internal class LiveDeviceChecks(initial: DeviceChecks) {
 }
 
 /**
- * Re-reads [DeviceChecks] when Pipkin resumes or its window regains focus (a permission dialog or the notification
+ * Re-reads [DeviceChecks] when OOPBoT resumes or its window regains focus (a permission dialog or the notification
  * shade closing), then every [RECHECK_MILLIS] for a few seconds, since Android reports some changes late. With [poll]
- * it keeps reading while resumed, for steps finished in another app that may not bring Pipkin back.
+ * it keeps reading while resumed, for steps finished in another app that may not bring OOPBoT back.
  */
 @Composable
 internal fun rememberDeviceChecks(poll: Boolean = false): LiveDeviceChecks {
@@ -278,7 +278,7 @@ internal data class OnboardingState(
     // A hello from before the reinstall doesn't count: the new Termux hasn't run anything yet.
     checks.termuxChanged -> StepStatus.Pending
 
-    // Without its key, Pipkin can't reach the helper the setup started.
+    // Without its key, OOPBoT can't reach the helper the setup started.
     checks.termux.isPlay && !checks.helperPaired -> StepStatus.Pending
 
     currentHello != null || checks.termuxReached -> StepStatus.Done
@@ -334,12 +334,12 @@ internal fun rememberOnboardingState(graph: AppGraph, checks: DeviceChecks): Onb
 }
 
 /**
- * Starts the Pi install as soon as its prerequisites are met, and retries a failed one when Pipkin comes back (the
+ * Starts the Pi install as soon as its prerequisites are met, and retries a failed one when OOPBoT comes back (the
  * user may have fixed the problem in Termux). Refreshes sign-in status once Pi is installed.
  */
 @Composable
 internal fun AutoInstall(graph: AppGraph, state: OnboardingState) {
-  // A failure stops the automatic start until Pipkin resumes, rather than relaunching in a loop.
+  // A failure stops the automatic start until OOPBoT resumes, rather than relaunching in a loop.
   LaunchedEffect(state.shouldAutoInstall && state.currentError == null) {
     if (state.shouldAutoInstall && state.currentError == null) SetupProgress.install(graph)
   }

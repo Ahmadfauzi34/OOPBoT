@@ -17,8 +17,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.SessionInfo
 import io.jeph.oopbot.ui.components.DialogConfirm
 import io.jeph.oopbot.ui.components.DialogTextField
-import io.jeph.oopbot.ui.components.PipkinDialog
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotDialog
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SheetRow
 
 /**
@@ -36,7 +36,7 @@ internal fun SessionActions(
   var menuOpen by rememberSaveable(session.path) { mutableStateOf(true) }
   var renaming by rememberSaveable(session.path) { mutableStateOf(false) }
   if (menuOpen) {
-    PipkinSheet(
+    OopbotSheet(
       onDismissRequest = {
         menuOpen = false
         if (!renaming) onDismiss()
@@ -85,7 +85,7 @@ internal fun RenameDialog(title: String, initial: String, onDismiss: () -> Unit,
   var name by rememberSaveable(stateSaver = TextFieldValue.Saver) {
     mutableStateOf(TextFieldValue(initial, TextRange(initial.length)))
   }
-  PipkinDialog(
+  OopbotDialog(
     title = title,
     confirm = DialogConfirm(
       label = stringResource(R.string.shell_rename_save),

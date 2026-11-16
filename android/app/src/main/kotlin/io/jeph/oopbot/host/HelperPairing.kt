@@ -8,7 +8,7 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * The pairing keys Pipkin shares with its helper in Termux's Play build: [Keys.current], which a helper has
+ * The pairing keys OOPBoT shares with its helper in Termux's Play build: [Keys.current], which a helper has
  * authenticated with, and [Keys.pending], handed out by the latest setup command and not yet seen in use. Kept in
  * `noBackupFilesDir`, so a restored backup never carries them to another device.
  */
@@ -23,7 +23,7 @@ internal object HelperPairing {
     val all: List<ByteArray> get() = listOfNotNull(current, pending)
   }
 
-  /** A helper holds, or is being given, a key Pipkin knows. */
+  /** A helper holds, or is being given, a key OOPBoT knows. */
   fun isPaired(context: Context): Boolean = keys(context).all.isNotEmpty()
 
   fun clear(context: Context) = Store(file(context)).clear()
@@ -66,7 +66,7 @@ internal object HelperPairing {
       } catch (_: JSONException) {
         Keys(null, null)
       } catch (_: IllegalArgumentException) {
-        // Not hex: only Pipkin writes this file, so it's damaged; pairing starts over.
+        // Not hex: only OOPBoT writes this file, so it's damaged; pairing starts over.
         Keys(null, null)
       }
     }

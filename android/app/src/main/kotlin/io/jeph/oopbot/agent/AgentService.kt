@@ -19,7 +19,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 
 /**
- * User-started on-device coding agent sessions running in Termux; keeps Pipkin's connection to Pi
+ * User-started on-device coding agent sessions running in Termux; keeps OOPBoT's connection to Pi
  * alive and offers Stop. Foreground service plus partial wake lock, held only while active.
  */
 class AgentService : Service() {
@@ -84,10 +84,10 @@ class AgentService : Service() {
     const val ACTION_BUSY = "io.jeph.oopbot.action.BUSY"
     const val ACTION_IDLE = "io.jeph.oopbot.action.IDLE"
     const val ACTION_STOP = "io.jeph.oopbot.action.STOP"
-    private const val TAG = "Pipkin"
+    private const val TAG = "OOPBoT"
     private const val CHANNEL = "agent"
     private const val NOTIFICATION_ID = 1
-    private const val WAKE_TAG = "Pipkin:Agent"
+    private const val WAKE_TAG = "OOPBoT:Agent"
     private const val WAKE_LEASE_MILLIS = 20 * 60_000L
     private const val WAKE_RENEW_MILLIS = 10 * 60_000L
 
@@ -97,7 +97,7 @@ class AgentService : Service() {
     private fun intent(context: Context, action: String) = Intent(context, AgentService::class.java).setAction(action)
 
     /**
-     * Says what keeps Pipkin working: chats, with Stop; chats' background tasks alone, with Stop, which stops them too;
+     * Says what keeps OOPBoT working: chats, with Stop; chats' background tasks alone, with Stop, which stops them too;
      * or else, while only terminals run commands, the terminal notice without Stop, which would not stop them. Sign-in
      * and Pi installs show the chats' notice.
      */
@@ -129,7 +129,7 @@ class AgentService : Service() {
         .build()
     }
 
-    /** Re-posts the notification after what keeps Pipkin working changed; nothing while the service is stopped. */
+    /** Re-posts the notification after what keeps OOPBoT working changed; nothing while the service is stopped. */
     fun refresh(context: Context) {
       if (!foreground) return
       context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(context))
@@ -138,7 +138,7 @@ class AgentService : Service() {
     /**
      * Active → foreground with wake lock; inactive → release and stop. Safe from any thread.
      * Returns false when Android refused the start (`ForegroundServiceStartNotAllowedException`
-     * on API 31+, or a background start limit); work continues without the service, but Pipkin
+     * on API 31+, or a background start limit); work continues without the service, but OOPBoT
      * may be killed in the background.
      */
     fun update(context: Context, active: Boolean): Boolean = try {

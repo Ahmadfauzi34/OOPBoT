@@ -50,15 +50,15 @@ import io.jeph.oopbot.host.SessionInfo
 import io.jeph.oopbot.ui.ShellActions
 import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SnackbarStackOverlay
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.components.SwipeAway
 import io.jeph.oopbot.ui.components.scrollFades
 import io.jeph.oopbot.ui.sidebar.pathTextStyle
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.workspace.Pane
 import io.jeph.oopbot.workspace.WorkspaceTab
 
@@ -95,7 +95,7 @@ internal fun WorkspaceTabsSheet(
   // A short window, such as a phone on its side, has no room for the tiles under the tabs without squeezing the tabs
   // out, so there the tiles scroll at the end of the list instead.
   val pinActions = LocalWindowInfo.current.containerDpSize.height >= PINNED_ACTIONS_MIN_HEIGHT
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     // A chat opens before the sheet closes, since a chat that can't open keeps it open with a notice. The sheet then
     // keeps showing what it showed, so the opened chat doesn't reorder the rows or swap the tiles as it slides away.
     val closeOnOpened = {
@@ -148,15 +148,15 @@ internal fun WorkspaceTabsSheet(
  */
 @Composable
 private fun TabsSheetTitle(name: String, path: String, remote: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
     modifier = Modifier.padding(
       start = 20.dp,
       end = 20.dp,
-      top = PipkinTokens.Spacing.s4,
-      bottom = PipkinTokens.Spacing.s12,
+      top = OopbotTokens.Spacing.s4,
+      bottom = OopbotTokens.Spacing.s12,
     ),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
   ) {
     Text(
       text = name,
@@ -170,19 +170,19 @@ private fun TabsSheetTitle(name: String, path: String, remote: Boolean) {
     if (path == name) return@Column
     Row(
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
     ) {
       LucideIcon(
         icon = if (remote) R.drawable.ic_lucide_server else R.drawable.ic_lucide_folder,
         contentDescription = null,
-        size = PipkinTokens.IconSize.sm,
+        size = OopbotTokens.IconSize.sm,
         tint = colors.foregroundMuted,
       )
       Text(
         text = path,
         style = pathTextStyle,
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.meta,
+        fontSize = OopbotTokens.FontSize.meta,
         maxLines = 1,
         overflow = TextOverflow.StartEllipsis,
       )
@@ -197,7 +197,7 @@ private fun TabsLabels() {
     modifier = Modifier
       .fillMaxWidth()
       .padding(horizontal = 20.dp)
-      .padding(bottom = PipkinTokens.Spacing.s6),
+      .padding(bottom = OopbotTokens.Spacing.s6),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     SectionLabel(stringResource(R.string.shell_tabs_label), Modifier.weight(1f))
@@ -303,14 +303,14 @@ private fun TabList(
   // shown terminal closes, would land just above the view; going back to the top keeps it in sight.
   val shownKey = tabs.shownChat?.path ?: tabs.shown.tab?.key
   LaunchedEffect(shownKey) { listState.requestScrollToItem(0) }
-  val fadeTo = pipkinColors.surface1
+  val fadeTo = oopbotColors.surface1
   val chatRow: @Composable LazyItemScope.(SessionInfo) -> Unit = { session ->
     val elsewhere = session.path == tabs.shown.elsewhereChat
     SwipeAway(
       leaving = session.path in archiving.leaving,
       onSwiped = { archiving.archive(session) },
       onLeft = { archiving.onLeft(session) },
-      containerColor = pipkinColors.surface1,
+      containerColor = oopbotColors.surface1,
       modifier = Modifier.animateItem(),
     ) {
       val process = processes[ChatKey.session(session.path)]
@@ -340,7 +340,7 @@ private fun LazyListScope.tabRows(tabs: WorkspaceTabs, closing: TabClosing, call
       leaving = tab.key in closing.leaving,
       onSwiped = { closing.close(tab) },
       onLeft = { closing.onLeft(tab) },
-      containerColor = pipkinColors.surface1,
+      containerColor = oopbotColors.surface1,
       modifier = Modifier.animateItem(),
       mark = R.drawable.ic_lucide_x,
     ) {

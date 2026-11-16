@@ -32,8 +32,8 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.PotIcon
 import io.jeph.oopbot.ui.components.roundButton
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 
 /**
@@ -80,7 +80,7 @@ internal fun PaneHeader(
  */
 @Composable
 internal fun TabsButton(tabs: Int, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val description = pluralStringResource(R.plurals.shell_tabs_button, tabs, tabs)
   val number = remember(tabs) { NumberFormat.getIntegerInstance().format(tabs.coerceAtMost(MAX_SHOWN_TABS)) }
   val count = if (tabs > MAX_SHOWN_TABS) stringResource(R.string.shell_tabs_more, number) else number
@@ -105,7 +105,7 @@ internal fun TabsButton(tabs: Int, onClick: () -> Unit) {
       color = colors.foreground,
       fontSize = if (count.length > 2) 7.sp else 9.sp,
       fontWeight = FontWeight.ExtraBold,
-      style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR, platformStyle = NO_FONT_PADDING),
+      style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR, platformStyle = NO_FONT_PADDING),
       maxLines = 1,
     )
   }
@@ -119,7 +119,7 @@ internal fun SidebarButton(onToggleSidebar: () -> Unit) {
     modifier = Modifier
       .size(HeaderButtonSize)
       .clip(POT_SHAPE)
-      .background(pipkinColors.surface2)
+      .background(oopbotColors.surface2)
       .clickable(role = Role.Button, onClick = onToggleSidebar)
       .semantics { contentDescription = description },
     contentAlignment = Alignment.Center,

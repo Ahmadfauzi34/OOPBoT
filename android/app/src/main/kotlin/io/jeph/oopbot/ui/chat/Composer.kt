@@ -73,13 +73,13 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SheetRow
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.atMostHalfTall
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import org.json.JSONObject
 
 private enum class PrimaryAction { Send, Stop, Idle, Sending }
@@ -116,7 +116,7 @@ internal fun Composer(
   subagents: SubagentsTab?,
   modifier: Modifier = Modifier,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val keyboard = LocalSoftwareKeyboardController.current
   val focus = LocalFocusManager.current
   val hideKeyboard = {
@@ -137,10 +137,10 @@ internal fun Composer(
         .clip(shape)
         .background(colors.surface1)
         .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
-        .padding(start = 10.dp, end = 10.dp, bottom = PipkinTokens.Spacing.s4),
+        .padding(start = 10.dp, end = 10.dp, bottom = OopbotTokens.Spacing.s4),
     contentAlignment = Alignment.TopCenter,
   ) {
-    Column(modifier = Modifier.widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth()) {
+    Column(modifier = Modifier.widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth()) {
       WidgetTabStrip(above, tabs, belowEditor = false, subagents = subagents)
       // Not clipped: the attachment remove buttons overhang their thumbnails. Weighted, so the tab strips keep their
       // height when the composer has to shrink.
@@ -154,7 +154,7 @@ internal fun Composer(
         }
         // Weighted, so the tray and toolbar are measured first and long drafts scroll instead of pushing them off.
         ComposerField(controller, acceptsImages(model), onRan = hideKeyboard, Modifier.weight(1f, fill = false))
-        Spacer(modifier = Modifier.height(PipkinTokens.Spacing.s8))
+        Spacer(modifier = Modifier.height(OopbotTokens.Spacing.s8))
         ComposerToolbar(
           controller = controller,
           model = model,
@@ -182,14 +182,14 @@ private fun ComposerToolbar(
 ) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     // The left group takes what the trailing buttons leave, and inside it the model chip is
     // measured last, so on a narrow screen the model name is cut before send is pushed off.
     Row(
       modifier = Modifier.weight(1f),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
     ) {
       AttachButton(controller, model)
       ModelChip(model, onOpenModelSheet, Modifier.weight(1f, fill = false))
@@ -227,10 +227,10 @@ private fun AttachmentTray(attachments: List<Attachment>, onRemove: (Attachment)
     modifier =
       Modifier
         .fillMaxWidth()
-        .padding(bottom = PipkinTokens.Spacing.s4)
+        .padding(bottom = OopbotTokens.Spacing.s4)
         .horizontalScroll(rememberScrollState())
         // Inside the scroll, which clips: room for the remove badges that overhang each chip by 8dp.
-        .padding(start = PipkinTokens.Spacing.s8, top = PipkinTokens.Spacing.s12),
+        .padding(start = OopbotTokens.Spacing.s8, top = OopbotTokens.Spacing.s12),
     horizontalArrangement = Arrangement.spacedBy(10.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
@@ -260,7 +260,7 @@ private fun AttachmentThumbnail(attachment: Attachment.Image, onRemove: () -> Un
 /** A 46dp tray chip for a picked file: icon, name and size, with the same remove badge as images. */
 @Composable
 private fun FileChip(file: Attachment.File, onRemove: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   val shape = RoundedCornerShape(13.dp)
   Box {
@@ -272,14 +272,14 @@ private fun FileChip(file: Attachment.File, onRemove: () -> Unit) {
           .background(colors.surface2, shape)
           .padding(horizontal = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
-      LucideIcon(icon = R.drawable.ic_lucide_file_text, contentDescription = null, size = PipkinTokens.IconSize.md)
+      LucideIcon(icon = R.drawable.ic_lucide_file_text, contentDescription = null, size = OopbotTokens.IconSize.md)
       Column {
         Text(
           text = file.name,
           color = colors.foreground,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
           maxLines = 1,
           overflow = TextOverflow.MiddleEllipsis,
         )
@@ -297,7 +297,7 @@ private fun FileChip(file: Attachment.File, onRemove: () -> Unit) {
 
 @Composable
 private fun BoxScope.RemoveBadge(onRemove: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(
     modifier =
       Modifier
@@ -313,7 +313,7 @@ private fun BoxScope.RemoveBadge(onRemove: () -> Unit) {
     LucideIcon(
       icon = R.drawable.ic_lucide_x,
       contentDescription = stringResource(R.string.chat_remove_attachment),
-      size = PipkinTokens.IconSize.xs,
+      size = OopbotTokens.IconSize.xs,
     )
   }
 }
@@ -326,9 +326,9 @@ private fun BoxScope.RemoveBadge(onRemove: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ComposerField(controller: ChatController, acceptsImages: Boolean, onRan: () -> Unit, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val style = LocalTextStyle.current.merge(
-    TextStyle(color = colors.foreground, fontSize = PipkinTokens.FontSize.content),
+    TextStyle(color = colors.foreground, fontSize = OopbotTokens.FontSize.content),
   )
   val currentOnRan by rememberUpdatedState(onRan)
   val enterPicks = remember(controller) { controller.slash.enterPicks { currentOnRan() } }
@@ -336,7 +336,7 @@ private fun ComposerField(controller: ChatController, acceptsImages: Boolean, on
     state = controller.draft,
     modifier = modifier
       .fillMaxWidth()
-      .padding(start = PipkinTokens.Spacing.s6, top = PipkinTokens.Spacing.s12, end = PipkinTokens.Spacing.s6)
+      .padding(start = OopbotTokens.Spacing.s6, top = OopbotTokens.Spacing.s12, end = OopbotTokens.Spacing.s6)
       .atMostHalfTall()
       .heightIn(min = 30.dp)
       .onFocusChanged { controller.composerFocused = it.isFocused }
@@ -397,14 +397,14 @@ private fun AttachButton(controller: ChatController, model: JSONObject?) {
     icon = R.drawable.ic_lucide_plus,
     contentDescription = stringResource(R.string.chat_attach),
     onClick = { sheetOpen = true },
-    background = pipkinColors.surface2,
-    tint = pipkinColors.foregroundMuted,
+    background = oopbotColors.surface2,
+    tint = oopbotColors.foregroundMuted,
     iconSize = ICON_SIZE,
     modifier = Modifier.size(TOOL_SIZE),
   )
   if (!sheetOpen) return
   val acceptsImages = acceptsImages(model)
-  PipkinSheet(onDismissRequest = { sheetOpen = false }) { dismiss ->
+  OopbotSheet(onDismissRequest = { sheetOpen = false }) { dismiss ->
     SheetRow(
       label = stringResource(R.string.chat_attach_photos),
       icon = R.drawable.ic_lucide_image,
@@ -425,7 +425,7 @@ private fun AttachButton(controller: ChatController, model: JSONObject?) {
 /** Send on a cobalt disc, greyed out while it can't send, or Stop on an inverse one; a pot simmers while a command runs. */
 @Composable
 private fun PrimaryButton(action: PrimaryAction, onSend: () -> Unit, onStop: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   when (action) {
     PrimaryAction.Sending -> Box(
       modifier = Modifier.size(PRIMARY_SIZE).clip(CircleShape).background(colors.accent),

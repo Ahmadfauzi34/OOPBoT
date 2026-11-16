@@ -46,9 +46,9 @@ import io.jeph.oopbot.host.RemoteFailure
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.relativeTime
 
 /**
@@ -66,7 +66,7 @@ internal fun CommitsSection(
   onOpenCommit: (GitCommit) -> Unit,
   onConnect: (() -> Unit)?,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val navigationBar = WindowInsets.navigationBars.asPaddingValues()
   Column(modifier = Modifier.fillMaxWidth().padding(bottom = navigationBar.calculateBottomPadding())) {
     HorizontalDivider(thickness = 1.dp, color = colors.border)
@@ -75,21 +75,21 @@ internal fun CommitsSection(
         .fillMaxWidth()
         .clickable(onClick = onToggle)
         .heightIn(min = 44.dp)
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       LucideIcon(
         icon = R.drawable.ic_lucide_chevron_right,
         contentDescription = null,
         modifier = Modifier.rotate(if (collapsed) 0f else 90f),
-        size = PipkinTokens.IconSize.sm,
+        size = OopbotTokens.IconSize.sm,
         tint = colors.foregroundMuted,
       )
       Text(
         text = stringResource(R.string.git_commits),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.Bold,
       )
       if (content is CommitsContent.Loaded) CommitCount(content.commits.commits.size)
@@ -101,18 +101,18 @@ internal fun CommitsSection(
 /** The number of commits as a small accent badge, read out in words. */
 @Composable
 private fun CommitCount(count: Int) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val description = pluralStringResource(R.plurals.git_commits_count, count, count)
   Text(
     text = count.toString(),
     modifier = Modifier
       .semantics { contentDescription = description }
       .background(colors.accentSoft, RoundedCornerShape(9.dp))
-      .padding(horizontal = PipkinTokens.Spacing.s6, vertical = PipkinTokens.Spacing.s2),
+      .padding(horizontal = OopbotTokens.Spacing.s6, vertical = OopbotTokens.Spacing.s2),
     color = colors.accent,
     fontSize = 11.sp,
     fontWeight = FontWeight.Bold,
-    style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+    style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
     maxLines = 1,
   )
 }
@@ -124,12 +124,12 @@ private fun CommitsContentRows(
   onOpenCommit: (GitCommit) -> Unit,
   onConnect: (() -> Unit)?,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val notePadding = Modifier.padding(
-    start = PipkinTokens.Spacing.s16,
-    end = PipkinTokens.Spacing.s16,
-    top = PipkinTokens.Spacing.s4,
-    bottom = PipkinTokens.Spacing.s12,
+    start = OopbotTokens.Spacing.s16,
+    end = OopbotTokens.Spacing.s16,
+    top = OopbotTokens.Spacing.s4,
+    bottom = OopbotTokens.Spacing.s12,
   )
   when (content) {
     CommitsContent.Loading -> CommitsNote(
@@ -149,7 +149,7 @@ private fun CommitsContentRows(
       }
       LazyColumn(
         modifier = Modifier.fillMaxWidth().heightIn(max = listMaxHeight),
-        contentPadding = PaddingValues(bottom = PipkinTokens.Spacing.s8),
+        contentPadding = PaddingValues(bottom = OopbotTokens.Spacing.s8),
       ) {
         itemsIndexed(commits, key = { _, commit -> commit.sha }) { index, commit ->
           CommitRow(commit, isFirst = index == 0, isLast = index == commits.lastIndex, onOpen = {
@@ -173,7 +173,7 @@ private fun CommitsContentRows(
 
 @Composable
 private fun CommitsNote(text: String, color: Color, modifier: Modifier) {
-  Text(text = text, modifier = modifier, color = color, fontSize = PipkinTokens.FontSize.meta)
+  Text(text = text, modifier = modifier, color = color, fontSize = OopbotTokens.FontSize.meta)
 }
 
 /**
@@ -182,7 +182,7 @@ private fun CommitsNote(text: String, color: Color, modifier: Modifier) {
  */
 @Composable
 private fun CommitsFailed(remote: RemoteFailure?, onConnect: (() -> Unit)?, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val text = remote?.text?.localized() ?: stringResource(R.string.git_commits_failed)
   val connect = onConnect?.takeIf { remote?.needsConnect == true }
   if (connect == null) {
@@ -192,9 +192,9 @@ private fun CommitsFailed(remote: RemoteFailure?, onConnect: (() -> Unit)?, modi
   Row(
     modifier = modifier.fillMaxWidth(),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
-    Text(text = text, modifier = Modifier.weight(1f), color = colors.dotDanger, fontSize = PipkinTokens.FontSize.meta)
+    Text(text = text, modifier = Modifier.weight(1f), color = colors.dotDanger, fontSize = OopbotTokens.FontSize.meta)
     PillButton(label = stringResource(R.string.remote_connect), onClick = connect, tone = PillTone.Tonal)
   }
 }
@@ -202,38 +202,38 @@ private fun CommitsFailed(remote: RemoteFailure?, onConnect: (() -> Unit)?, modi
 /** A commit row: the graph node, the short SHA, the subject, how long ago it was written, a chevron. */
 @Composable
 private fun CommitRow(commit: GitCommit, isFirst: Boolean, isLast: Boolean, onOpen: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .height(IntrinsicSize.Min)
-      .padding(horizontal = PipkinTokens.Spacing.s4)
+      .padding(horizontal = OopbotTokens.Spacing.s4)
       // Rounded less than the rail is inset, so the clip never bites into the rail where rows meet.
-      .clip(RoundedCornerShape(PipkinTokens.Radius.lg))
+      .clip(RoundedCornerShape(OopbotTokens.Radius.lg))
       .clickable(onClick = onOpen)
-      .padding(horizontal = PipkinTokens.Spacing.s12),
+      .padding(horizontal = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     CommitGraphNode(isFirst, isLast)
     Row(
-      modifier = Modifier.weight(1f).padding(vertical = PipkinTokens.Spacing.s8),
+      modifier = Modifier.weight(1f).padding(vertical = OopbotTokens.Spacing.s8),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
     ) {
       Text(
         text = commit.shortSha,
         modifier = Modifier.width(70.dp),
         color = colors.foregroundMuted,
-        fontFamily = PipkinFonts.mono,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontFamily = OopbotFonts.mono,
+        fontSize = OopbotTokens.FontSize.sm,
         maxLines = 1,
       )
       Text(
         text = commit.subject,
         modifier = Modifier.weight(1f),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -241,13 +241,13 @@ private fun CommitRow(commit: GitCommit, isFirst: Boolean, isLast: Boolean, onOp
     Text(
       text = relativeTime(commit.authorTime * 1_000),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
     )
     LucideIcon(
       icon = R.drawable.ic_lucide_chevron_right,
       contentDescription = null,
-      size = PipkinTokens.IconSize.sm,
+      size = OopbotTokens.IconSize.sm,
       tint = colors.foregroundExtraMuted,
     )
   }
@@ -259,7 +259,7 @@ private fun CommitRow(commit: GitCommit, isFirst: Boolean, isLast: Boolean, onOp
  */
 @Composable
 private fun CommitGraphNode(isFirst: Boolean, isLast: Boolean) {
-  val accent = pipkinColors.accent
+  val accent = oopbotColors.accent
   Canvas(modifier = Modifier.width(GRAPH_MARKER_SIZE).fillMaxHeight()) {
     val center = Offset(size.width / 2, size.height / 2)
     if (!(isFirst && isLast)) {

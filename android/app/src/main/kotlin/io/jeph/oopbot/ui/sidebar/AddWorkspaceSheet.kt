@@ -2,7 +2,7 @@ package io.jeph.oopbot.ui.sidebar
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 
 /**
  * Picks a folder to add as a sidebar workspace with [FolderBrowserPane], on the machine last browsed, then slides away.
@@ -17,7 +17,7 @@ internal fun AddWorkspaceSheet(
   onDismiss: () -> Unit,
 ) {
   // A steady share of the screen, so the sheet doesn't resize as folders with more or fewer entries open.
-  PipkinSheet(onDismissRequest = onDismiss, heightFraction = SHEET_HEIGHT_FRACTION) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss, heightFraction = SHEET_HEIGHT_FRACTION) { dismiss ->
     FolderBrowserPane(
       isWorkspace = isWorkspace,
       onOpenHost = { id -> dismiss { onOpenHost(id) } },

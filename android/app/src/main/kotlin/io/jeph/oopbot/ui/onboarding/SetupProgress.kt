@@ -40,7 +40,7 @@ internal enum class SetupStep(val requirement: Requirement) {
 }
 
 /**
- * A failed attempt pinned to the step that fixes it: [failure] when Termux or Pipkin's helper caused it, else
+ * A failed attempt pinned to the step that fixes it: [failure] when Termux or OOPBoT's helper caused it, else
  * [detail], the install's own reason. Neither means the generic install failure text. [command], a literal command,
  * replaces the setup command shown in that step.
  */
@@ -120,7 +120,7 @@ internal object SetupProgress {
 
   /**
    * [literal] when a failure names its own fix, else the installed build's setup command; the Play build's opens a
-   * fresh pairing session each time, which reads assets and may bind Pipkin's server, so it runs off the main thread.
+   * fresh pairing session each time, which reads assets and may bind OOPBoT's server, so it runs off the main thread.
    */
   suspend fun setupCommand(context: Context, literal: String?): String {
     TermuxInstall.installation(context)?.let(context.appGraph.preferences::setSetupCommandCopiedFor)

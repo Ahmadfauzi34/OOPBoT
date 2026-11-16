@@ -29,12 +29,12 @@ import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.ui.auth.LoginSheet
 import io.jeph.oopbot.ui.auth.ProviderLogo
 import io.jeph.oopbot.ui.components.DialogConfirm
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.components.StatusDot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.launch
 
@@ -63,7 +63,7 @@ internal fun SubscriptionScreen(
   val subscription = subscriptions.firstOrNull { it.id == id }
   val name = subscription?.let { stringResource(it.title) } ?: id
   val signedIn = status?.isSignedIn(id)
-  // Reads Pi's files afresh, so changes made outside Pipkin (for example by the agent) show here.
+  // Reads Pi's files afresh, so changes made outside OOPBoT (for example by the agent) show here.
   LaunchedEffect(form) { accounts.refresh() }
   LaunchedEffect(status) { status?.builtin?.firstOrNull { it.id == id }?.let(form::prefill) }
   BackHandler(enabled = form.dirty) { confirmDiscard = true }
@@ -95,7 +95,7 @@ internal fun SubscriptionScreen(
       )
     }
     listOfNotNull(status?.settingsError?.localized(), status?.modelsError?.localized(), refreshError).forEach {
-      SettingsCaption(text = it, color = pipkinColors.destructive)
+      SettingsCaption(text = it, color = oopbotColors.destructive)
     }
   }
   if (signingIn) LoginSheet(providerId = id, onDismiss = { signingIn = false })
@@ -147,7 +147,7 @@ private fun SubscriptionModels(
     onAddModels = onAddModels,
     onOpenModel = onOpenModel,
   )
-  form.formError?.let { SettingsCaption(text = it, color = pipkinColors.destructive) }
+  form.formError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
   SettingsSaveButton(
     label = stringResource(R.string.provider_save),
     saving = form.saving,
@@ -157,7 +157,7 @@ private fun SubscriptionModels(
   SettingsSection(title = null) {
     SettingsRow(
       title = stringResource(if (usesApiKey) R.string.settings_remove_key else R.string.settings_sign_out),
-      titleColor = pipkinColors.destructive,
+      titleColor = oopbotColors.destructive,
       enabled = !busy,
       onClick = { confirmSignOut = true },
     )
@@ -181,7 +181,7 @@ private fun SignOutDialog(name: String, usesApiKey: Boolean, onConfirm: () -> Un
   val title = if (usesApiKey) R.string.settings_remove_key_title else R.string.settings_sign_out_title
   val text = if (usesApiKey) R.string.settings_remove_key_text else R.string.settings_sign_out_text
   val action = if (usesApiKey) R.string.settings_remove_key else R.string.settings_sign_out
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(title, name),
     text = stringResource(text),
     icon = if (usesApiKey) R.drawable.ic_lucide_trash_2 else R.drawable.ic_lucide_log_out,
@@ -218,20 +218,20 @@ private fun SubscriptionStatus(loading: Boolean, signedIn: Boolean?, usesApiKey:
 
 @Composable
 private fun SignedInBadge(label: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .clip(CircleShape)
       .background(colors.successSoft)
-      .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s4),
+      .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     StatusDot(color = colors.dotSuccess)
     Text(
       text = label,
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       fontWeight = FontWeight.SemiBold,
     )
   }

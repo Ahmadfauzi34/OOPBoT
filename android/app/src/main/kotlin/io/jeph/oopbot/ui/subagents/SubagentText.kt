@@ -10,7 +10,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.SubagentRun
 import io.jeph.oopbot.ui.chat.elapsedText
 import io.jeph.oopbot.ui.settings.formatTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.delay
 
 /** The phase as the Subagents list and the subagent screen name it. */
@@ -42,7 +42,7 @@ internal val SubagentPhase.rowLabel: Int?
 /** Cobalt while it works, amber while it waits on the user, green once done, red once failed, muted otherwise. */
 @Composable
 internal fun phaseColor(phase: SubagentPhase): Color {
-  val colors = pipkinColors
+  val colors = oopbotColors
   return when (phase) {
     SubagentPhase.Running -> colors.accent
     SubagentPhase.Asking -> colors.dotWarning

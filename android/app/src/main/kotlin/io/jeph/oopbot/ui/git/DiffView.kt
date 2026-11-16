@@ -53,10 +53,10 @@ import io.jeph.oopbot.syntax.loadGrammar
 import io.jeph.oopbot.ui.components.fileLanguage
 import io.jeph.oopbot.ui.components.highlightCode
 import io.jeph.oopbot.ui.components.splitLines
-import io.jeph.oopbot.ui.theme.PipkinColors
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -79,7 +79,7 @@ internal fun DiffView(
   contentPadding: PaddingValues = PaddingValues(bottom = CARD_GAP),
 ) {
   HighlightEffect(document)
-  val colors = pipkinColors
+  val colors = oopbotColors
   val style = codeStyle()
   val measurer = rememberTextMeasurer()
   val density = LocalDensity.current
@@ -110,14 +110,14 @@ internal fun DiffView(
 /** The code font: 12sp JetBrains Mono on 18sp lines, ligatures off, and left to right in any language. */
 @Composable
 private fun codeStyle(): TextStyle {
-  val colors = pipkinColors
+  val colors = oopbotColors
   return remember(colors) {
     TextStyle(
       color = colors.foreground,
-      fontFamily = PipkinFonts.mono,
-      fontSize = PipkinTokens.FontSize.code,
-      lineHeight = PipkinTokens.LineHeight.code,
-      fontFeatureSettings = PipkinFonts.FEATURES,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
+      fontFeatureSettings = OopbotFonts.FEATURES,
       textDirection = TextDirection.Ltr,
     )
   }
@@ -126,7 +126,7 @@ private fun codeStyle(): TextStyle {
 /** Colours each file of [document] whose grammar is known and that isn't coloured for the current palette yet. */
 @Composable
 private fun HighlightEffect(document: DiffDocument) {
-  val theme = pipkinColors
+  val theme = oopbotColors
   val assets = LocalContext.current.assets
   LaunchedEffect(document, theme) {
     for (section in document.sections) {
@@ -148,7 +148,7 @@ private fun HighlightEffect(document: DiffDocument) {
 
 /** What every row of a file's body is drawn with. */
 private class DiffRowStyle(
-  val colors: PipkinColors,
+  val colors: OopbotColors,
   val code: TextStyle,
   val gutterWidth: Dp,
   val wrapLines: Boolean,
@@ -176,7 +176,7 @@ private fun LazyListScope.sectionRows(section: DiffSection, style: DiffRowStyle)
  * A body row's place in its file's card: inset in the card, which ends below the [last] row, on the well of page
  * colour whose corners round at the [first] and [last] rows. The clip happens only there, so most rows draw no layer.
  */
-private fun Modifier.cardRow(colors: PipkinColors, first: Boolean, last: Boolean): Modifier {
+private fun Modifier.cardRow(colors: OopbotColors, first: Boolean, last: Boolean): Modifier {
   val inCard = padding(horizontal = CARD_MARGIN)
     .fillMaxWidth()
     .background(colors.surface1, if (last) CardBottomShape else RectangleShape)
@@ -199,9 +199,9 @@ private fun HunkHeaderRow(header: String, style: DiffRowStyle, modifier: Modifie
       style = style,
       color = style.colors.foregroundExtraMuted,
       modifier = Modifier.padding(
-        start = PipkinTokens.Spacing.s12,
-        top = PipkinTokens.Spacing.s2,
-        bottom = PipkinTokens.Spacing.s2,
+        start = OopbotTokens.Spacing.s12,
+        top = OopbotTokens.Spacing.s2,
+        bottom = OopbotTokens.Spacing.s2,
       ),
     )
   }
@@ -229,7 +229,7 @@ private fun LineRow(line: DiffRow.Line, highlight: SideHighlight?, style: DiffRo
   Row(modifier = modifier.fillMaxWidth().background(background).then(gutter)) {
     Text(
       text = line.number?.toString().orEmpty(),
-      modifier = Modifier.width(gutterWidth).padding(horizontal = PipkinTokens.Spacing.s8),
+      modifier = Modifier.width(gutterWidth).padding(horizontal = OopbotTokens.Spacing.s8),
       style = style.code,
       color = numberColor,
       textAlign = TextAlign.End,
@@ -240,7 +240,7 @@ private fun LineRow(line: DiffRow.Line, highlight: SideHighlight?, style: DiffRo
       text = text,
       style = style,
       color = colors.foreground,
-      modifier = Modifier.weight(1f).padding(start = PipkinTokens.Spacing.s8),
+      modifier = Modifier.weight(1f).padding(start = OopbotTokens.Spacing.s8),
     )
   }
 }
@@ -258,7 +258,7 @@ private fun highlightedLine(line: DiffRow.Line, highlight: SideHighlight?): Anno
 /** Code that wraps in the width it has, or keeps to one line that the [SideScroller] moves sideways. */
 @Composable
 private fun CodeText(text: AnnotatedString, style: DiffRowStyle, color: Color, modifier: Modifier) {
-  val padded = modifier.padding(end = PipkinTokens.Spacing.s12)
+  val padded = modifier.padding(end = OopbotTokens.Spacing.s12)
   if (style.wrapLines) {
     Text(text = text, modifier = padded, style = style.code, color = color)
     return
@@ -286,16 +286,16 @@ private fun CodeText(text: AnnotatedString, style: DiffRowStyle, color: Color, m
 private fun PlaceholderRow(kind: GitFileKind, modifier: Modifier) {
   Text(
     text = stringResource(if (kind == GitFileKind.Binary) R.string.git_binary else R.string.git_file_too_large),
-    modifier = modifier.fillMaxWidth().padding(PipkinTokens.Spacing.s12),
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    modifier = modifier.fillMaxWidth().padding(OopbotTokens.Spacing.s12),
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
     textAlign = TextAlign.Center,
   )
 }
 
 /** Room for the widest line number of a file plus the gutter's padding. */
 private fun gutterWidth(maxLineNumber: Int, digitWidth: Dp): Dp =
-  digitWidth * maxLineNumber.coerceAtLeast(1).toString().length + PipkinTokens.Spacing.s8 * 2
+  digitWidth * maxLineNumber.coerceAtLeast(1).toString().length + OopbotTokens.Spacing.s8 * 2
 
 /**
  * How far the unwrapped code of every row is scrolled sideways, moved by drags across the document, up to the
@@ -326,18 +326,18 @@ private const val HEADER = "header"
 private val HunkHeaderStyle = SpanStyle(fontStyle = FontStyle.Italic)
 
 /** The space between file cards, and above the first. */
-internal val CARD_GAP = PipkinTokens.Spacing.s12
+internal val CARD_GAP = OopbotTokens.Spacing.s12
 
 /** How far a file card sits in from the list's sides. */
-internal val CARD_MARGIN = PipkinTokens.Spacing.s12
+internal val CARD_MARGIN = OopbotTokens.Spacing.s12
 
-internal val CardShape = RoundedCornerShape(PipkinTokens.Radius.xl)
-internal val CardTopShape = RoundedCornerShape(topStart = PipkinTokens.Radius.xl, topEnd = PipkinTokens.Radius.xl)
+internal val CardShape = RoundedCornerShape(OopbotTokens.Radius.xl)
+internal val CardTopShape = RoundedCornerShape(topStart = OopbotTokens.Radius.xl, topEnd = OopbotTokens.Radius.xl)
 private val CardBottomShape =
-  RoundedCornerShape(bottomStart = PipkinTokens.Radius.xl, bottomEnd = PipkinTokens.Radius.xl)
+  RoundedCornerShape(bottomStart = OopbotTokens.Radius.xl, bottomEnd = OopbotTokens.Radius.xl)
 
 /** How far the well of lines sits in from its card's sides and bottom. */
-private val WELL_INSET = PipkinTokens.Spacing.s6
-private val WELL_RADIUS = PipkinTokens.Radius.lg
+private val WELL_INSET = OopbotTokens.Spacing.s6
+private val WELL_RADIUS = OopbotTokens.Radius.lg
 private val WellTopShape = RoundedCornerShape(topStart = WELL_RADIUS, topEnd = WELL_RADIUS)
 private val WellBottomShape = RoundedCornerShape(bottomStart = WELL_RADIUS, bottomEnd = WELL_RADIUS)

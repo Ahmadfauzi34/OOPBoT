@@ -78,7 +78,7 @@ class SlashCommandsTest {
     assertEquals(CommandSource.Skill, CommandSource.of("skill"))
     assertNull(CommandSource.of("mcp"))
     assertNull(CommandSource.of(""))
-    // Pipkin's own commands never come from Pi.
+    // OOPBoT's own commands never come from Pi.
     assertNull(CommandSource.of("builtin"))
   }
 

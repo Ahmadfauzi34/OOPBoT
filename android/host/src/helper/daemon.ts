@@ -1,5 +1,5 @@
 /**
- * `node helper.mjs`: the daemon Pipkin starts its hosts through when Termux (the Google Play build) has no
+ * `node helper.mjs`: the daemon OOPBoT starts its hosts through when Termux (the Google Play build) has no
  * RUN_COMMAND service. `run.sh` keeps it running; the exit codes below tell the wrapper what to do next.
  */
 import { execFile, spawn } from "node:child_process";
@@ -339,7 +339,7 @@ class Daemon {
       return;
     }
     const component = `${pkg}/io.jeph.oopbot.MainActivity`;
-    // Reordering brings Pipkin's existing screen forward instead of stacking a new one on it.
+    // Reordering brings OOPBoT's existing screen forward instead of stacking a new one on it.
     const intent = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", component];
     execFile(
       "am",

@@ -68,8 +68,8 @@ import io.jeph.oopbot.ui.onboarding.PrimaryButton
 import io.jeph.oopbot.ui.remote.AutoReconnect
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -100,7 +100,7 @@ internal fun FolderBrowserPane(
   val names = rememberFolderNames()
   val folders = names.picker(host)
   val connector = rememberRemoteConnector()
-  // The folder shown on this machine, so rotating or Android recreating Pipkin comes back to it.
+  // The folder shown on this machine, so rotating or Android recreating OOPBoT comes back to it.
   var shown by rememberSaveable(host?.id) { mutableStateOf<String?>(null) }
   val state = rememberBrowserState(host?.id, start = shown ?: names.home.takeIf { host == null })
   LaunchedEffect(state) { snapshotFlow { state.listing?.path }.collect { path -> if (path != null) shown = path } }
@@ -171,22 +171,22 @@ private fun ColumnScope.Browser(
   val busy = state.loading || state.adding
   PlaceTabs(state.places, path = listing?.path, enabled = !busy, onPick = state::navigate)
   FolderList(state, Modifier.weight(1f))
-  HorizontalDivider(thickness = 1.dp, color = pipkinColors.border)
+  HorizontalDivider(thickness = 1.dp, color = oopbotColors.border)
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 44.dp)
-      .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s16, top = PipkinTokens.Spacing.s8),
+      .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s16, top = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
-    LucideIcon(icon = R.drawable.ic_lucide_folder_open, contentDescription = null, size = PipkinTokens.IconSize.lg)
+    LucideIcon(icon = R.drawable.ic_lucide_folder_open, contentDescription = null, size = OopbotTokens.IconSize.lg)
     Text(
       text = (listing?.path ?: state.start)?.let(folders::path).orEmpty(),
       modifier = Modifier.weight(1f),
       style = pathTextStyle,
-      color = pipkinColors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      color = oopbotColors.foreground,
+      fontSize = OopbotTokens.FontSize.base,
       maxLines = 1,
       overflow = TextOverflow.MiddleEllipsis,
     )
@@ -197,10 +197,10 @@ private fun ColumnScope.Browser(
     text = stringResource(if (added) R.string.shell_browse_added else R.string.shell_browse_add),
     onClick = { listing?.let { onChoose(it.path) } },
     modifier = Modifier.fillMaxWidth().padding(
-      start = PipkinTokens.Spacing.s16,
-      end = PipkinTokens.Spacing.s16,
-      top = PipkinTokens.Spacing.s8,
-      bottom = PipkinTokens.Spacing.s8,
+      start = OopbotTokens.Spacing.s16,
+      end = OopbotTokens.Spacing.s16,
+      top = OopbotTokens.Spacing.s8,
+      bottom = OopbotTokens.Spacing.s8,
     ),
     enabled = listing != null && listing.error == null && !busy && !added,
   )
@@ -219,7 +219,7 @@ private fun ColumnScope.Unreachable(
   onEdit: () -> Unit,
   onConnect: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val title = when {
     failure.code == RemoteFailure.HOST_KEY_CHANGED -> stringResource(R.string.remote_key_changed_title, host.name)
     failure.code == RemoteFailure.SESSIONS_FULL -> stringResource(R.string.remote_sessions_full_title, host.name)
@@ -233,9 +233,9 @@ private fun ColumnScope.Unreachable(
       .weight(1f)
       .fillMaxWidth()
       .verticalScroll(rememberScrollState())
-      .padding(horizontal = PipkinTokens.Spacing.s24, vertical = PipkinTokens.Spacing.s24),
+      .padding(horizontal = OopbotTokens.Spacing.s24, vertical = OopbotTokens.Spacing.s24),
     horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12, Alignment.CenterVertically),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12, Alignment.CenterVertically),
   ) {
     Box(
       modifier = Modifier.size(UNREACHABLE_TILE).clip(CircleShape).background(colors.surface2),
@@ -250,26 +250,26 @@ private fun ColumnScope.Unreachable(
     Text(
       text = title,
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.lg,
+      fontSize = OopbotTokens.FontSize.lg,
       fontWeight = FontWeight.Bold,
       textAlign = TextAlign.Center,
     )
     Text(
       text = failure.text.localized(),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       textAlign = TextAlign.Center,
     )
     if (connecting) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+        horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
       ) {
         SimmeringPot()
         Text(
           text = stringResource(R.string.remote_connecting, host.name),
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
         )
       }
       return@Column
@@ -284,7 +284,7 @@ private fun UnreachableActions(connect: (() -> Unit)?, onTryAgain: () -> Unit, o
   if (connect != null) {
     PillButton(label = stringResource(R.string.remote_connect), onClick = connect, modifier = Modifier.fillMaxWidth())
   }
-  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     PillButton(
       label = stringResource(R.string.remote_try_again),
       onClick = onTryAgain,
@@ -306,10 +306,10 @@ private fun UnreachableActions(connect: (() -> Unit)?, onTryAgain: () -> Unit, o
  */
 @Composable
 private fun PlaceTabs(places: List<FolderPlace>, path: String?, enabled: Boolean, onPick: (String) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val selected = path?.let { placeIndexOf(places.map(FolderPlace::path), it) } ?: -1
-  Column(modifier = Modifier.fillMaxWidth().padding(top = PipkinTokens.Spacing.s4)) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = PipkinTokens.Spacing.s8)) {
+  Column(modifier = Modifier.fillMaxWidth().padding(top = OopbotTokens.Spacing.s4)) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = OopbotTokens.Spacing.s8)) {
       places.forEachIndexed { index, place ->
         val label = when (place.kind) {
           "home" -> stringResource(R.string.shell_browse_home)
@@ -327,9 +327,9 @@ private fun PlaceTabs(places: List<FolderPlace>, path: String?, enabled: Boolean
         ) {
           Text(
             text = label,
-            modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s12),
+            modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s12),
             color = if (active) colors.foreground else colors.foregroundMuted,
-            fontSize = PipkinTokens.FontSize.sm,
+            fontSize = OopbotTokens.FontSize.sm,
             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -349,7 +349,7 @@ private fun PlaceTabs(places: List<FolderPlace>, path: String?, enabled: Boolean
 
 @Composable
 private fun FolderList(state: FolderBrowserState, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val listing = state.listing
   LazyColumn(modifier = modifier.fillMaxWidth()) {
     val failure = state.failure
@@ -388,9 +388,9 @@ private fun FolderList(state: FolderBrowserState, modifier: Modifier) {
 internal fun Note(text: String, color: Color) {
   Text(
     text = text,
-    modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s12),
+    modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s12),
     color = color,
-    fontSize = PipkinTokens.FontSize.sm,
+    fontSize = OopbotTokens.FontSize.sm,
   )
 }
 

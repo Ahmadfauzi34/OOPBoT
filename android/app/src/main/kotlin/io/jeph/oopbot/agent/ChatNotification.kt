@@ -11,7 +11,7 @@ import io.jeph.oopbot.ui.sidebar.FolderNames
 /** A chat a notification opens: its project folder and session file. */
 internal data class ChatLocation(val cwd: String, val sessionPath: String)
 
-/** What Pipkin's notifications about one chat share: their tag, title and look, and the chat a tap opens. */
+/** What OOPBoT's notifications about one chat share: their tag, title and look, and the chat a tap opens. */
 internal object ChatNotification {
   private const val EXTRA_CWD = "io.jeph.oopbot.extra.CWD"
   private const val EXTRA_SESSION = "io.jeph.oopbot.extra.SESSION"

@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The `models.json` model fields Pipkin edits; null means the field is absent and Pi uses its
+ * The `models.json` model fields OOPBoT edits; null means the field is absent and Pi uses its
  * default. The host keeps every other field an entry has.
  */
 internal data class ModelConfig(

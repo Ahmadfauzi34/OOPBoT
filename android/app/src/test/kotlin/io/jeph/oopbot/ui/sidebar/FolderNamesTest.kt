@@ -12,7 +12,7 @@ import org.junit.Test
 
 class FolderNamesTest {
   private val home = "/data/data/com.termux/files/home"
-  private val standInRoot = "/data/data/com.termux/files/home/.pipkin/remotes"
+  private val standInRoot = "/data/data/com.termux/files/home/.oopbot/remotes"
   private val devbox = RemoteHost("h1", "devbox", RemoteAuth.Key, "me@devbox.lan", null, "/home/me")
   private val api = RemoteWorkspace("$standInRoot/h1/aaaa", "h1", "/home/me/src/api")
   private val homeFolder = RemoteWorkspace("$standInRoot/h1/bbbb", "h1", "/home/me")

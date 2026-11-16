@@ -36,14 +36,14 @@ import io.jeph.oopbot.agent.parsePartialJsonObject
 import io.jeph.oopbot.ui.components.CodeBox
 import io.jeph.oopbot.ui.components.CodeText
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinMarkdown
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotMarkdown
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.fileLanguage
 import io.jeph.oopbot.ui.components.rememberHighlightedCode
 import io.jeph.oopbot.ui.components.splitLines
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -57,13 +57,13 @@ import org.json.JSONObject
 @Composable
 internal fun EditDiff(edits: List<Pair<String, String>>, language: String?) {
   if (edits.isEmpty()) return
-  val colors = pipkinColors
+  val colors = oopbotColors
   SheetCode(padding = 0.dp) {
-    Column(modifier = Modifier.width(IntrinsicSize.Max).padding(vertical = PipkinTokens.Spacing.s8)) {
+    Column(modifier = Modifier.width(IntrinsicSize.Max).padding(vertical = OopbotTokens.Spacing.s8)) {
       edits.forEachIndexed { index, (oldText, newText) ->
         if (index > 0) {
           HorizontalDivider(
-            modifier = Modifier.padding(vertical = PipkinTokens.Spacing.s8),
+            modifier = Modifier.padding(vertical = OopbotTokens.Spacing.s8),
             thickness = 1.dp,
             color = colors.border,
           )
@@ -79,7 +79,7 @@ internal fun EditDiff(edits: List<Pair<String, String>>, language: String?) {
 
 @Composable
 private fun DiffLine(marker: String, line: AnnotatedString, tint: Color) {
-  Row(modifier = Modifier.fillMaxWidth().background(tint).padding(horizontal = PipkinTokens.Spacing.s12)) {
+  Row(modifier = Modifier.fillMaxWidth().background(tint).padding(horizontal = OopbotTokens.Spacing.s12)) {
     CodeText(AnnotatedString(marker) + line)
   }
 }

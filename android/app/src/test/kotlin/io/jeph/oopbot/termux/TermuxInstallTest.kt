@@ -39,7 +39,7 @@ class TermuxInstallTest {
 
   @Test
   fun aPlaySignedBuildWithoutADatedVersionOnlyAsksForAnUpdate() {
-    // Termux's Play listing ran 0.1xx builds before the dated releases; any undated one is older than Pipkin supports.
+    // Termux's Play listing ran 0.1xx builds before the dated releases; any undated one is older than OOPBoT supports.
     assertEquals(Status.PlayTooOld, TermuxInstall.classify(PLAY, "0.101"))
     assertEquals(Status.PlayTooOld, TermuxInstall.classify(PLAY, null))
   }

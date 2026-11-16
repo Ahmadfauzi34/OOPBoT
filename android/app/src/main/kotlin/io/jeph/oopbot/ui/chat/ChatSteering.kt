@@ -8,12 +8,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * The steering box's contents, Edit and Send now. Pi's queue reports only texts, so this keeps what Pipkin sent
+ * The steering box's contents, Edit and Send now. Pi's queue reports only texts, so this keeps what OOPBoT sent
  * with each queued steer, the text as typed and its attachments, to show and bring back exactly that.
  */
 internal class ChatSteering(private val controller: ChatController) {
   /**
-   * The steers Pipkin sent, oldest first, by the text Pi queued them under; several can share a text, such as the
+   * The steers OOPBoT sent, oldest first, by the text Pi queued them under; several can share a text, such as the
    * empty one of steers that only carry attachments. Snapshot state, since Pi reports the queue before it answers
    * the prompt and the box must catch up once a steer is noted.
    */
@@ -92,9 +92,9 @@ internal class ChatSteering(private val controller: ChatController) {
 }
 
 /**
- * Pairs each message of Pi's [queue] with the steer Pipkin [sent] it as. Of the steers sent under one text, the
+ * Pairs each message of Pi's [queue] with the steer OOPBoT [sent] it as. Of the steers sent under one text, the
  * newest are the ones still queued: older ones were delivered, even when Pi answered their prompt only after
- * reporting that. A queued message Pipkin did not send, from an extension, counts as typed with no attachments.
+ * reporting that. A queued message OOPBoT did not send, from an extension, counts as typed with no attachments.
  */
 internal fun matchSteers(queue: List<String>, sent: Map<String, List<SentSteer>>): List<SentSteer> {
   val counts = queue.groupingBy { it }.eachCount()
@@ -115,10 +115,10 @@ private fun typedText(steers: List<SentSteer>): String =
 /** What the steering box shows: the queued messages as typed, and how many attachments they carry. */
 internal class SteeringSummary(val text: String, val attachments: Int)
 
-/** A queued steer as Pipkin sent it; Pi's text adds the paths of [picked]'s files to [typed]. */
+/** A queued steer as OOPBoT sent it; Pi's text adds the paths of [picked]'s files to [typed]. */
 internal class SentSteer(val typed: String, val picked: List<Attachment>)
 
-/** A steer taken back from Pi: the [message] Pi had queued, which lists any files' paths, and what Pipkin [sent]. */
+/** A steer taken back from Pi: the [message] Pi had queued, which lists any files' paths, and what OOPBoT [sent]. */
 internal class TakenSteer(val message: String, val sent: SentSteer) {
   val images: List<ImagePart> get() = sent.picked.filterIsInstance<Attachment.Image>().map { it.part }
 }

@@ -159,7 +159,7 @@ pub(super) fn write_remote_hosts_and_ssh_config(ssh_dir: &Path, home: &str, host
         }
     };
     let mut lines = vec![
-        "# Written by Pipkin from hosts.json; changes here are overwritten.".to_string(),
+        "# Written by OOPBoT from hosts.json; changes here are overwritten.".to_string(),
         "Host *".to_string(),
         "  ServerAliveInterval 15".to_string(),
         "  ServerAliveCountMax 2".to_string(),

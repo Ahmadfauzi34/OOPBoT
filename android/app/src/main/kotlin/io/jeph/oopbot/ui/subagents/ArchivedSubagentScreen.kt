@@ -29,8 +29,8 @@ import io.jeph.oopbot.agent.TimelineItem
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.sessionTitle
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -96,18 +96,18 @@ private fun rememberParentCall(path: String, toolCallId: String): State<ParentCa
 /** In place of the Steer box: a card saying the subagent belongs to an archived chat and is read only. */
 @Composable
 private fun ReadOnlyNote() {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .background(colors.surface0)
       .navigationBarsPadding()
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s8)
-      .clip(RoundedCornerShape(PipkinTokens.Radius.xxl))
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s8)
+      .clip(RoundedCornerShape(OopbotTokens.Radius.xxl))
       .background(colors.surface1)
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = 10.dp),
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Box(
       modifier = Modifier.size(32.dp).clip(CircleShape).background(colors.surface2),
@@ -119,7 +119,7 @@ private fun ReadOnlyNote() {
       text = stringResource(R.string.subagent_archived_read_only),
       modifier = Modifier.weight(1f),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.meta,
+      fontSize = OopbotTokens.FontSize.meta,
     )
   }
 }

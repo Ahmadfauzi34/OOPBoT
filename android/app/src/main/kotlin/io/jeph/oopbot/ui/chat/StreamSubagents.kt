@@ -14,8 +14,8 @@ import io.jeph.oopbot.ui.subagents.SubagentPhase
 import io.jeph.oopbot.ui.subagents.rowLabel
 import io.jeph.oopbot.ui.subagents.runTime
 import io.jeph.oopbot.ui.subagents.subagentFacts
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * What a stream knows of the subagents its `subagent` tool rows started, from [chat], and what tapping one does:
@@ -62,10 +62,10 @@ internal fun SubagentToolRow(call: TimelineItem.ToolCall, subagents: StreamSubag
   ) {
     Text(
       text = statusText,
-      color = if (facts.phase == SubagentPhase.Asking) pipkinColors.dotWarning else pipkinColors.foregroundMuted,
+      color = if (facts.phase == SubagentPhase.Asking) oopbotColors.dotWarning else oopbotColors.foregroundMuted,
       fontSize = 11.5.sp,
-      fontFamily = PipkinFonts.mono,
-      style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+      fontFamily = OopbotFonts.mono,
+      style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
       maxLines = 1,
       softWrap = false,
     )

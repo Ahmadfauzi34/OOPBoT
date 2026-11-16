@@ -54,7 +54,7 @@ import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.files.FileState
 import io.jeph.oopbot.files.FileTab
 import io.jeph.oopbot.host.FileContent
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SheetRow
 import io.jeph.oopbot.ui.components.fileLanguage
 import io.jeph.oopbot.ui.components.rememberHighlightedCode
@@ -63,9 +63,9 @@ import io.jeph.oopbot.ui.remote.RemoteConnectAction
 import io.jeph.oopbot.ui.settings.SegmentedControl
 import io.jeph.oopbot.ui.settings.copyToClipboard
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.PaneHeader
 import io.jeph.oopbot.ui.workspace.PublishTabActions
@@ -102,20 +102,20 @@ internal fun FileScreen(file: FileTab, controls: PaneControls, modifier: Modifie
     ),
   )
 
-  Column(modifier = modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = modifier.fillMaxSize().background(oopbotColors.surface0)) {
     PaneHeader(title = file.name, cwd = file.cwd, controls = controls, subfolder = file.folder)
     when (val shown = state) {
       FileState.Loading -> FileNote(Modifier.weight(1f)) {
         CircularProgressIndicator(
-          modifier = Modifier.size(PipkinTokens.IconSize.md),
-          color = pipkinColors.foregroundMuted,
+          modifier = Modifier.size(OopbotTokens.IconSize.md),
+          color = oopbotColors.foregroundMuted,
           strokeWidth = 1.5.dp,
         )
         NoteText(stringResource(R.string.file_loading))
       }
 
       is FileState.Failed -> FileNote(Modifier.weight(1f)) {
-        NoteText(stringResource(R.string.file_failed), pipkinColors.destructive)
+        NoteText(stringResource(R.string.file_failed), oopbotColors.destructive)
         if (shown.message.isNotEmpty()) NoteText(shown.message)
         RemoteConnectAction(file.cwd, shown.code, onConnected = { scope.launch { file.reload() } })
       }
@@ -159,28 +159,28 @@ private fun LoadedFile(file: FileTab, content: FileContent, modifier: Modifier) 
  */
 @Composable
 private fun FileBar(size: Long, lineCount: Int?, showsPreview: Boolean?, onShowPreview: (Boolean) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 44.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s4),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Text(
       Formatter.formatShortFileSize(context, size),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
-      style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+      fontSize = OopbotTokens.FontSize.sm,
+      style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
     )
     if (lineCount != null) {
       Text(
         text = pluralStringResource(R.plurals.file_lines, lineCount, lineCount),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
-        style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+        fontSize = OopbotTokens.FontSize.sm,
+        style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
       )
     }
     if (showsPreview != null) {
@@ -192,7 +192,7 @@ private fun FileBar(size: Long, lineCount: Int?, showsPreview: Boolean?, onShowP
         Text(
           text = stringResource(if (preview) R.string.file_preview else R.string.file_source),
           color = if (selected) colors.foreground else colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
           fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
         )
       }
@@ -218,34 +218,34 @@ private fun rememberSourceLines(text: String, name: String): List<AnnotatedStrin
 /** The source view: a 56dp gutter of right-aligned, faint line numbers and the lines, wrapped, in the code font. */
 @Composable
 private fun SourceView(lines: List<AnnotatedString>, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val navigationBar = WindowInsets.navigationBars.asPaddingValues()
   SelectionContainer(modifier = modifier) {
     LazyColumn(
       modifier = Modifier.fillMaxSize(),
       contentPadding = PaddingValues(
-        top = PipkinTokens.Spacing.s8,
-        bottom = PipkinTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
+        top = OopbotTokens.Spacing.s8,
+        bottom = OopbotTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
       ),
     ) {
       itemsIndexed(lines) { index, line ->
         Row(modifier = Modifier.fillMaxWidth()) {
           Text(
             text = (index + 1).toString(),
-            modifier = Modifier.width(GUTTER_WIDTH).padding(end = PipkinTokens.Spacing.s12),
+            modifier = Modifier.width(GUTTER_WIDTH).padding(end = OopbotTokens.Spacing.s12),
             color = colors.foregroundExtraMuted,
-            fontFamily = PipkinFonts.mono,
-            fontSize = PipkinTokens.FontSize.code,
-            lineHeight = PipkinTokens.LineHeight.code,
+            fontFamily = OopbotFonts.mono,
+            fontSize = OopbotTokens.FontSize.code,
+            lineHeight = OopbotTokens.LineHeight.code,
             textAlign = TextAlign.End,
           )
           Text(
             text = line,
-            modifier = Modifier.weight(1f).padding(end = PipkinTokens.Spacing.s12),
+            modifier = Modifier.weight(1f).padding(end = OopbotTokens.Spacing.s12),
             color = colors.foreground,
-            fontFamily = PipkinFonts.mono,
-            fontSize = PipkinTokens.FontSize.code,
-            lineHeight = PipkinTokens.LineHeight.code,
+            fontFamily = OopbotFonts.mono,
+            fontSize = OopbotTokens.FontSize.code,
+            lineHeight = OopbotTokens.LineHeight.code,
             // Code reads left to right in any language, so its punctuation stays where it was written.
             style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr),
           )
@@ -268,7 +268,7 @@ private fun ImageView(bytes: ByteArray, modifier: Modifier) {
     ImageResult.Undecodable -> FileNote(modifier) { NoteText(stringResource(R.string.file_binary)) }
 
     is ImageResult.Decoded -> Box(
-      modifier = modifier.fillMaxSize().padding(PipkinTokens.Spacing.s12),
+      modifier = modifier.fillMaxSize().padding(OopbotTokens.Spacing.s12),
       contentAlignment = Alignment.Center,
     ) {
       Image(
@@ -305,7 +305,7 @@ private fun decodeImage(bytes: ByteArray): ImageBitmap? {
 internal fun FileActionsSheet(file: FileTab, onClose: () -> Unit, onDismiss: () -> Unit) {
   val context = LocalContext.current
   val fullPath = rememberFolderNames().absolutePath(file.cwd, file.path)
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     SheetRow(
       label = stringResource(R.string.file_copy_path),
       icon = R.drawable.ic_lucide_copy,
@@ -314,7 +314,7 @@ internal fun FileActionsSheet(file: FileTab, onClose: () -> Unit, onDismiss: () 
     SheetRow(
       label = stringResource(R.string.file_close),
       icon = R.drawable.ic_lucide_x,
-      labelColor = pipkinColors.destructive,
+      labelColor = oopbotColors.destructive,
       onClick = { dismiss(onClose) },
     )
   }
@@ -323,8 +323,8 @@ internal fun FileActionsSheet(file: FileTab, onClose: () -> Unit, onDismiss: () 
 @Composable
 private fun FileNote(modifier: Modifier, content: @Composable () -> Unit) {
   Column(
-    modifier = modifier.fillMaxSize().padding(PipkinTokens.Spacing.s16),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8, Alignment.CenterVertically),
+    modifier = modifier.fillMaxSize().padding(OopbotTokens.Spacing.s16),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8, Alignment.CenterVertically),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     content()
@@ -332,8 +332,8 @@ private fun FileNote(modifier: Modifier, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun NoteText(text: String, color: Color = pipkinColors.foregroundMuted) {
-  Text(text = text, color = color, fontSize = PipkinTokens.FontSize.base, textAlign = TextAlign.Center)
+private fun NoteText(text: String, color: Color = oopbotColors.foregroundMuted) {
+  Text(text = text, color = color, fontSize = OopbotTokens.FontSize.base, textAlign = TextAlign.Center)
 }
 
 /** Files up to 1 MiB are highlighted on phones, and bigger ones show plain. */

@@ -27,7 +27,7 @@ internal interface ChatNavigator {
   fun openSettings()
 }
 
-/** Runs Pi's interactive commands with Pipkin's own screens and Pi's RPC equivalents. */
+/** Runs Pi's interactive commands with OOPBoT's own screens and Pi's RPC equivalents. */
 internal class BuiltinCommands(private val controller: ChatController, private val navigator: ChatNavigator) {
   private val process get() = controller.process
 

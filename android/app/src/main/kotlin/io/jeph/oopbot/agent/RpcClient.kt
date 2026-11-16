@@ -13,7 +13,7 @@ import org.json.JSONObject
 
 /**
  * A Pi RPC command failed for [reason]. [message] is user-presentable: Pi's own [piError] when it rejected the command
- * with one, else Pipkin's explanation in the app's language when it is read.
+ * with one, else OOPBoT's explanation in the app's language when it is read.
  */
 internal class RpcError(
   val command: String,

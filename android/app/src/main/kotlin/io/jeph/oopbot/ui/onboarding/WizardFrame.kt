@@ -32,14 +32,14 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
 import io.jeph.oopbot.ui.components.RoundIconButton
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** Back on the left, where the user is among the steps in the middle, and close on the right once setup was done. */
 @Composable
 internal fun WizardTopBar(state: OnboardingState, step: SetupStep?, onBack: (() -> Unit)?, onClose: (() -> Unit)?) {
   Row(
-    modifier = Modifier.fillMaxWidth().heightIn(min = TOP_BAR_HEIGHT).padding(horizontal = PipkinTokens.Spacing.s12),
+    modifier = Modifier.fillMaxWidth().heightIn(min = TOP_BAR_HEIGHT).padding(horizontal = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Box(Modifier.size(BAR_BUTTON_SIZE), contentAlignment = Alignment.Center) {
@@ -91,16 +91,16 @@ internal fun WizardPage(
           .fillMaxWidth()
           .verticalScroll(rememberScrollState())
           .heightIn(min = maxHeight)
-          .padding(horizontal = PipkinTokens.Spacing.s24, vertical = PipkinTokens.Spacing.s16),
+          .padding(horizontal = OopbotTokens.Spacing.s24, vertical = OopbotTokens.Spacing.s16),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s16, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s16, Alignment.CenterVertically),
       ) {
         if (illustrated) illustration()
         PageHeading(tag, title, body)
         Column(
           modifier = Modifier.widthIn(max = PAGE_MAX_WIDTH).fillMaxWidth(),
           horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+          verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
           content = content,
         )
       }
@@ -109,9 +109,9 @@ internal fun WizardPage(
       modifier = Modifier
         .widthIn(max = PAGE_MAX_WIDTH)
         .fillMaxWidth()
-        .padding(horizontal = PipkinTokens.Spacing.s24)
-        .padding(top = PipkinTokens.Spacing.s8, bottom = PipkinTokens.Spacing.s16),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s24)
+        .padding(top = OopbotTokens.Spacing.s8, bottom = OopbotTokens.Spacing.s16),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
       content = buttons,
     )
   }
@@ -120,18 +120,18 @@ internal fun WizardPage(
 /** "Recommended" or "Optional" in small caps when it applies, the page's title, and a sentence or two under it. */
 @Composable
 private fun PageHeading(tag: String?, title: String, body: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
-    modifier = Modifier.widthIn(max = PAGE_MAX_WIDTH).padding(top = PipkinTokens.Spacing.s8),
+    modifier = Modifier.widthIn(max = PAGE_MAX_WIDTH).padding(top = OopbotTokens.Spacing.s8),
     horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     tag?.let {
       Text(
         text = it.uppercase(),
         modifier = Modifier
           .background(colors.accentSoft, CircleShape)
-          .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s2),
+          .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s2),
         color = colors.accent,
         fontSize = TAG_SIZE,
         fontWeight = FontWeight.Bold,
@@ -149,7 +149,7 @@ private fun PageHeading(tag: String?, title: String, body: String) {
     Text(
       text = body,
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.content,
+      fontSize = OopbotTokens.FontSize.content,
       lineHeight = BODY_LINE_HEIGHT,
       textAlign = TextAlign.Center,
     )
@@ -180,9 +180,9 @@ internal fun ColumnScope.StepButtons(spec: StepSpec, onContinue: () -> Unit, onS
   TextButton(
     onClick = onSkip,
     modifier = Modifier.fillMaxWidth(),
-    colors = ButtonDefaults.textButtonColors(contentColor = pipkinColors.foregroundMuted),
+    colors = ButtonDefaults.textButtonColors(contentColor = oopbotColors.foregroundMuted),
   ) {
-    Text(text = stringResource(R.string.onboarding_skip), fontSize = PipkinTokens.FontSize.base)
+    Text(text = stringResource(R.string.onboarding_skip), fontSize = OopbotTokens.FontSize.base)
   }
 }
 

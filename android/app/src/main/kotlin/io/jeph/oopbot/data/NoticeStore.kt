@@ -16,7 +16,7 @@ import org.json.JSONObject
 
 /**
  * The extension notices of each session, by session file path, in one JSON file per session under [dir]. Pi keeps no
- * record of `ctx.ui.notify`, and Pipkin stops a chat's Pi far more often than a desktop terminal does, so this is what
+ * record of `ctx.ui.notify`, and OOPBoT stops a chat's Pi far more often than a desktop terminal does, so this is what
  * brings them back. [load] reads a session's file once and serves the cache after that, and [put] updates the cache
  * while [writer] writes each change in order, so the file always ends up with the latest notices.
  */
@@ -85,7 +85,7 @@ internal class NoticeStore(private val dir: File, private val writer: Executor =
   }
 
   private companion object {
-    const val TAG = "Pipkin"
+    const val TAG = "OOPBoT"
   }
 }
 

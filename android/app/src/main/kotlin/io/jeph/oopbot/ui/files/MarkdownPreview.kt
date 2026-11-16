@@ -33,10 +33,10 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
-import io.jeph.oopbot.ui.components.PipkinMarkdown
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.components.OopbotMarkdown
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * The markdown preview: the file rendered in a reading frame, under a table of its front matter. Only web links open;
@@ -56,14 +56,14 @@ internal fun MarkdownPreview(source: String, modifier: Modifier) {
         .padding(
           start = READING_INSET,
           end = READING_INSET,
-          top = PipkinTokens.Spacing.s16,
-          bottom = PipkinTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
+          top = OopbotTokens.Spacing.s16,
+          bottom = OopbotTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
         ),
       contentAlignment = Alignment.TopCenter,
     ) {
-      Column(modifier = Modifier.widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth()) {
+      Column(modifier = Modifier.widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth()) {
         if (document.frontMatter.isNotEmpty()) FrontMatterTable(document.frontMatter)
-        PipkinMarkdown(document.body, Modifier.fillMaxWidth())
+        OopbotMarkdown(document.body, Modifier.fillMaxWidth())
       }
     }
   }
@@ -72,12 +72,12 @@ internal fun MarkdownPreview(source: String, modifier: Modifier) {
 /** The front matter table: muted monospace keys on surface2 beside their values, in a raised card. */
 @Composable
 private fun FrontMatterTable(rows: List<Pair<String, String>>) {
-  val colors = pipkinColors
-  val shape = RoundedCornerShape(PipkinTokens.Radius.xl)
+  val colors = oopbotColors
+  val shape = RoundedCornerShape(OopbotTokens.Radius.xl)
   SelectionContainer {
     BoxWithConstraints(
       modifier = Modifier
-        .padding(bottom = PipkinTokens.Spacing.s24)
+        .padding(bottom = OopbotTokens.Spacing.s24)
         .fillMaxWidth()
         .clip(shape)
         .background(colors.surface1)
@@ -97,15 +97,15 @@ private fun FrontMatterTable(rows: List<Pair<String, String>>) {
               text = key,
               modifier = Modifier.width(keyWidth).padding(CELL_PADDING_HORIZONTAL, CELL_PADDING_VERTICAL),
               color = colors.foregroundMuted,
-              fontFamily = PipkinFonts.mono,
-              fontSize = PipkinTokens.FontSize.meta,
+              fontFamily = OopbotFonts.mono,
+              fontSize = OopbotTokens.FontSize.meta,
               lineHeight = TABLE_LINE_HEIGHT,
             )
             Text(
               text = value,
               modifier = Modifier.weight(1f).padding(CELL_PADDING_HORIZONTAL, CELL_PADDING_VERTICAL),
               color = colors.foreground,
-              fontSize = PipkinTokens.FontSize.base,
+              fontSize = OopbotTokens.FontSize.base,
               lineHeight = TABLE_LINE_HEIGHT,
             )
           }
@@ -133,6 +133,6 @@ private val KEY_MAX_WIDTH = 180.dp
 
 private val TABLE_LINE_HEIGHT = 20.sp
 
-private val CELL_PADDING_HORIZONTAL = PipkinTokens.Spacing.s12
+private val CELL_PADDING_HORIZONTAL = OopbotTokens.Spacing.s12
 
-private val CELL_PADDING_VERTICAL = PipkinTokens.Spacing.s8
+private val CELL_PADDING_VERTICAL = OopbotTokens.Spacing.s8

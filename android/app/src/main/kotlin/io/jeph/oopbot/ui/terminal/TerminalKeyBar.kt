@@ -34,8 +34,8 @@ import io.github.sagernet.libghostty.GhosttyExtraKeysState
 import io.github.sagernet.libghostty.GhosttyExtraKeysState.StickyState
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 private sealed interface BarKey {
   data class Key(@StringRes val label: Int, val keyCode: Int, val symbol: String? = null) : BarKey
@@ -93,13 +93,13 @@ internal fun TerminalKeyBar(
   Column(
     modifier = modifier
       .fillMaxWidth()
-      .background(pipkinColors.surface1)
-      .topHairline(pipkinColors.border)
-      .padding(horizontal = PipkinTokens.Spacing.s6, vertical = PipkinTokens.Spacing.s6),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+      .background(oopbotColors.surface1)
+      .topHairline(oopbotColors.border)
+      .padding(horizontal = OopbotTokens.Spacing.s6, vertical = OopbotTokens.Spacing.s6),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     for (row in ROWS) {
-      Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
         for (key in row) {
           when (key) {
             is BarKey.Key -> BarButton(
@@ -159,7 +159,7 @@ private fun RowScope.BarButton(
   sticky: StickyState = StickyState.INACTIVE,
   onClick: () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val shape = RoundedCornerShape(KEY_RADIUS)
   val (background, content) = when (sticky) {
     StickyState.INACTIVE -> colors.surface2 to colors.foreground
@@ -188,7 +188,7 @@ private fun RowScope.BarButton(
       Text(
         text = label,
         color = content,
-        fontSize = PipkinTokens.FontSize.meta,
+        fontSize = OopbotTokens.FontSize.meta,
         fontWeight = FontWeight.SemiBold,
       )
     }

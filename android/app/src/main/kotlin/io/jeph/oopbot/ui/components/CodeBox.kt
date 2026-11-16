@@ -18,9 +18,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * A code card on [background], monospace, that scrolls sideways instead of wrapping, with its [label], such as the
@@ -30,17 +30,17 @@ import io.jeph.oopbot.ui.theme.pipkinColors
 internal fun CodeBox(
   modifier: Modifier = Modifier,
   label: String? = null,
-  background: Color = pipkinColors.surface1,
+  background: Color = oopbotColors.surface1,
   radius: Dp = 16.dp,
-  padding: Dp = PipkinTokens.Spacing.s12,
+  padding: Dp = OopbotTokens.Spacing.s12,
   content: @Composable ColumnScope.() -> Unit,
 ) {
   Column(modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(radius)).background(background)) {
     if (label != null) {
       Text(
         text = label,
-        modifier = Modifier.padding(start = padding, top = PipkinTokens.Spacing.s8, end = padding),
-        color = pipkinColors.foregroundMuted,
+        modifier = Modifier.padding(start = padding, top = OopbotTokens.Spacing.s8, end = padding),
+        color = oopbotColors.foregroundMuted,
         fontSize = 11.5.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -55,7 +55,7 @@ internal fun CodeBox(
           top = if (label !=
             null
           ) {
-            PipkinTokens.Spacing.s4
+            OopbotTokens.Spacing.s4
           } else {
             padding
           },
@@ -69,19 +69,19 @@ internal fun CodeBox(
 
 /** [text] in the code font, coloured for [language] (a fence name or file extension) when Highlights knows it. */
 @Composable
-internal fun CodeText(text: String, language: String? = null, color: Color = pipkinColors.foreground) {
+internal fun CodeText(text: String, language: String? = null, color: Color = oopbotColors.foreground) {
   CodeText(rememberHighlightedCode(text, language), color)
 }
 
 /** Already styled [text] in the code font; [color] fills whatever its spans leave uncoloured. */
 @Composable
-internal fun CodeText(text: AnnotatedString, color: Color = pipkinColors.foreground) {
+internal fun CodeText(text: AnnotatedString, color: Color = oopbotColors.foreground) {
   Text(
     text = text,
     color = color,
-    fontFamily = PipkinFonts.mono,
-    fontSize = PipkinTokens.FontSize.code,
-    lineHeight = PipkinTokens.LineHeight.code,
+    fontFamily = OopbotFonts.mono,
+    fontSize = OopbotTokens.FontSize.code,
+    lineHeight = OopbotTokens.LineHeight.code,
     softWrap = false,
   )
 }

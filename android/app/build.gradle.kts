@@ -488,14 +488,14 @@ android {
     compose = true
   }
 
-  // Android 13 and later list Pipkin under Settings › Apps › Language with every locale it has strings for, read from
+  // Android 13 and later list OOPBoT under Settings › Apps › Language with every locale it has strings for, read from
   // the values-* folders; src/main/res/resources.properties names the locale of the unqualified values folder.
   androidResources { generateLocaleConfig = true }
 
   // Debug builds carry the en-XA and ar-XB pseudolocales: switched to one, any text that skips the string resources
   // stays plain English, and layouts show how they take longer or right-to-left text.
   //
-  // Debug builds are Pipkin Dev, installable beside the release: their own package here, and in src/debug their own
+  // Debug builds are OOPBoT Dev, installable beside the release: their own package here, and in src/debug their own
   // name and folders in Termux and helper ports (TermuxBuild, with the release's in src/release), so both can share one
   // Termux without touching each other's state.
   buildTypes {

@@ -44,9 +44,9 @@ import androidx.core.net.toUri
 import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.components.LucideIcon
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.PillTone
-import io.jeph.oopbot.ui.components.PipkinSheet
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SheetRow
 import io.jeph.oopbot.ui.components.SimmeringPot
@@ -54,9 +54,9 @@ import io.jeph.oopbot.ui.settings.SettingsFieldShape
 import io.jeph.oopbot.ui.settings.copyToClipboard
 import io.jeph.oopbot.ui.settings.settingsFieldColors
 import io.jeph.oopbot.ui.settings.subscriptions
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -95,20 +95,20 @@ internal fun LoginSheet(providerId: String, onDismiss: () -> Unit) {
   LaunchedEffect(browserUrl) {
     if (browserUrl != null) open(browserUrl)
   }
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     if (finished) LaunchedEffect(Unit) { dismiss {} }
     // Large text can make the Claude plugin offer taller than the screen; scrolling keeps its buttons reachable.
     Column(
       modifier = Modifier
         .fillMaxWidth()
         .verticalScroll(rememberScrollState())
-        .padding(horizontal = PipkinTokens.Spacing.s16),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+        .padding(horizontal = OopbotTokens.Spacing.s16),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     ) {
       Text(
         text = provider?.let { stringResource(it.loginTitle) } ?: providerId,
-        color = pipkinColors.foreground,
-        fontSize = PipkinTokens.FontSize.lg,
+        color = oopbotColors.foreground,
+        fontSize = OopbotTokens.FontSize.lg,
         fontWeight = FontWeight.Bold,
       )
       LoginBody(
@@ -124,7 +124,7 @@ internal fun LoginSheet(providerId: String, onDismiss: () -> Unit) {
 
 @Composable
 private fun LoginBody(flow: LoginFlowState, usesApiKey: Boolean, onOpen: (String) -> Unit, onRetry: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   when (val outcome = flow.outcome) {
     LoginOutcome.SignedIn -> LeadingRow(
       text = stringResource(if (usesApiKey) R.string.login_key_saved else R.string.login_signed_in),
@@ -151,12 +151,12 @@ private fun RunningContent(flow: LoginFlowState, onOpen: (String) -> Unit) {
   val status = flow.status
   val prompt = flow.prompt
   if (browser == null && deviceCode == null && status == null && prompt == null) {
-    LeadingRow(text = stringResource(R.string.login_starting), color = pipkinColors.foregroundMuted) { SimmeringPot() }
+    LeadingRow(text = stringResource(R.string.login_starting), color = oopbotColors.foregroundMuted) { SimmeringPot() }
   }
   browser?.let { BrowserBlock(step = it, onOpen = onOpen) }
   deviceCode?.let { DeviceCodeBlock(step = it, onOpen = onOpen) }
   status?.let { line ->
-    Text(text = line.message, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+    Text(text = line.message, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
     line.links.forEach { link -> TextButton(onClick = { onOpen(link.url) }) { Text(link.label ?: link.url) } }
   }
   prompt?.let { pending ->
@@ -172,10 +172,10 @@ private fun RunningContent(flow: LoginFlowState, onOpen: (String) -> Unit) {
 
 @Composable
 private fun BrowserBlock(step: BrowserStep, onOpen: (String) -> Unit) {
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     LeadingRow(text = stringResource(R.string.login_browser)) { SimmeringPot() }
     step.instructions?.let {
-      Text(text = it, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+      Text(text = it, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
     }
     PillButton(label = stringResource(R.string.login_open_again), onClick = { onOpen(step.url) }, tone = PillTone.Tonal)
   }
@@ -184,31 +184,31 @@ private fun BrowserBlock(step: BrowserStep, onOpen: (String) -> Unit) {
 @Composable
 private fun DeviceCodeBlock(step: DeviceCodeStep, onOpen: (String) -> Unit) {
   val context = LocalContext.current
-  val colors = pipkinColors
+  val colors = oopbotColors
   val copyLabel = stringResource(R.string.login_copy_code)
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     Text(
       text = stringResource(R.string.login_device_code),
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
     )
     Row(
       modifier = Modifier
         .fillMaxWidth()
         .background(colors.surface2, RoundedCornerShape(CODE_RADIUS))
-        .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s8)
-        .padding(vertical = PipkinTokens.Spacing.s12),
+        .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s8)
+        .padding(vertical = OopbotTokens.Spacing.s12),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       Text(
         text = step.userCode,
         modifier = Modifier.weight(1f),
         color = colors.foreground,
-        fontFamily = PipkinFonts.mono,
+        fontFamily = OopbotFonts.mono,
         fontSize = CODE_SIZE,
         fontWeight = FontWeight.Bold,
-        style = LocalTextStyle.current.merge(TextStyle(fontFeatureSettings = PipkinFonts.TABULAR)),
+        style = LocalTextStyle.current.merge(TextStyle(fontFeatureSettings = OopbotFonts.TABULAR)),
         letterSpacing = CODE_TRACKING,
       )
       RoundIconButton(
@@ -230,8 +230,8 @@ private fun DeviceCodeBlock(step: DeviceCodeStep, onOpen: (String) -> Unit) {
 
 @Composable
 private fun PromptBlock(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
-    Text(text = prompt.message, color = pipkinColors.foreground, fontSize = PipkinTokens.FontSize.base)
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
+    Text(text = prompt.message, color = oopbotColors.foreground, fontSize = OopbotTokens.FontSize.base)
     if (prompt.type == "select") {
       prompt.options.forEach { option ->
         SheetRow(label = option.label, value = option.description, onClick = { onAnswer(option.id) })
@@ -273,13 +273,13 @@ private fun TextPrompt(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
 
 /** A 14sp line with a 16dp leading icon or spinner. */
 @Composable
-internal fun LeadingRow(text: String, color: Color = pipkinColors.foreground, leading: @Composable () -> Unit) {
+internal fun LeadingRow(text: String, color: Color = oopbotColors.foreground, leading: @Composable () -> Unit) {
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     leading()
-    Text(text = text, color = color, fontSize = PipkinTokens.FontSize.base)
+    Text(text = text, color = color, fontSize = OopbotTokens.FontSize.base)
   }
 }
 

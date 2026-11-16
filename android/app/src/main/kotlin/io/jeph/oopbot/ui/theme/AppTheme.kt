@@ -11,7 +11,7 @@ enum class AppTheme {
   ;
 
   /** This theme's palette, with [systemDark] saying whether the phone is in dark mode. */
-  fun colors(systemDark: Boolean): PipkinColors = when (this) {
+  fun colors(systemDark: Boolean): OopbotColors = when (this) {
     System -> if (systemDark) StoneColors else PorcelainColors
     Porcelain -> PorcelainColors
     Clay -> ClayColors

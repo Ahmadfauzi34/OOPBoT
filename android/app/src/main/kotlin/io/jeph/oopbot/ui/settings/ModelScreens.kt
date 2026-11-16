@@ -20,10 +20,10 @@ import androidx.compose.ui.text.font.FontWeight
 import io.jeph.oopbot.R
 import io.jeph.oopbot.host.ModelConfig
 import io.jeph.oopbot.ui.components.DialogConfirm
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.components.SelectionCircle
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
@@ -43,7 +43,7 @@ internal fun ModelsSection(
   val added = draft.added
   val addedIds = added.mapTo(HashSet()) { it.id }
   LaunchedEffect(addedIds) { selection.keep(addedIds) }
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       FieldLabel(text = stringResource(R.string.provider_models), modifier = Modifier.weight(1f))
       SmallButton(
@@ -83,7 +83,7 @@ private fun ModelRow(model: ModelForm, selection: ModelSelection, onOpenModel: (
   SettingsRow(
     title = title,
     modifier = Modifier
-      .then(if (selected) Modifier.background(pipkinColors.accentSoft) else Modifier)
+      .then(if (selected) Modifier.background(oopbotColors.accentSoft) else Modifier)
       .combinedClickable(
         onClickLabel = clickLabel,
         onLongClick = { selection.select(model.id) },
@@ -92,7 +92,7 @@ private fun ModelRow(model: ModelForm, selection: ModelSelection, onOpenModel: (
     subtitle = if (model.valid) modelSubtitle(preview) else stringResource(R.string.provider_model_invalid),
   ) {
     // One width in both modes, so the text beside it wraps the same way when selecting starts.
-    Box(modifier = Modifier.size(PipkinTokens.IconSize.lg), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.size(OopbotTokens.IconSize.lg), contentAlignment = Alignment.Center) {
       if (selecting) SelectionCircle(selected) else Chevron()
     }
   }
@@ -101,7 +101,7 @@ private fun ModelRow(model: ModelForm, selection: ModelSelection, onOpenModel: (
 /** Asks before dropping unsaved edits. */
 @Composable
 internal fun DiscardDialog(onDiscard: () -> Unit, onDismiss: () -> Unit) {
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.provider_discard_title),
     text = stringResource(R.string.provider_discard_text),
     icon = R.drawable.ic_lucide_trash_2,
@@ -116,8 +116,8 @@ internal fun FieldLabel(text: String, modifier: Modifier = Modifier) {
   Text(
     text = text,
     modifier = modifier,
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
     fontWeight = FontWeight.SemiBold,
   )
 }
@@ -131,8 +131,8 @@ internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> U
     Text(
       text = label,
       modifier = Modifier.weight(1f),
-      color = pipkinColors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      color = oopbotColors.foreground,
+      fontSize = OopbotTokens.FontSize.base,
     )
     SettingsSwitch(checked = checked)
   }

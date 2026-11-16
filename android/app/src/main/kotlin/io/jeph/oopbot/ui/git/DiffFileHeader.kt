@@ -30,9 +30,9 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.GitChange
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.files.fileIcon
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 
 /**
@@ -43,7 +43,7 @@ import java.text.NumberFormat
  */
 @Composable
 internal fun FileHeader(section: DiffSection, expanded: Boolean, onToggle: (() -> Unit)?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   // Without a long-click handler, releasing a long press would count as a tap and fold the file.
   val clickable = if (onToggle == null) {
     Modifier
@@ -61,9 +61,9 @@ internal fun FileHeader(section: DiffSection, expanded: Boolean, onToggle: (() -
         .background(colors.surface1)
         .then(clickable)
         .heightIn(min = 52.dp)
-        .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s8),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     ) {
       FileTile(section.name)
       // Read out as one line, the name then its folder, however the two are stacked on screen.
@@ -76,7 +76,7 @@ internal fun FileHeader(section: DiffSection, expanded: Boolean, onToggle: (() -
         Text(
           text = section.name,
           color = colors.foreground,
-          fontSize = PipkinTokens.FontSize.base,
+          fontSize = OopbotTokens.FontSize.base,
           fontWeight = FontWeight.Bold,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -85,7 +85,7 @@ internal fun FileHeader(section: DiffSection, expanded: Boolean, onToggle: (() -
           Text(
             text = section.folder,
             color = colors.foregroundExtraMuted,
-            fontSize = PipkinTokens.FontSize.sm,
+            fontSize = OopbotTokens.FontSize.sm,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
@@ -103,13 +103,13 @@ private fun FileTile(name: String) {
   Box(
     modifier = Modifier
       .size(28.dp)
-      .background(pipkinColors.infoSoft, RoundedCornerShape(9.dp)),
+      .background(oopbotColors.infoSoft, RoundedCornerShape(9.dp)),
     contentAlignment = Alignment.Center,
   ) {
     Image(
       painter = painterResource(fileIcon(name)),
       contentDescription = null,
-      modifier = Modifier.size(PipkinTokens.IconSize.md),
+      modifier = Modifier.size(OopbotTokens.IconSize.md),
     )
   }
 }
@@ -117,8 +117,8 @@ private fun FileTile(name: String) {
 /** A diff stat: `+added -removed`, compact, in green and red code figures. */
 @Composable
 internal fun DiffStat(additions: Int, deletions: Int) {
-  val colors = pipkinColors
-  Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4)) {
+  val colors = oopbotColors
+  Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4)) {
     StatText("+${compactCount(additions)}", colors.dotSuccess)
     StatText("-${compactCount(deletions)}", colors.destructive)
   }
@@ -129,8 +129,8 @@ private fun StatText(text: String, color: Color) {
   Text(
     text = text,
     color = color,
-    fontFamily = PipkinFonts.mono,
-    fontSize = PipkinTokens.FontSize.code,
+    fontFamily = OopbotFonts.mono,
+    fontSize = OopbotTokens.FontSize.code,
     maxLines = 1,
   )
 }
@@ -151,7 +151,7 @@ private fun compactCount(value: Int): String {
 /** The change icon: a green plus for an added file, a red minus for a deleted one, a dot for any other change. */
 @Composable
 private fun ChangeIcon(change: GitChange) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val (icon, tint, description) = when (change) {
     GitChange.Added -> Triple(R.drawable.ic_lucide_square_plus, colors.dotSuccess, R.string.git_file_added)
 
@@ -163,7 +163,7 @@ private fun ChangeIcon(change: GitChange) {
   LucideIcon(
     icon = icon,
     contentDescription = stringResource(description),
-    size = PipkinTokens.IconSize.sm,
+    size = OopbotTokens.IconSize.sm,
     tint = tint,
   )
 }

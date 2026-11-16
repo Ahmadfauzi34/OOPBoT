@@ -46,8 +46,8 @@ import io.jeph.oopbot.ui.stackTransition
 import io.jeph.oopbot.ui.subagents.ChatSubagentScreen
 import io.jeph.oopbot.ui.subagents.SubagentsSheet
 import io.jeph.oopbot.ui.subagents.rememberChatSubagents
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.CloseSplitButton
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.PublishTabActions
@@ -193,7 +193,7 @@ private fun ChatContent(
     }
   }
   Column(
-    modifier = Modifier.fillMaxSize().background(pipkinColors.surface0).closeContextDetailsOnPress(controller),
+    modifier = Modifier.fillMaxSize().background(oopbotColors.surface0).closeContextDetailsOnPress(controller),
   ) {
     ChatHeader(process, controls, Modifier.onUnhandledTap(dismissKeyboard))
     // The keyboard and a dialog both take the room the steering box and widget panels would use, so then the steering
@@ -264,13 +264,13 @@ private fun StreamArea(
       process,
       Modifier
         .align(Alignment.TopCenter)
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     )
     // A dialog card or the steering box fills the space over the composer, so snackbars move up under the header.
     val raised = timeline.pendingUi != null || timeline.queue.isNotEmpty()
     SnackbarStack(
       snackbar,
-      Modifier.align(if (raised) Alignment.TopCenter else Alignment.BottomCenter).padding(PipkinTokens.Spacing.s16),
+      Modifier.align(if (raised) Alignment.TopCenter else Alignment.BottomCenter).padding(OopbotTokens.Spacing.s16),
     )
     SlashMenuHost(controller, ready = processState == AgentProcessState.Ready, Modifier.align(Alignment.BottomCenter))
   }
@@ -278,7 +278,7 @@ private fun StreamArea(
 
 /**
  * The first extension dialog Pi waits on, between the stream and the composer, naming the subagent that asked it
- * when Pipkin can tell; the label follows the chat's subagents and tool calls as they change.
+ * when OOPBoT can tell; the label follows the chat's subagents and tool calls as they change.
  */
 @Composable
 internal fun PendingDialogCard(controller: ChatController, timeline: TimelineState) {
@@ -290,7 +290,7 @@ internal fun PendingDialogCard(controller: ChatController, timeline: TimelineSta
     count = timeline.pendingUiCount,
     asker = askingSubagent(timeline, runs),
     onAnswer = { controller.respondUi(request.id, it) },
-    modifier = Modifier.padding(bottom = PipkinTokens.Spacing.s8),
+    modifier = Modifier.padding(bottom = OopbotTokens.Spacing.s8),
   )
 }
 
@@ -311,8 +311,8 @@ private fun SlashMenuHost(controller: ChatController, ready: Boolean, modifier: 
       focus.clearFocus()
     },
     modifier = modifier
-      .padding(start = 10.dp, end = 10.dp, bottom = PipkinTokens.Spacing.s6)
-      .widthIn(max = PipkinTokens.contentMaxWidth)
+      .padding(start = 10.dp, end = 10.dp, bottom = OopbotTokens.Spacing.s6)
+      .widthIn(max = OopbotTokens.contentMaxWidth)
       .fillMaxWidth(),
   )
 }
@@ -320,7 +320,7 @@ private fun SlashMenuHost(controller: ChatController, ready: Boolean, modifier: 
 /** Shown while the shell has no process for the pane yet. */
 @Composable
 private fun PlaceholderChat(controls: PaneControls) {
-  Column(modifier = Modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     HeaderBar(
       title = stringResource(R.string.chat_new_chat),
       leading = { SidebarButton(controls.onToggleSidebar) },
@@ -332,7 +332,7 @@ private fun PlaceholderChat(controls: PaneControls) {
         AgentProcessState.Starting,
         onRetry = {},
         onOpenOnboarding = {},
-        modifier = Modifier.padding(horizontal = PipkinTokens.Spacing.s16),
+        modifier = Modifier.padding(horizontal = OopbotTokens.Spacing.s16),
       )
     }
   }

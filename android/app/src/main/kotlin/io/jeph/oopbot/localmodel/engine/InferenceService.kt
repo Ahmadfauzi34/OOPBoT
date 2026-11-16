@@ -60,6 +60,6 @@ internal class InferenceService : Service() {
   }
 
   private companion object {
-    const val TAG = "PipkinInference"
+    const val TAG = "OopbotInference"
   }
 }

@@ -33,7 +33,7 @@ class ChatSteeringTest {
   }
 
   @Test
-  fun `a queued message Pipkin did not send counts as typed without attachments`() {
+  fun `a queued message OOPBoT did not send counts as typed without attachments`() {
     val matched = matchSteers(listOf("from an extension"), emptyMap()).single()
 
     assertEquals("from an extension", matched.typed)

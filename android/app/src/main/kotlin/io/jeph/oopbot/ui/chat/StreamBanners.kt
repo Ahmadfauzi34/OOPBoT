@@ -45,9 +45,9 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /**
@@ -65,7 +65,7 @@ internal fun StatusBanner(
   if (state == AgentProcessState.Ready || state is AgentProcessState.Exited) return
   // The caller may fill the width, which widthIn can't narrow, so the card is capped in a box that takes it.
   Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-    StatusCard(state, onRetry, onOpenOnboarding, Modifier.widthIn(max = PipkinTokens.noteMaxWidth))
+    StatusCard(state, onRetry, onOpenOnboarding, Modifier.widthIn(max = OopbotTokens.noteMaxWidth))
   }
 }
 
@@ -81,17 +81,17 @@ private fun StatusCard(
 
     is AgentProcessState.Installing -> BannerCard(modifier) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        SimmeringPot(size = PipkinTokens.IconSize.lg)
+        SimmeringPot(size = OopbotTokens.IconSize.lg)
         BannerTitle(stringResource(R.string.chat_installing))
       }
       state.progressLine?.let {
         Text(
           text = it,
           modifier = Modifier.fillMaxWidth(),
-          color = pipkinColors.foregroundMuted,
-          fontFamily = PipkinFonts.mono,
+          color = oopbotColors.foregroundMuted,
+          fontFamily = OopbotFonts.mono,
           fontSize = 11.5.sp,
-          lineHeight = PipkinTokens.LineHeight.code,
+          lineHeight = OopbotTokens.LineHeight.code,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -108,12 +108,12 @@ private fun StatusCard(
 @Composable
 private fun StartingBanner(modifier: Modifier) {
   BannerCard(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-    SimmeringPot(size = 32.dp, modifier = Modifier.padding(top = PipkinTokens.Spacing.s12))
+    SimmeringPot(size = 32.dp, modifier = Modifier.padding(top = OopbotTokens.Spacing.s12))
     Text(
       text = stringResource(R.string.chat_starting),
-      modifier = Modifier.padding(bottom = PipkinTokens.Spacing.s12),
-      color = pipkinColors.foreground,
-      fontSize = PipkinTokens.FontSize.title,
+      modifier = Modifier.padding(bottom = OopbotTokens.Spacing.s12),
+      color = oopbotColors.foreground,
+      fontSize = OopbotTokens.FontSize.title,
       fontWeight = FontWeight.ExtraBold,
     )
   }
@@ -121,7 +121,7 @@ private fun StartingBanner(modifier: Modifier) {
 
 /**
  * Pi could not start. A Termux setup failure offers setup, which opens at the step that fixes it; an unreachable Play
- * helper offers Open Termux, which starts the helper there and switches back to Pipkin before retrying, and setup for
+ * helper offers Open Termux, which starts the helper there and switches back to OOPBoT before retrying, and setup for
  * when Termux says the helper can't start. A remote host only the user can sign in to, or whose key they must check,
  * offers Connect, which retries once connected. The first action, the likeliest fix, is filled.
  */
@@ -146,9 +146,9 @@ private fun FailedBanner(
     if (openTermux) BannerText(stringResource(R.string.chat_open_termux_hint))
     // Open Termux, Set up Termux and Retry don't fit on one line at large font sizes.
     FlowRow(
-      modifier = Modifier.padding(top = PipkinTokens.Spacing.s4),
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      modifier = Modifier.padding(top = OopbotTokens.Spacing.s4),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
     ) {
       if (openTermux) {
         BannerAction(stringResource(R.string.chat_open_termux), filled = true) {
@@ -188,7 +188,7 @@ internal fun ExitBannerCard(item: TimelineItem.ExitBanner, onRestart: () -> Unit
     )
     if (expanded) {
       SelectionContainer {
-        CodeBox(background = pipkinColors.surface0, radius = 14.dp) { CodeText(item.stderr.trimEnd()) }
+        CodeBox(background = oopbotColors.surface0, radius = 14.dp) { CodeText(item.stderr.trimEnd()) }
       }
     }
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -212,7 +212,7 @@ internal fun ExitBannerCard(item: TimelineItem.ExitBanner, onRestart: () -> Unit
 /** The banner's first line: an icon in the error colour, then [text], itself red when [error]. */
 @Composable
 private fun AlertTitle(@DrawableRes icon: Int, text: String, error: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
     LucideIcon(
       icon = icon,
@@ -224,7 +224,7 @@ private fun AlertTitle(@DrawableRes icon: Int, text: String, error: Boolean) {
       text = text,
       modifier = Modifier.weight(1f),
       color = if (error) colors.destructive else colors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.ExtraBold,
       lineHeight = 20.sp,
     )
@@ -235,21 +235,21 @@ private fun AlertTitle(@DrawableRes icon: Int, text: String, error: Boolean) {
 private fun BannerTitle(text: String) {
   Text(
     text = text,
-    color = pipkinColors.foreground,
-    fontSize = PipkinTokens.FontSize.base,
+    color = oopbotColors.foreground,
+    fontSize = OopbotTokens.FontSize.base,
     fontWeight = FontWeight.ExtraBold,
   )
 }
 
 @Composable
 private fun BannerText(text: String) {
-  Text(text = text, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.meta, lineHeight = 19.5.sp)
+  Text(text = text, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.meta, lineHeight = 19.5.sp)
 }
 
 /** A banner's button: a cobalt pill when [filled], otherwise cobalt text. */
 @Composable
 private fun BannerAction(label: String, filled: Boolean, @DrawableRes icon: Int? = null, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val content = if (filled) colors.accentForeground else colors.accent
   Row(
     modifier = Modifier
@@ -257,14 +257,14 @@ private fun BannerAction(label: String, filled: Boolean, @DrawableRes icon: Int?
       .clip(CircleShape)
       .then(if (filled) Modifier.background(colors.accent) else Modifier)
       .clickable(role = Role.Button, onClick = onClick)
-      .padding(horizontal = PipkinTokens.Spacing.s12),
+      .padding(horizontal = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     if (icon !=
       null
     ) {
-      LucideIcon(icon = icon, contentDescription = null, size = PipkinTokens.IconSize.sm, tint = content)
+      LucideIcon(icon = icon, contentDescription = null, size = OopbotTokens.IconSize.sm, tint = content)
     }
     Text(text = label, color = content, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
   }
@@ -280,17 +280,17 @@ private fun BannerCard(
     modifier =
       modifier
         .fillMaxWidth()
-        .padding(vertical = PipkinTokens.Spacing.s6)
+        .padding(vertical = OopbotTokens.Spacing.s6)
         .clip(BannerShape)
-        .background(pipkinColors.surface1)
+        .background(oopbotColors.surface1)
         .padding(
-          start = PipkinTokens.Spacing.s12,
-          top = PipkinTokens.Spacing.s12,
-          end = PipkinTokens.Spacing.s12,
+          start = OopbotTokens.Spacing.s12,
+          top = OopbotTokens.Spacing.s12,
+          end = OopbotTokens.Spacing.s12,
           bottom = 9.dp,
         ),
     horizontalAlignment = horizontalAlignment,
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
     content = content,
   )
 }

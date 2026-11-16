@@ -46,17 +46,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 @Composable
 fun LucideIcon(
   @DrawableRes icon: Int,
   contentDescription: String?,
   modifier: Modifier = Modifier,
-  size: Dp = PipkinTokens.IconSize.md,
-  tint: Color = pipkinColors.foreground,
+  size: Dp = OopbotTokens.IconSize.md,
+  tint: Color = oopbotColors.foreground,
 ) {
   Icon(
     painter = painterResource(icon),
@@ -75,8 +75,8 @@ fun RoundIconButton(
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
   background: Color = Color.Transparent,
-  tint: Color = pipkinColors.foreground,
-  iconSize: Dp = PipkinTokens.IconSize.md,
+  tint: Color = oopbotColors.foreground,
+  iconSize: Dp = OopbotTokens.IconSize.md,
 ) {
   Box(
     modifier = modifier.roundButton(size = 28.dp, background = background, enabled = enabled, onClick = onClick),
@@ -107,8 +107,8 @@ fun PanningText(text: AnnotatedString, modifier: Modifier = Modifier) {
       initialDelayMillis = PAN_DELAY_MILLIS,
       repeatDelayMillis = PAN_DELAY_MILLIS,
     ),
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
     maxLines = 1,
     softWrap = false,
   )
@@ -123,12 +123,12 @@ fun SheetRow(
   modifier: Modifier = Modifier,
   @DrawableRes icon: Int? = null,
   value: String? = null,
-  labelColor: Color = pipkinColors.foreground,
+  labelColor: Color = oopbotColors.foreground,
   enabled: Boolean = true,
   onClick: (() -> Unit)? = null,
   trailing: @Composable RowScope.() -> Unit = {},
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
     val valueMaxWidth = maxWidth * 0.45f
     Row(
@@ -138,9 +138,9 @@ fun SheetRow(
           .heightIn(min = 44.dp)
           .alpha(if (enabled) 1f else 0.5f)
           .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
-          .padding(horizontal = PipkinTokens.Spacing.s16),
+          .padding(horizontal = OopbotTokens.Spacing.s16),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
     ) {
       SheetRowContent(icon, label, labelColor, value, valueMaxWidth, colors.foregroundMuted, trailing)
     }
@@ -166,7 +166,7 @@ private fun RowScope.SheetRowContent(
     text = label,
     modifier = Modifier.weight(1f),
     color = labelColor,
-    fontSize = PipkinTokens.FontSize.base,
+    fontSize = OopbotTokens.FontSize.base,
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
   )
@@ -175,7 +175,7 @@ private fun RowScope.SheetRowContent(
       text = value,
       modifier = Modifier.widthIn(max = valueMaxWidth),
       color = valueColor,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )

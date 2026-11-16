@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
-/** The open tabs, oldest first, and what each pane shows, kept so a restarted Pipkin shows them again. */
+/** The open tabs, oldest first, and what each pane shows, kept so a restarted OOPBoT shows them again. */
 internal data class SavedLayout(val tabs: List<SavedTab>, val panes: Map<Pane, SavedPaneItem>)
 
 /** An open tab of the workspace folder [cwd]. */

@@ -19,10 +19,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Serves the downloaded models to Pi: the endpoint Pi's `pipkin-local` provider calls while [serve] is on, the
+ * Serves the downloaded models to Pi: the endpoint Pi's `oopbot-local` provider calls while [serve] is on, the
  * scheduler that runs one request and keeps one model loaded at a time, and the `:inference` process that holds that
- * model. Keeps Pipkin awake while a request waits or runs, unloads the model after the [preferences]' idle minutes
- * without requests, unloads an idle model as soon as Android says Pipkin went to the background, and saves a GPU or
+ * model. Keeps OOPBoT awake while a request waits or runs, unloads the model after the [preferences]' idle minutes
+ * without requests, unloads an idle model as soon as Android says OOPBoT went to the background, and saves a GPU or
  * NPU build that fails to load in [preferences], so the next load picks another.
  */
 internal class LocalModelRuntime(
@@ -134,7 +134,7 @@ internal class LocalModelRuntime(
   }
 
   private companion object {
-    const val TAG = "PipkinLocalModels"
+    const val TAG = "OopbotLocalModels"
 
     /** How long a chat keeps the model after a request, about the length of a tool run between two. */
     const val LEASE_MILLIS = 30_000L

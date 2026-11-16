@@ -27,7 +27,7 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * The endpoint Pi's `pipkin-local` provider talks to: OpenAI's chat completions, keyed with [apiKey], on loopback
+ * The endpoint Pi's `oopbot-local` provider talks to: OpenAI's chat completions, keyed with [apiKey], on loopback
  * [port]. Each request waits its turn in the scheduler through [serve], then is proxied byte for byte to the model the
  * `:inference` process serves, while [StreamProgress] reads the chunks for the chat's status line.
  *
@@ -262,7 +262,7 @@ internal class LocalModelServer(
   companion object {
     /** The header pi-ai sends the session id in when `compat.sendSessionAffinityHeaders` is on. */
     const val SESSION_HEADER = "x-session-affinity"
-    private const val TAG = "PipkinLocalModels"
+    private const val TAG = "OopbotLocalModels"
     private const val DATA = "data: "
     private const val ERROR_TYPE = "local_model_unavailable"
     private const val KEEPALIVE_MILLIS = 10_000L

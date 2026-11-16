@@ -6,7 +6,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import io.jeph.oopbot.R
 
 /**
- * Pi's interactive commands that Pipkin runs itself, since Pi's RPC mode would send them to the model as
+ * Pi's interactive commands that OOPBoT runs itself, since Pi's RPC mode would send them to the model as
  * text. Like in Pi's terminal UI they win over an extension command of the same name. [immediate]
  * commands take no argument and run as soon as they are picked from the menu.
  */
@@ -42,7 +42,7 @@ internal enum class CommandSource(@StringRes val label: Int) {
   ;
 
   companion object {
-    /** The source `get_commands` gives a Pi command, or null for one Pipkin doesn't know. */
+    /** The source `get_commands` gives a Pi command, or null for one OOPBoT doesn't know. */
     fun of(source: String): CommandSource? = when (source) {
       "extension" -> Extension
       "prompt" -> Prompt
@@ -53,8 +53,8 @@ internal enum class CommandSource(@StringRes val label: Int) {
 }
 
 /**
- * One row of the slash menu: a Pipkin [builtin], or a Pi command (extension, prompt template or skill). [source] is
- * null for a Pi command whose source Pipkin doesn't know.
+ * One row of the slash menu: a OOPBoT [builtin], or a Pi command (extension, prompt template or skill). [source] is
+ * null for a Pi command whose source OOPBoT doesn't know.
  */
 internal data class SlashCommand(
   val name: String,

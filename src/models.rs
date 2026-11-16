@@ -5,7 +5,7 @@
 //! 1. **Katalog Provider & Model Bawaan (`builtin_providers`)**: mencakup Google Gemini,
 //!    OpenRouter, Z.ai, Kimi Code, Anthropic, dan OpenAI beserta metadata lengkap (`reasoning`,
 //!    `thinkingLevelMap`, `input`, `contextWindow`, `maxTokens`, `cost`).
-//! 2. **Resolusi Override & Konfigurasi Aplikasi (`apply_override`, `from_pipkin_json`)**:
+//! 2. **Resolusi Override & Konfigurasi Aplikasi (`apply_override`, `from_oopbot_json`)**:
 //!    agar perubahan dari UI Android (`ModelEditorScreen`, `AddModelsScreen`, `SubscriptionScreen`,
 //!    `ModelSheet`) langsung mengendalikan parameter model di engine Rust.
 //! 3. **Live Scan & Deteksi Kapabilitas (`parse_models_response`)**:

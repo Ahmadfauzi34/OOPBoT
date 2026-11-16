@@ -93,7 +93,7 @@ internal class LiteRtEngine(private val context: Context) : InferenceEngine {
   }
 
   private companion object {
-    const val TAG = "PipkinLiteRt"
+    const val TAG = "OopbotLiteRt"
     const val CACHE_DIR = "litert-lm"
   }
 }

@@ -18,8 +18,8 @@ import io.jeph.oopbot.syntax.Grammar
 import io.jeph.oopbot.syntax.LoadedGrammar
 import io.jeph.oopbot.syntax.SyntaxSession
 import io.jeph.oopbot.syntax.loadGrammar
-import io.jeph.oopbot.ui.theme.PipkinColors
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withContext
@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun rememberHighlightedCode(code: String, language: String?): AnnotatedString {
   val grammar = language?.let(Grammar::forName) ?: return AnnotatedString(code)
-  val themeColors = pipkinColors
+  val themeColors = oopbotColors
   val palette = remember(themeColors) { palette(themeColors) }
   val assets = LocalContext.current.assets
   val latestCode by rememberUpdatedState(code)
@@ -57,7 +57,7 @@ internal fun rememberHighlightedCode(code: String, language: String?): Annotated
  * [code] coloured by [grammar] for the [theme]'s palette, in one parse on the calling thread, for callers that colour
  * many texts off the main thread themselves.
  */
-internal fun highlightCode(code: String, grammar: LoadedGrammar, theme: PipkinColors): AnnotatedString {
+internal fun highlightCode(code: String, grammar: LoadedGrammar, theme: OopbotColors): AnnotatedString {
   val colors = captureColors(grammar, palette(theme))
   return SyntaxSession(grammar).use { session ->
     paint(code, session.captures(code) { colors[it] != null }, colors::get)
@@ -149,7 +149,7 @@ internal fun AnnotatedString.splitLines(): List<AnnotatedString> {
   return lines
 }
 
-/** How Pipkin colours a highlight capture. [Plain] takes the text's own colour, even inside a coloured capture. */
+/** How OOPBoT colours a highlight capture. [Plain] takes the text's own colour, even inside a coloured capture. */
 internal enum class Token { Plain, Keyword, String, Constant, Comment, Function, Type, Tag }
 
 /**
@@ -233,7 +233,7 @@ private val TOKENS = mapOf(
 )
 
 /** The syntax palette, by token, from the theme's own roles so code reads as part of the app. */
-private fun palette(colors: PipkinColors) = mapOf(
+private fun palette(colors: OopbotColors) = mapOf(
   Token.Plain to Color.Unspecified,
   Token.Keyword to colors.accent,
   Token.String to colors.dotSuccess,

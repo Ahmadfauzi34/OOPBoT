@@ -93,7 +93,7 @@ internal class AccountRepository(
   }
 
   /**
-   * Makes Pi's `pipkin-local` provider list exactly [models], served at [baseUrl]; idle chats restart to see them only
+   * Makes Pi's `oopbot-local` provider list exactly [models], served at [baseUrl]; idle chats restart to see them only
    * when that changed Pi's configuration, since this runs on every start, while the chat shown first is starting, or
    * when an earlier sync failed, which may have changed it before its answer was lost.
    */

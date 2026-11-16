@@ -52,7 +52,7 @@ class OnboardingStateTest {
     // A reinstall wiped the setup the earlier host relied on.
     val reinstalled = fdroid(runCommand = true, reached = true).copy(termuxChanged = true)
     assertEquals(StepStatus.Pending, state(reinstalled, hello = READY).status(SetupStep.TermuxSetup))
-    // Without its key, Pipkin can't reach the Play helper the setup started.
+    // Without its key, OOPBoT can't reach the Play helper the setup started.
     assertEquals(StepStatus.Pending, state(play(reached = true, paired = false)).status(SetupStep.TermuxSetup))
     assertEquals(StepStatus.Done, state(play(reached = true, paired = true)).status(SetupStep.TermuxSetup))
   }
@@ -61,7 +61,7 @@ class OnboardingStateTest {
   fun setupWaitsForTermuxOnlyAfterTheCommandWasCopied() {
     assertFalse(state(fdroid(runCommand = true)).waitingForTermux)
     assertTrue(state(fdroid(runCommand = true), copied = true).waitingForTermux)
-    val failed = SetupError(SetupStep.TermuxSetup, "Termux blocked Pipkin's commands.")
+    val failed = SetupError(SetupStep.TermuxSetup, "Termux blocked OOPBoT's commands.")
     assertFalse(state(fdroid(runCommand = true), copied = true, error = failed).waitingForTermux)
   }
 
@@ -120,7 +120,7 @@ class OnboardingStateTest {
     assertEquals(missing, state(checks(Status.NotInstalled), error = missing).currentError)
     assertNull(state(fdroid(runCommand = true), error = missing).currentError)
     // The step asks for RUN_COMMAND itself; Termux's refusal adds nothing, granted or not.
-    val refused = SetupError(SetupStep.RunCommand, "Allow Pipkin to run commands in Termux.")
+    val refused = SetupError(SetupStep.RunCommand, "Allow OOPBoT to run commands in Termux.")
     assertNull(state(fdroid(), error = refused).currentError)
     assertTrue(state(fdroid(runCommand = true), complete = true, error = refused).shouldAutoInstall)
     val tooOld = HostFailure.NodeTooOld().toSetupError()

@@ -43,11 +43,11 @@ import io.jeph.oopbot.host.RemotePrompt
 import io.jeph.oopbot.host.RemoteReply
 import io.jeph.oopbot.ui.components.DialogConfirm
 import io.jeph.oopbot.ui.components.DialogTextField
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.sidebar.pathTextStyle
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -161,7 +161,7 @@ internal fun RemoteConnectDialogs(connector: RemoteConnector) {
     return
   }
   val failure = connector.failure ?: return
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.remote_connect_failed_title, connector.hostName),
     text = failure,
     icon = R.drawable.ic_lucide_circle_alert,
@@ -174,8 +174,8 @@ internal fun RemoteConnectDialogs(connector: RemoteConnector) {
 /** The first connection to a host: its key type and fingerprint, to check before trusting it. */
 @Composable
 private fun HostKeyDialog(host: String, prompt: RemotePrompt, onAnswer: (String?) -> Unit) {
-  val colors = pipkinColors
-  PipkinDialog(
+  val colors = oopbotColors
+  OopbotDialog(
     title = stringResource(R.string.remote_host_key_title, host),
     text = stringResource(R.string.remote_host_key_text),
     icon = R.drawable.ic_lucide_shield_check,
@@ -190,14 +190,14 @@ private fun HostKeyDialog(host: String, prompt: RemotePrompt, onAnswer: (String?
         .clip(RoundedCornerShape(14.dp))
         .background(colors.surface0)
         .padding(horizontal = 14.dp, vertical = 10.dp),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
     ) {
       val type = prompt.keyType
       if (type != null) {
         Text(
           text = type,
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
           fontWeight = FontWeight.SemiBold,
         )
       }
@@ -206,8 +206,8 @@ private fun HostKeyDialog(host: String, prompt: RemotePrompt, onAnswer: (String?
         text = prompt.fingerprint ?: prompt.text,
         style = pathTextStyle,
         color = colors.foreground,
-        fontFamily = PipkinFonts.mono,
-        fontSize = PipkinTokens.FontSize.code,
+        fontFamily = OopbotFonts.mono,
+        fontSize = OopbotTokens.FontSize.code,
       )
     }
   }
@@ -241,7 +241,7 @@ private fun SecretDialog(host: String, prompt: RemotePrompt, onAnswer: (String?,
 
     else -> null
   }
-  PipkinDialog(
+  OopbotDialog(
     title = title,
     text = text,
     confirm = DialogConfirm(
@@ -273,14 +273,14 @@ private fun SecretDialog(host: String, prompt: RemotePrompt, onAnswer: (String?,
 /** Remember password, under a password's field. */
 @Composable
 private fun RememberRow(checked: Boolean, onChange: (Boolean) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(top = PipkinTokens.Spacing.s12)
+      .padding(top = OopbotTokens.Spacing.s12)
       .clip(RoundedCornerShape(10.dp))
       .toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange)
-      .padding(vertical = PipkinTokens.Spacing.s4),
+      .padding(vertical = OopbotTokens.Spacing.s4),
     verticalAlignment = Alignment.Top,
   ) {
     Checkbox(
@@ -293,18 +293,18 @@ private fun RememberRow(checked: Boolean, onChange: (Boolean) -> Unit) {
       ),
     )
     Column(
-      modifier = Modifier.padding(start = PipkinTokens.Spacing.s12),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s2),
+      modifier = Modifier.padding(start = OopbotTokens.Spacing.s12),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s2),
     ) {
       Text(
         text = stringResource(R.string.remote_remember_password),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
       )
       Text(
         text = stringResource(R.string.remote_remember_password_detail),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
       )
     }
   }
@@ -323,8 +323,8 @@ internal fun ShowToggle(shown: Boolean, onToggle: () -> Unit) {
   ) {
     Text(
       text = stringResource(if (shown) R.string.remote_hide_secret else R.string.remote_show_secret),
-      color = pipkinColors.accent,
-      fontSize = PipkinTokens.FontSize.sm,
+      color = oopbotColors.accent,
+      fontSize = OopbotTokens.FontSize.sm,
       fontWeight = FontWeight.SemiBold,
     )
   }

@@ -65,8 +65,8 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.MarkdownCache
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.RoundIconButton
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -149,7 +149,7 @@ internal fun ChatStream(
     }
     AnimatedVisibility(
       visible = loadingOverHistory,
-      modifier = Modifier.align(Alignment.TopCenter).padding(top = PipkinTokens.Spacing.s8),
+      modifier = Modifier.align(Alignment.TopCenter).padding(top = OopbotTokens.Spacing.s8),
       enter = fadeIn(),
       exit = fadeOut(),
     ) {
@@ -162,7 +162,7 @@ internal fun ChatStream(
         follow.value = true
         scope.launch { if (count > 0) listState.scrollToItem(count - 1, FOLLOW_OFFSET) }
       },
-      modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = PipkinTokens.Spacing.s16),
+      modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = OopbotTokens.Spacing.s16),
     )
   }
 }
@@ -242,7 +242,7 @@ private fun StreamList(
   val firstItemIndex = if (banner != null) 1 else 0
   val itemCount = items.size + firstItemIndex
   val lastFooterKey = remember(items) { items.lastOrNull { it is TimelineItem.TurnFooter }?.key }
-  val railColor = pipkinColors.border
+  val railColor = oopbotColors.border
   LazyColumn(
     state = listState,
     modifier = Modifier
@@ -253,9 +253,9 @@ private fun StreamList(
       }.drawWithContent { if (gate.isOpen(items, firstItemIndex, view.markdown)) drawContent() }
       .fillMaxSize(),
     contentPadding = PaddingValues(
-      start = PipkinTokens.Spacing.s16,
-      end = PipkinTokens.Spacing.s16,
-      bottom = PipkinTokens.Spacing.s16,
+      start = OopbotTokens.Spacing.s16,
+      end = OopbotTokens.Spacing.s16,
+      bottom = OopbotTokens.Spacing.s16,
     ),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
@@ -265,7 +265,7 @@ private fun StreamList(
           state = banner,
           onRetry = onRestart,
           onOpenOnboarding = onOpenOnboarding,
-          modifier = Modifier.contentWidth().padding(top = PipkinTokens.Spacing.s8),
+          modifier = Modifier.contentWidth().padding(top = OopbotTokens.Spacing.s8),
         )
       }
     }
@@ -431,17 +431,17 @@ private fun StreamItem(
   }
 }
 
-/** Pipkin's mark over "Message Pipkin to start", or a way to Providers when there is no model to use. */
+/** OOPBoT's mark over "Message OOPBoT to start", or a way to Providers when there is no model to use. */
 @Composable
 private fun EmptyState(noModel: Boolean, onOpenProviders: () -> Unit, modifier: Modifier) {
   Column(
-    modifier = modifier.padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s48),
+    modifier = modifier.padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s48),
     horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     // The launcher icon's mark in the theme's accent, on a wash of it. A launcher shows the middle 72dp of the 108dp
     // foreground, so draw it 1.5x larger and clip.
-    val colors = pipkinColors
+    val colors = oopbotColors
     Box(
       modifier = Modifier
         .size(EMPTY_STATE_ICON_SIZE)
@@ -458,8 +458,8 @@ private fun EmptyState(noModel: Boolean, onOpenProviders: () -> Unit, modifier: 
     }
     Text(
       text = stringResource(if (noModel) R.string.chat_no_model else R.string.chat_empty),
-      color = pipkinColors.foreground,
-      fontSize = PipkinTokens.FontSize.title,
+      color = oopbotColors.foreground,
+      fontSize = OopbotTokens.FontSize.title,
       fontWeight = FontWeight.ExtraBold,
       textAlign = TextAlign.Center,
     )
@@ -476,7 +476,7 @@ private fun ScrollToBottomButton(visible: Boolean, onClick: () -> Unit, modifier
       contentDescription = stringResource(R.string.chat_scroll_to_bottom),
       onClick = onClick,
       modifier = Modifier.size(40.dp),
-      background = pipkinColors.surface2,
+      background = oopbotColors.surface2,
       iconSize = 20.dp,
     )
   }
@@ -492,11 +492,11 @@ private fun LazyListState.distanceFromBottom(): Int {
 
 /** 12dp above a user message and 8dp after one, none between steps, so a run of them reads as a list, else 4dp. */
 private fun gapBefore(previous: TimelineItem?, item: TimelineItem): Dp = when {
-  previous == null -> PipkinTokens.Spacing.s8
-  item is TimelineItem.User -> PipkinTokens.Spacing.s12
-  previous is TimelineItem.User -> PipkinTokens.Spacing.s8
+  previous == null -> OopbotTokens.Spacing.s8
+  item is TimelineItem.User -> OopbotTokens.Spacing.s12
+  previous is TimelineItem.User -> OopbotTokens.Spacing.s8
   previous.isStep && item.isStep -> 0.dp
-  else -> PipkinTokens.Spacing.s4
+  else -> OopbotTokens.Spacing.s4
 }
 
 private val TimelineItem.isStep: Boolean
@@ -510,4 +510,4 @@ private val TimelineItem.cachedMarkdown: String?
     else -> null
   }
 
-private fun Modifier.contentWidth(): Modifier = widthIn(max = PipkinTokens.contentMaxWidth).fillMaxWidth()
+private fun Modifier.contentWidth(): Modifier = widthIn(max = OopbotTokens.contentMaxWidth).fillMaxWidth()

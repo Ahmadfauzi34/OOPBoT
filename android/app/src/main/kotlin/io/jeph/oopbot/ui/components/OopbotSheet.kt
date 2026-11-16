@@ -48,8 +48,8 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.core.view.SoftwareKeyboardControllerCompat
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -71,7 +71,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PipkinSheet(
+fun OopbotSheet(
   onDismissRequest: () -> Unit,
   modifier: Modifier = Modifier,
   heightFraction: Float? = null,
@@ -92,14 +92,14 @@ fun PipkinSheet(
     modifier = modifier,
     sheetState = sheetState,
     shape = SHEET_SHAPE,
-    containerColor = pipkinColors.surface1,
-    contentColor = pipkinColors.foreground,
+    containerColor = oopbotColors.surface1,
+    contentColor = oopbotColors.foreground,
     dragHandle = {
       BottomSheetDefaults.DragHandle(
         width = 40.dp,
         height = 4.dp,
         shape = RoundedCornerShape(2.dp),
-        color = pipkinColors.surface3,
+        color = oopbotColors.surface3,
       )
     },
   ) {
@@ -120,14 +120,14 @@ fun PipkinSheet(
         }
         .then(sizing)
         .navigationBarsPadding()
-        .padding(bottom = PipkinTokens.Spacing.s16),
+        .padding(bottom = OopbotTokens.Spacing.s16),
     ) {
       content(dismiss)
     }
   }
 }
 
-/** The `dismiss` [PipkinSheet] hands its content. */
+/** The `dismiss` [OopbotSheet] hands its content. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun rememberSheetDismiss(sheetState: SheetState, onDismissRequest: () -> Unit): SheetDismiss {

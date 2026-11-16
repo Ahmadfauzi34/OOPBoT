@@ -10,7 +10,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.appGraph
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.PaneHeader
 
@@ -21,7 +21,7 @@ import io.jeph.oopbot.ui.workspace.PaneHeader
 @Composable
 internal fun ChatHeader(process: AgentProcess, controls: PaneControls, modifier: Modifier) {
   val statuses by process.extensionStatuses.collectAsStateWithLifecycle()
-  val colors = pipkinColors
+  val colors = oopbotColors
   val status = remember(statuses, colors) { extensionStatusLine(statuses, colors) }
   PaneHeader(
     title = chatTitle(process),

@@ -17,7 +17,7 @@ import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.RemoteHost
 import io.jeph.oopbot.ui.ShellActions
 import io.jeph.oopbot.ui.components.DialogConfirm
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.sidebar.RemovalCounts
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
 import io.jeph.oopbot.ui.sidebar.removalStops
@@ -56,7 +56,7 @@ internal fun RemoveHostDialog(
       parts += removalStops(counts)
     }
   }
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.remote_remove_title, host.name),
     text = parts.joinToString(" "),
     icon = R.drawable.ic_lucide_trash_2,

@@ -19,10 +19,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.sidebar.tildePath
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.text.NumberFormat
 import java.util.Currency
 import kotlin.math.roundToInt
@@ -35,7 +35,7 @@ private const val SHEET_MAX_HEIGHT = 0.8f
 internal fun SessionInfoSheet(stats: JSONObject, name: String?, home: String?, onDismiss: () -> Unit) {
   val numbers = NumberFormat.getIntegerInstance()
   val count = { key: String -> numbers.format(stats.optLong(key)) }
-  PipkinSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) {
+  OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) {
     Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
       SectionTitle(R.string.session_info)
       name?.let { InfoRow(R.string.session_name, it) }
@@ -99,8 +99,8 @@ private fun ContextRow(usage: JSONObject, numbers: NumberFormat) {
 /** `/fork`: the user messages to fork from, newest first; picking one forks and fills the composer with it. */
 @Composable
 internal fun ForkSheet(messages: List<JSONObject>, onDismiss: () -> Unit, onFork: (entryId: String) -> Unit) {
-  val colors = pipkinColors
-  PipkinSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) { dismiss ->
+  val colors = oopbotColors
+  OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) { dismiss ->
     SectionTitle(R.string.chat_fork_title)
     Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
       messages.asReversed().forEach { message ->
@@ -110,9 +110,9 @@ internal fun ForkSheet(messages: List<JSONObject>, onDismiss: () -> Unit, onFork
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .clickable { dismiss { onFork(message.optString("entryId")) } }
-            .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s12),
+            .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s12),
           color = colors.foreground,
-          fontSize = PipkinTokens.FontSize.base,
+          fontSize = OopbotTokens.FontSize.base,
           maxLines = 2,
           overflow = TextOverflow.Ellipsis,
         )
@@ -126,34 +126,34 @@ private fun SectionTitle(@StringRes text: Int) {
   Text(
     text = stringResource(text),
     modifier = Modifier.fillMaxWidth().padding(
-      start = PipkinTokens.Spacing.s16,
-      end = PipkinTokens.Spacing.s16,
-      top = PipkinTokens.Spacing.s12,
-      bottom = PipkinTokens.Spacing.s4,
+      start = OopbotTokens.Spacing.s16,
+      end = OopbotTokens.Spacing.s16,
+      top = OopbotTokens.Spacing.s12,
+      bottom = OopbotTokens.Spacing.s4,
     ),
-    color = pipkinColors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
+    color = oopbotColors.foregroundMuted,
+    fontSize = OopbotTokens.FontSize.sm,
   )
 }
 
 /** A label with its value right-aligned; long values such as the session file wrap instead of being cut. */
 @Composable
 private fun InfoRow(@StringRes label: Int, value: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 36.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.Top,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s16),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s16),
   ) {
-    Text(text = stringResource(label), color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+    Text(text = stringResource(label), color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
     Text(
       text = value,
       modifier = Modifier.weight(1f),
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       textAlign = TextAlign.End,
     )
   }

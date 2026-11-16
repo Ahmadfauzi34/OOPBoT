@@ -24,14 +24,14 @@ import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.git.CommitDiffState
 import io.jeph.oopbot.git.CommitTab
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SheetRow
 import io.jeph.oopbot.ui.remote.AutoReconnect
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.PaneHeader
 import io.jeph.oopbot.ui.workspace.PublishTabActions
@@ -77,7 +77,7 @@ internal fun CommitScreen(commit: CommitTab, controls: PaneControls, modifier: M
   val connect = host?.let { shown -> { connector.connect(shown.id, shown.name) { reload() } } }
   if (host != null) AutoReconnect(connector, host, unreachable?.code) { reload() }
 
-  Column(modifier = modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = modifier.fillMaxSize().background(oopbotColors.surface0)) {
     PaneHeader(title = commit.title, cwd = commit.cwd, controls = controls)
     CommitBody(state, wrapLines, list, connect, Modifier.weight(1f))
   }
@@ -116,7 +116,7 @@ private fun CommitBody(
         state = list,
         modifier = modifier,
         contentPadding = PaddingValues(
-          bottom = PipkinTokens.Spacing.s16 + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+          bottom = OopbotTokens.Spacing.s16 + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
         ),
       )
     }
@@ -126,11 +126,11 @@ private fun CommitBody(
 /** A commit tab's actions: close it. */
 @Composable
 internal fun CommitActionsSheet(onClose: () -> Unit, onDismiss: () -> Unit) {
-  PipkinSheet(onDismissRequest = onDismiss) { dismiss ->
+  OopbotSheet(onDismissRequest = onDismiss) { dismiss ->
     SheetRow(
       label = stringResource(R.string.git_commit_close),
       icon = R.drawable.ic_lucide_x,
-      labelColor = pipkinColors.destructive,
+      labelColor = oopbotColors.destructive,
       onClick = { dismiss(onClose) },
     )
   }

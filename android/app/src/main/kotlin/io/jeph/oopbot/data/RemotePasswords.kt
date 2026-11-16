@@ -26,9 +26,9 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * The passwords the user asked Pipkin to remember for password hosts, kept in Pipkin's own storage, never in Termux,
+ * The passwords the user asked OOPBoT to remember for password hosts, kept in OOPBoT's own storage, never in Termux,
  * encrypted by [cipher]. Each is bound to its host's id, address and port, and to the exact prompt it answered, as
- * authenticated data: it doesn't decrypt for another host or server, and Pipkin fills it in only for that same
+ * authenticated data: it doesn't decrypt for another host or server, and OOPBoT fills it in only for that same
  * question. One that can't be decrypted counts as not saved, and is deleted.
  */
 internal class RemotePasswords(private val file: File, private val cipher: PasswordCipher) {
@@ -42,8 +42,8 @@ internal class RemotePasswords(private val file: File, private val cipher: Passw
   private val rejectedState = MutableStateFlow<Map<String, Boolean>>(emptyMap())
 
   /**
-   * The hosts with a saved password, by id, each with whether the server rejected it the last time Pipkin sent it,
-   * after which Pipkin doesn't send it again.
+   * The hosts with a saved password, by id, each with whether the server rejected it the last time OOPBoT sent it,
+   * after which OOPBoT doesn't send it again.
    */
   val saved: StateFlow<Map<String, Boolean>> = rejectedState.asStateFlow()
 
@@ -85,7 +85,7 @@ internal class RemotePasswords(private val file: File, private val cipher: Passw
     write()
   }
 
-  /** Records that host [id]'s server refused its saved password, so Pipkin stops sending it. */
+  /** Records that host [id]'s server refused its saved password, so OOPBoT stops sending it. */
   fun reject(id: String) {
     synchronized(lock) {
       val entry = entries[id] ?: return
@@ -131,7 +131,7 @@ internal class RemotePasswords(private val file: File, private val cipher: Passw
         )
       }
     } catch (error: JSONException) {
-      // Only Pipkin writes this file, so it's damaged; the passwords are asked for again.
+      // Only OOPBoT writes this file, so it's damaged; the passwords are asked for again.
       Log.w(TAG, "Ignoring an unreadable saved passwords file", error)
       emptyMap()
     } catch (error: IllegalArgumentException) {
@@ -165,7 +165,7 @@ internal class RemotePasswords(private val file: File, private val cipher: Passw
   }
 
   companion object {
-    private const val TAG = "PipkinRemotePasswords"
+    private const val TAG = "OopbotRemotePasswords"
     private const val FILE = "remote-passwords.json"
 
     /** The store in `noBackupFilesDir`, which Android's backups and device transfers never copy. */
@@ -191,7 +191,7 @@ internal interface PasswordCipher {
 
 /**
  * AES-256-GCM under a key that lives in the Android Keystore, in the phone's StrongBox security chip when it has one,
- * and can't be exported. It works while the phone is locked, so Pipkin can reconnect during a turn with the screen off.
+ * and can't be exported. It works while the phone is locked, so OOPBoT can reconnect during a turn with the screen off.
  */
 private class KeystoreCipher(context: Context) : PasswordCipher {
   private val strongBox = context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)

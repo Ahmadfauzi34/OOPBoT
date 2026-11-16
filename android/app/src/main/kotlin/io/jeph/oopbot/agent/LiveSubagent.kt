@@ -21,7 +21,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
- * A subagent's transcript built from its session events, as the `pipkin-subagents` extension sends them while a
+ * A subagent's transcript built from its session events, as the `oopbot-subagents` extension sends them while a
  * subagent screen follows the run. The events have the shape of Pi's RPC events, so a [ChatTimeline] builds the rows
  * as for a chat. Each event's time, as the extension saw it, stands in for the timeline's clock, so a log sent mid-run
  * times the run as it went rather than from when the screen opened.
@@ -44,7 +44,7 @@ internal class LiveSubagent {
 }
 
 /**
- * The runs of one chat's `pipkin-subagents` extension that subagent screens follow, by run id, each with its
+ * The runs of one chat's `oopbot-subagents` extension that subagent screens follow, by run id, each with its
  * [LiveSubagent] once the extension sent the log so far. [send] puts a message on the extension's channel topic;
  * [scope] sends the ones nothing waits for.
  */

@@ -32,9 +32,9 @@ import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.SnackbarStackState
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.launch
 
@@ -173,9 +173,9 @@ private fun TaskSection(task: BackupTask?, list: BackupList, onCreate: () -> Uni
       ProgressLine(
         line,
         Modifier.padding(
-          start = PipkinTokens.Spacing.s16,
-          end = PipkinTokens.Spacing.s16,
-          bottom = PipkinTokens.Spacing.s12,
+          start = OopbotTokens.Spacing.s16,
+          end = OopbotTokens.Spacing.s16,
+          bottom = OopbotTokens.Spacing.s12,
         ),
       )
     }
@@ -197,7 +197,7 @@ private fun SavedSection(
 
       is BackupList.Failed -> SettingsRow(
         title = list.message ?: failed,
-        titleColor = pipkinColors.destructive,
+        titleColor = oopbotColors.destructive,
         onClick = onRetry,
       ) {
         SettingsValue(stringResource(R.string.backups_retry))
@@ -220,7 +220,7 @@ private fun SavedSection(
 @Composable
 private fun BackupRow(backup: BackupInfo, enabled: Boolean, onRestore: () -> Unit, onDelete: () -> Unit) {
   val context = LocalContext.current
-  val colors = pipkinColors
+  val colors = oopbotColors
   val size = Formatter.formatShortFileSize(context, backup.size)
   val subtitle =
     when {
@@ -257,9 +257,9 @@ private fun BackupRow(backup: BackupInfo, enabled: Boolean, onRestore: () -> Uni
 private fun OutcomeCaption(outcome: BackupOutcome, failed: String) {
   val (text, color) =
     when (outcome) {
-      BackupOutcome.Created -> stringResource(R.string.backups_created) to pipkinColors.foregroundMuted
-      BackupOutcome.Restored -> stringResource(R.string.backups_restored) to pipkinColors.foregroundMuted
-      is BackupOutcome.Failed -> (outcome.message ?: failed) to pipkinColors.destructive
+      BackupOutcome.Created -> stringResource(R.string.backups_created) to oopbotColors.foregroundMuted
+      BackupOutcome.Restored -> stringResource(R.string.backups_restored) to oopbotColors.foregroundMuted
+      is BackupOutcome.Failed -> (outcome.message ?: failed) to oopbotColors.destructive
     }
   SettingsCaption(text = text, color = color)
 }
@@ -270,10 +270,10 @@ private fun ProgressLine(line: String, modifier: Modifier = Modifier) {
   Text(
     text = line,
     modifier = modifier.fillMaxWidth(),
-    color = pipkinColors.foregroundMuted,
-    fontFamily = PipkinFonts.mono,
-    fontSize = PipkinTokens.FontSize.code,
-    lineHeight = PipkinTokens.LineHeight.code,
+    color = oopbotColors.foregroundMuted,
+    fontFamily = OopbotFonts.mono,
+    fontSize = OopbotTokens.FontSize.code,
+    lineHeight = OopbotTokens.LineHeight.code,
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
   )

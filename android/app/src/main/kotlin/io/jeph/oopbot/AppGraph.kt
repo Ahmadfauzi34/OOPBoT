@@ -51,7 +51,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 
-/** The app's long-lived objects, built once by [PipkinApplication]. Reach it with [Context.appGraph]. */
+/** The app's long-lived objects, built once by [OopbotApplication]. Reach it with [Context.appGraph]. */
 internal class AppGraph(private val application: Application) {
   /** Lives as long as the process; main-thread confined. */
   val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -67,7 +67,7 @@ internal class AppGraph(private val application: Application) {
   val sessionArchive = SessionArchive(sessionRepository, preferences, scope)
   private val visibility = AppVisibility(application)
 
-  /** The chats the user sees: those the panes show while Pipkin is on screen and nothing covers them. */
+  /** The chats the user sees: those the panes show while OOPBoT is on screen and nothing covers them. */
   val chatsOnScreen = MutableStateFlow<Set<AgentProcess>>(emptySet())
   val chatInbox = ChatInbox()
   private val turnNotifications = TurnNotifications(application, visibility, chatInbox) { folderNames() }
@@ -133,7 +133,7 @@ internal class AppGraph(private val application: Application) {
             sessionRepository.refresh()
             remoteHosts.refresh()
           }
-          // Events may have gone missing while Pipkin was in the background.
+          // Events may have gone missing while OOPBoT was in the background.
           for (process in registry.processes.value.values) scope.launch { process.resync() }
         }
       },
@@ -183,7 +183,7 @@ internal class AppGraph(private val application: Application) {
   /**
    * One [KeepAlive] acquisition while any chat holds its Pi (it works or waits on background tasks, with a short grace
    * after; see [AgentProcess.holdsPi]) or any terminal runs a command, so switching apps does not stop them. The
-   * notification follows which of them keeps Pipkin awake, also while sign-in or a Pi install keeps it up.
+   * notification follows which of them keeps OOPBoT awake, also while sign-in or a Pi install keeps it up.
    */
   private fun holdWhileWorking() {
     scope.launch {
@@ -218,4 +218,4 @@ internal class AppGraph(private val application: Application) {
   }
 }
 
-internal val Context.appGraph: AppGraph get() = (applicationContext as PipkinApplication).graph
+internal val Context.appGraph: AppGraph get() = (applicationContext as OopbotApplication).graph

@@ -371,7 +371,7 @@ internal class ShellActions(private val graph: AppGraph) {
   }
 
   companion object {
-    /** Termux's own fixed home, not a path in Pipkin's storage; the home until a host has reported its own. */
+    /** Termux's own fixed home, not a path in OOPBoT's storage; the home until a host has reported its own. */
     @SuppressLint("SdCardPath")
     const val TERMUX_HOME = "/data/data/com.termux/files/home"
     private const val START_TIMEOUT_MILLIS = 60_000L

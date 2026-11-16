@@ -29,8 +29,8 @@ import androidx.core.net.toUri
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * The connection's status in a card that keeps its height through every state, with the check button inside it. A
@@ -40,7 +40,7 @@ import io.jeph.oopbot.ui.theme.pipkinColors
 @Composable
 internal fun ConnectionSection(form: ProviderForm, onCheck: () -> Unit) {
   val failure = form.lastFailure
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(stringResource(R.string.provider_connection))
     SettingsSection(title = null, modifier = Modifier.animateContentSize()) {
       ConnectionStatusRow(form = form, onCheck = onCheck)
@@ -57,7 +57,7 @@ internal fun ConnectionSection(form: ProviderForm, onCheck: () -> Unit) {
 
 @Composable
 private fun ConnectionStatusRow(form: ProviderForm, onCheck: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val check = form.check
   val status = connectionStatus(form)
   Row(
@@ -66,11 +66,11 @@ private fun ConnectionStatusRow(form: ProviderForm, onCheck: () -> Unit) {
         .fillMaxWidth()
         .heightIn(min = 56.dp)
         .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
-        .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+        .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
-    Box(modifier = Modifier.size(PipkinTokens.IconSize.lg), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.size(OopbotTokens.IconSize.lg), contentAlignment = Alignment.Center) {
       when (check) {
         is ConnectionCheck.Checking -> SimmeringPot()
         is ConnectionCheck.Ok -> StatusIcon(R.drawable.ic_lucide_circle_check, colors.dotSuccess)
@@ -83,7 +83,7 @@ private fun ConnectionStatusRow(form: ProviderForm, onCheck: () -> Unit) {
       Text(
         text = status.title,
         color = if (check is ConnectionCheck.Failed) colors.destructive else colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.Medium,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -91,7 +91,7 @@ private fun ConnectionStatusRow(form: ProviderForm, onCheck: () -> Unit) {
       Text(
         text = status.subtitle,
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -128,7 +128,7 @@ private fun connectionStatus(form: ProviderForm): ConnectionStatus = when (val c
 
 @Composable
 private fun StatusIcon(@DrawableRes icon: Int, tint: Color) {
-  LucideIcon(icon = icon, contentDescription = null, size = PipkinTokens.IconSize.lg, tint = tint)
+  LucideIcon(icon = icon, contentDescription = null, size = OopbotTokens.IconSize.lg, tint = tint)
 }
 
 /** What went wrong in words, what to try, and what the server said, which can be selected to copy. */

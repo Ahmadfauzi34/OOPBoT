@@ -182,7 +182,7 @@ internal class TerminalSession(
   }
 
   private companion object {
-    const val TAG = "PipkinTerminal"
+    const val TAG = "OopbotTerminal"
 
     /** The size a shell starts at before the terminal has been laid out; the first layout resizes it. */
     const val DEFAULT_COLUMNS = 80

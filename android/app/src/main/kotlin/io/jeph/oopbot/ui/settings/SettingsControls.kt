@@ -35,17 +35,17 @@ import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** The label over a settings card or list: small, bold and spaced out, in the muted colour. */
 @Composable
 internal fun SectionLabel(text: String, modifier: Modifier = Modifier) {
   Text(
     text = text,
-    modifier = modifier.padding(horizontal = PipkinTokens.Spacing.s12),
-    color = pipkinColors.foregroundMuted,
+    modifier = modifier.padding(horizontal = OopbotTokens.Spacing.s12),
+    color = oopbotColors.foregroundMuted,
     fontSize = SECTION_LABEL_SIZE,
     fontWeight = FontWeight.Bold,
     letterSpacing = SECTION_LABEL_TRACKING,
@@ -61,7 +61,7 @@ private val SECTION_LABEL_TRACKING = 0.06.em
  */
 @Composable
 internal fun SettingsSwitch(checked: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Switch(
     checked = checked,
     onCheckedChange = null,
@@ -79,10 +79,10 @@ internal fun SettingsSwitch(checked: Boolean) {
 /** A number between minus and plus buttons labelled [fewer] and [more], kept within [range]. */
 @Composable
 internal fun Stepper(value: Int, range: IntRange, onChange: (Int) -> Unit, fewer: String, more: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     RoundIconButton(
       icon = R.drawable.ic_lucide_minus,
@@ -98,9 +98,9 @@ internal fun Stepper(value: Int, range: IntRange, onChange: (Int) -> Unit, fewer
       // Announced as it changes, since the buttons on either side only say which way they go.
       modifier = Modifier.widthIn(min = 24.dp).semantics { liveRegion = LiveRegionMode.Polite },
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.Bold,
-      style = LocalTextStyle.current.merge(TextStyle(fontFeatureSettings = PipkinFonts.TABULAR)),
+      style = LocalTextStyle.current.merge(TextStyle(fontFeatureSettings = OopbotFonts.TABULAR)),
       textAlign = TextAlign.Center,
     )
     RoundIconButton(
@@ -126,11 +126,11 @@ internal fun SettingsProgressLine(text: String) {
     modifier =
       Modifier
         .fillMaxWidth()
-        .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s16, bottom = PipkinTokens.Spacing.s12),
-    color = pipkinColors.foregroundMuted,
-    fontFamily = PipkinFonts.mono,
-    fontSize = PipkinTokens.FontSize.code,
-    lineHeight = PipkinTokens.LineHeight.code,
+        .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s16, bottom = OopbotTokens.Spacing.s12),
+    color = oopbotColors.foregroundMuted,
+    fontFamily = OopbotFonts.mono,
+    fontSize = OopbotTokens.FontSize.code,
+    lineHeight = OopbotTokens.LineHeight.code,
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
   )
@@ -142,7 +142,7 @@ internal val SettingsFieldShape = RoundedCornerShape(14.dp)
 /** A settings form field's colours: a raised well with a hairline that turns cobalt while focused. */
 @Composable
 internal fun settingsFieldColors(): TextFieldColors {
-  val colors = pipkinColors
+  val colors = oopbotColors
   return OutlinedTextFieldDefaults.colors(
     focusedContainerColor = colors.surface1,
     unfocusedContainerColor = colors.surface1,
@@ -160,7 +160,7 @@ internal fun settingsFieldColors(): TextFieldColors {
  */
 @Composable
 internal fun SettingsSaveButton(label: String, saving: Boolean, enabled: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Button(
     onClick = onClick,
     modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
@@ -172,12 +172,12 @@ internal fun SettingsSaveButton(label: String, saving: Boolean, enabled: Boolean
       disabledContainerColor = colors.accent.copy(alpha = DISABLED_ALPHA),
       disabledContentColor = colors.accentForeground.copy(alpha = DISABLED_ALPHA),
     ),
-    contentPadding = PaddingValues(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+    contentPadding = PaddingValues(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
   ) {
     if (saving) {
       SimmeringPot(tint = colors.accentForeground)
     } else {
-      Text(text = label, fontSize = PipkinTokens.FontSize.base, fontWeight = FontWeight.SemiBold)
+      Text(text = label, fontSize = OopbotTokens.FontSize.base, fontWeight = FontWeight.SemiBold)
     }
   }
 }

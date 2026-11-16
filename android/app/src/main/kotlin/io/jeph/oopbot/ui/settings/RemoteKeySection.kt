@@ -36,16 +36,16 @@ import io.jeph.oopbot.host.keyComment
 import io.jeph.oopbot.host.keyFingerprint
 import io.jeph.oopbot.ui.components.DialogConfirm
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinDialog
+import io.jeph.oopbot.ui.components.OopbotDialog
 import io.jeph.oopbot.ui.sidebar.pathTextStyle
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import kotlinx.coroutines.launch
 
 /**
- * Pipkin's key: its comment, fingerprint and the hosts that sign in with it, then Copy public key and Make a new key.
+ * OOPBoT's key: its comment, fingerprint and the hosts that sign in with it, then Copy public key and Make a new key.
  * Shown once the key exists, which the first key host's editor makes, so opening the list never makes one.
  */
 @Composable
@@ -73,7 +73,7 @@ internal fun RemoteKeySection(remoteHosts: RemoteHosts) {
       confirming = true
     },
   )
-  error?.let { SettingsCaption(text = it, color = pipkinColors.destructive) }
+  error?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
   if (confirming) {
     NewKeyDialog(usedByHosts = keyHosts.isNotEmpty(), onDismiss = { confirming = false }) {
       confirming = false
@@ -108,7 +108,7 @@ private fun KeyCard(key: String, usedBy: String, making: Boolean, onNewKey: () -
     SettingsDivider()
     SettingsRow(
       title = stringResource(R.string.remote_copy_key),
-      titleColor = pipkinColors.accent,
+      titleColor = oopbotColors.accent,
       onClick = { copyToClipboard(context, label, key) },
       leading = { AccentIcon(R.drawable.ic_lucide_copy) },
     )
@@ -116,7 +116,7 @@ private fun KeyCard(key: String, usedBy: String, making: Boolean, onNewKey: () -
     SettingsRow(
       title = stringResource(R.string.remote_key_new),
       subtitle = stringResource(R.string.remote_key_new_detail),
-      titleColor = pipkinColors.accent,
+      titleColor = oopbotColors.accent,
       enabled = !making,
       onClick = onNewKey,
       leading = { AccentIcon(R.drawable.ic_lucide_refresh_cw) },
@@ -124,10 +124,10 @@ private fun KeyCard(key: String, usedBy: String, making: Boolean, onNewKey: () -
   }
 }
 
-/** Asks before replacing the key, saying the hosts that use it, if [usedByHosts], refuse Pipkin until updated. */
+/** Asks before replacing the key, saying the hosts that use it, if [usedByHosts], refuse OOPBoT until updated. */
 @Composable
 private fun NewKeyDialog(usedByHosts: Boolean, onDismiss: () -> Unit, onConfirm: () -> Unit) {
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.remote_key_new_title),
     text = stringResource(if (usedByHosts) R.string.remote_key_new_text else R.string.remote_key_new_text_unused),
     icon = R.drawable.ic_lucide_key_round,
@@ -146,7 +146,7 @@ private fun NewKeyDialog(usedByHosts: Boolean, onDismiss: () -> Unit, onConfirm:
 private fun KeyMadeDialog(newKey: String, usedByHosts: Boolean, onDismiss: () -> Unit) {
   val context = LocalContext.current
   val label = stringResource(R.string.remote_key_label)
-  PipkinDialog(
+  OopbotDialog(
     title = stringResource(R.string.remote_key_made_title),
     text = stringResource(if (usedByHosts) R.string.remote_key_made_text else R.string.remote_key_made_text_unused),
     icon = R.drawable.ic_lucide_key_round,
@@ -167,13 +167,13 @@ private fun KeyMadeDialog(newKey: String, usedByHosts: Boolean, onDismiss: () ->
 /** The key's comment, its fingerprint in the code font, and which hosts sign in with it. */
 @Composable
 private fun KeyIdentity(comment: String, fingerprint: String?, usedBy: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 54.dp)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Box(modifier = Modifier.padding(top = 2.dp).size(20.dp), contentAlignment = Alignment.Center) {
       LucideIcon(icon = R.drawable.ic_lucide_key_round, contentDescription = null, tint = colors.foregroundMuted)
@@ -182,7 +182,7 @@ private fun KeyIdentity(comment: String, fingerprint: String?, usedBy: String) {
       Text(
         text = comment,
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         fontWeight = FontWeight.Medium,
       )
       fingerprint?.let {
@@ -190,11 +190,11 @@ private fun KeyIdentity(comment: String, fingerprint: String?, usedBy: String) {
           text = it,
           style = pathTextStyle,
           color = colors.foregroundMuted,
-          fontFamily = PipkinFonts.mono,
-          fontSize = PipkinTokens.FontSize.code,
+          fontFamily = OopbotFonts.mono,
+          fontSize = OopbotTokens.FontSize.code,
         )
       }
-      Text(text = usedBy, color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.sm)
+      Text(text = usedBy, color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.sm)
     }
   }
 }
@@ -202,23 +202,23 @@ private fun KeyIdentity(comment: String, fingerprint: String?, usedBy: String) {
 /** A public key line in the code font, on the dialog's surface. */
 @Composable
 private fun KeyLine(line: String) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Text(
     text = line,
     modifier = Modifier
       .fillMaxWidth()
-      .padding(top = PipkinTokens.Spacing.s8)
-      .background(colors.surface0, RoundedCornerShape(PipkinTokens.Radius.md))
-      .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s8),
+      .padding(top = OopbotTokens.Spacing.s8)
+      .background(colors.surface0, RoundedCornerShape(OopbotTokens.Radius.md))
+      .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s8),
     style = pathTextStyle,
     color = colors.foreground,
-    fontFamily = PipkinFonts.mono,
-    fontSize = PipkinTokens.FontSize.code,
-    lineHeight = PipkinTokens.LineHeight.code,
+    fontFamily = OopbotFonts.mono,
+    fontSize = OopbotTokens.FontSize.code,
+    lineHeight = OopbotTokens.LineHeight.code,
   )
 }
 
 @Composable
 private fun AccentIcon(@DrawableRes icon: Int) {
-  LucideIcon(icon = icon, contentDescription = null, tint = pipkinColors.accent)
+  LucideIcon(icon = icon, contentDescription = null, tint = oopbotColors.accent)
 }

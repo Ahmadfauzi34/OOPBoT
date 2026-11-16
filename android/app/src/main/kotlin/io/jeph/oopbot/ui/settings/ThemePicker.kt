@@ -30,27 +30,27 @@ import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.EvenRows
 import io.jeph.oopbot.ui.theme.AppTheme
-import io.jeph.oopbot.ui.theme.PipkinColors
-import io.jeph.oopbot.ui.theme.PipkinTokens
+import io.jeph.oopbot.ui.theme.OopbotColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.PorcelainColors
 import io.jeph.oopbot.ui.theme.StoneColors
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** The Theme setting: the themes in even rows, each a small chat drawn in its colours over its name. */
 @Composable
 internal fun ThemePicker(selected: AppTheme, onSelect: (AppTheme) -> Unit) {
   Column(
-    modifier = Modifier.fillMaxWidth().padding(PipkinTokens.Spacing.s16),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    modifier = Modifier.fillMaxWidth().padding(OopbotTokens.Spacing.s16),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Text(
       text = stringResource(R.string.settings_theme),
-      color = pipkinColors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      color = oopbotColors.foreground,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.Medium,
     )
     // As many to a row as fit their names, so a large font gives two rows rather than cut-off names.
-    EvenRows(gap = PipkinTokens.Spacing.s8, modifier = Modifier.fillMaxWidth().selectableGroup()) {
+    EvenRows(gap = OopbotTokens.Spacing.s8, modifier = Modifier.fillMaxWidth().selectableGroup()) {
       AppTheme.entries.forEach { theme ->
         ThemeOption(theme, theme == selected, onClick = { onSelect(theme) })
       }
@@ -60,14 +60,14 @@ internal fun ThemePicker(selected: AppTheme, onSelect: (AppTheme) -> Unit) {
 
 @Composable
 private fun ThemeOption(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Column(
     modifier = Modifier
       .clip(SHAPE)
       .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-      .padding(vertical = PipkinTokens.Spacing.s4),
+      .padding(vertical = OopbotTokens.Spacing.s4),
     horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     Canvas(
       modifier = Modifier
@@ -100,7 +100,7 @@ private fun ThemeOption(theme: AppTheme, selected: Boolean, onClick: () -> Unit)
 }
 
 /** A tiny chat in [palette]: a prompt card, two lines of reply and the send button. */
-private fun DrawScope.drawPreview(palette: PipkinColors) {
+private fun DrawScope.drawPreview(palette: OopbotColors) {
   val corner = CornerRadius(3.dp.toPx())
   val line = 3.dp.toPx()
   drawRect(palette.surface0)

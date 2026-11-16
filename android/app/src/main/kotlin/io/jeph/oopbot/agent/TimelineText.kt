@@ -18,7 +18,7 @@ val AppNotice.text: Int
     AppNotice.ConnectionLost -> R.string.chat_notice_connection_lost
   }
 
-/** The error's line in the chat and in its notification: Pi's reason, or Pipkin's when Pi gave none. */
+/** The error's line in the chat and in its notification: Pi's reason, or OOPBoT's when Pi gave none. */
 fun ErrorCause.text(resources: Resources): String = when (this) {
   is ErrorCause.Request -> message ?: resources.getString(R.string.chat_error_request_failed)
   is ErrorCause.Compaction -> message ?: resources.getString(R.string.chat_error_compaction_failed)

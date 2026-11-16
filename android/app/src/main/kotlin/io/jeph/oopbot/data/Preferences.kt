@@ -27,7 +27,7 @@ internal class Preferences(context: Context) {
   private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
   /**
-   * Android's build and when Pipkin was last installed or updated, which [localModelFailedBuilds] are kept for. The
+   * Android's build and when OOPBoT was last installed or updated, which [localModelFailedBuilds] are kept for. The
    * install time rather than the version, since every development build has the same version.
    */
   private val softwareVersion =
@@ -98,7 +98,7 @@ internal class Preferences(context: Context) {
   val archivedSessions: StateFlow<Map<String, Long>> = archivedState.asStateFlow()
 
   /**
-   * Session files that are not archived by path, each with when Pipkin last showed it, restored it, or saw its run end
+   * Session files that are not archived by path, each with when OOPBoT last showed it, restored it, or saw its run end
    * (epoch milliseconds), which keeps it from auto archive as a new message would.
    */
   val touchedSessions: StateFlow<Map<String, Long>> = touchedState.asStateFlow()
@@ -142,15 +142,15 @@ internal class Preferences(context: Context) {
   /** How long a chat that is neither working nor shown keeps its Pi. */
   val idleStop: StateFlow<IdleStop> = idleStopState.asStateFlow()
 
-  /** The extensions Pipkin bundles that the user turned off, by [BundledExtension.id]; a chat's next Pi leaves them out. */
+  /** The extensions OOPBoT bundles that the user turned off, by [BundledExtension.id]; a chat's next Pi leaves them out. */
   val disabledExtensions: StateFlow<Set<String>> = disabledExtensionsState.asStateFlow()
 
-  /** Whether Pipkin offers on-device models to Pi; off until the user turns the experiment on. */
+  /** Whether OOPBoT offers on-device models to Pi; off until the user turns the experiment on. */
   val localModelsEnabled: StateFlow<Boolean> = localModelsEnabledState.asStateFlow()
 
   /**
    * The [io.jeph.oopbot.localmodel.catalog.kind]s of build, such as `litert/gpu`, that failed to load a model on this
-   * phone, so Pipkin picks another. They're forgotten when Android or Pipkin is updated, which may fix them.
+   * phone, so OOPBoT picks another. They're forgotten when Android or OOPBoT is updated, which may fix them.
    */
   val localModelFailedBuilds: StateFlow<Set<String>> = localModelFailedBuildsState.asStateFlow()
 
@@ -363,7 +363,7 @@ internal class Preferences(context: Context) {
   }
 
   /**
-   * The last `remote_hosts` result, so remote workspaces show their host and path as soon as Pipkin starts, before
+   * The last `remote_hosts` result, so remote workspaces show their host and path as soon as OOPBoT starts, before
    * Termux has answered; null before the first.
    */
   fun remoteHostsCache(): String? = prefs.getString(REMOTE_HOSTS, null)
@@ -372,7 +372,7 @@ internal class Preferences(context: Context) {
     prefs.edit { putString(REMOTE_HOSTS, json) }
   }
 
-  /** The tabs and panes last shown, for a restarted Pipkin to show again; null before any were saved. */
+  /** The tabs and panes last shown, for a restarted OOPBoT to show again; null before any were saved. */
   fun savedLayout(): SavedLayout? = prefs.getString(LAYOUT, null)?.let(::savedLayoutOf)
 
   fun setSavedLayout(layout: SavedLayout) {

@@ -20,8 +20,8 @@ import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** What the browse host answered for [query]: matching folders, or why the search failed. */
 internal data class FolderSearch(val query: String, val paths: List<String>, val failure: String?)
@@ -39,7 +39,7 @@ internal fun FolderSearchResults(
   modifier: Modifier = Modifier,
   onChoose: (String) -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   LazyColumn(modifier = modifier.fillMaxWidth()) {
     when {
       found == null || found.query != query -> item { Searching() }
@@ -58,30 +58,30 @@ internal fun FolderSearchResults(
 /** The folder's name over its full path, shortened in the middle so both ends stay readable. */
 @Composable
 private fun FolderResultRow(path: String, folders: PickerFolders, added: Boolean, onClick: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 52.dp)
       .alpha(if (added) 0.5f else 1f)
       .clickable(enabled = !added, onClick = onClick)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s6),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s6),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     LucideIcon(icon = R.drawable.ic_lucide_folder, contentDescription = null)
     Column(modifier = Modifier.weight(1f)) {
       Text(
         text = folders.name(path),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
       Text(
         text = folders.path(path),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         maxLines = 1,
         overflow = TextOverflow.MiddleEllipsis,
       )
@@ -90,7 +90,7 @@ private fun FolderResultRow(path: String, folders: PickerFolders, added: Boolean
       Text(
         text = stringResource(R.string.shell_browse_added_badge),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
       )
     }
   }
@@ -100,17 +100,17 @@ private fun FolderResultRow(path: String, folders: PickerFolders, added: Boolean
 private fun Searching() {
   Row(
     modifier = Modifier.fillMaxWidth().padding(
-      horizontal = PipkinTokens.Spacing.s16,
-      vertical = PipkinTokens.Spacing.s12,
+      horizontal = OopbotTokens.Spacing.s16,
+      vertical = OopbotTokens.Spacing.s12,
     ),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     SimmeringPot()
     Text(
       text = stringResource(R.string.shell_browse_searching),
-      color = pipkinColors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      color = oopbotColors.foregroundMuted,
+      fontSize = OopbotTokens.FontSize.sm,
     )
   }
 }

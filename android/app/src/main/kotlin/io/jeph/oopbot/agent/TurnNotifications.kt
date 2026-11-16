@@ -9,7 +9,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.sidebar.FolderNames
 
 /**
- * Tells the user a chat's work ended while the chat was off screen: in the [inbox] always, and while Pipkin is in the
+ * Tells the user a chat's work ended while the chat was off screen: in the [inbox] always, and while OOPBoT is in the
  * background also as a heads-up notification naming the chat, its project and model, and the last run's reply. Work
  * ends once the run and the background tasks it waits on are over, so a run that leaves tasks running isn't announced.
  * Tapping the notification opens that chat. Main thread only.

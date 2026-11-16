@@ -70,8 +70,8 @@ import io.jeph.oopbot.agent.InboxReason
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.components.HeaderBarHeight
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.delay
 
 /**
@@ -108,10 +108,10 @@ internal fun ChatInboxOverlay(shown: Boolean, onOpen: (ChatLocation) -> Unit, ab
       modifier = Modifier
         .align(Alignment.TopCenter)
         .windowInsetsPadding(WindowInsets.safeDrawing)
-        .padding(top = HeaderBarHeight + PipkinTokens.Spacing.s8)
-        .padding(horizontal = PipkinTokens.Spacing.s8),
+        .padding(top = HeaderBarHeight + OopbotTokens.Spacing.s8)
+        .padding(horizontal = OopbotTokens.Spacing.s8),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       above()
       AnimatedVisibility(visible = pillShown, enter = fadeIn() + slideInVertically { -it }, exit = fadeOut()) {
@@ -140,7 +140,7 @@ internal fun ChatInboxOverlay(shown: Boolean, onOpen: (ChatLocation) -> Unit, ab
 @Composable
 private fun InboxPill(entries: List<InboxEntry>, expanded: Boolean, onTap: () -> Unit, onClear: () -> Unit) {
   if (entries.isEmpty()) return
-  val colors = pipkinColors
+  val colors = oopbotColors
   val single = entries.singleOrNull()
   val clearLabel = stringResource(R.string.inbox_clear_all)
   val tapLabel = stringResource(
@@ -172,10 +172,10 @@ private fun InboxPill(entries: List<InboxEntry>, expanded: Boolean, onTap: () ->
         .clip(CircleShape)
         .background(colors.foreground)
         .clickable(onClickLabel = tapLabel, onClick = onTap)
-        .padding(start = 7.dp, end = PipkinTokens.Spacing.s12)
+        .padding(start = 7.dp, end = OopbotTokens.Spacing.s12)
         .heightIn(min = PILL_HEIGHT),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       if (single != null) SinglePillContent(single) else MergedPillContent(entries)
     }
@@ -184,7 +184,7 @@ private fun InboxPill(entries: List<InboxEntry>, expanded: Boolean, onTap: () ->
 
 @Composable
 private fun RowScope.SinglePillContent(entry: InboxEntry) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   ReasonBadge(entry.reason, PILL_BADGE_SIZE)
   Text(
     text = entry.title ?: stringResource(R.string.chat_new_chat),
@@ -207,7 +207,7 @@ private fun RowScope.SinglePillContent(entry: InboxEntry) {
 
 @Composable
 private fun RowScope.MergedPillContent(entries: List<InboxEntry>) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(horizontalArrangement = Arrangement.spacedBy(-DOT_OVERLAP)) {
     for (entry in entries.take(MAX_DOTS)) {
       Box(
@@ -247,7 +247,7 @@ private fun RowScope.MergedPillContent(entries: List<InboxEntry>) {
 /** The chats in the inbox, newest first, under a header with Clear all; tapping one opens it through [onOpen]. */
 @Composable
 private fun InboxTray(entries: List<InboxEntry>, onOpen: (InboxEntry) -> Unit, onClearAll: () -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val now = rememberMinuteClock()
   Column(
     modifier = Modifier
@@ -257,21 +257,21 @@ private fun InboxTray(entries: List<InboxEntry>, onOpen: (InboxEntry) -> Unit, o
       .clip(TRAY_SHAPE)
       .background(colors.surface1)
       .padding(
-        start = PipkinTokens.Spacing.s8,
+        start = OopbotTokens.Spacing.s8,
         top = 10.dp,
-        end = PipkinTokens.Spacing.s8,
-        bottom = PipkinTokens.Spacing.s8,
+        end = OopbotTokens.Spacing.s8,
+        bottom = OopbotTokens.Spacing.s8,
       ),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(start = 10.dp, bottom = PipkinTokens.Spacing.s4),
+      modifier = Modifier.fillMaxWidth().padding(start = 10.dp, bottom = OopbotTokens.Spacing.s4),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Text(
         text = stringResource(R.string.inbox_tray_title),
         modifier = Modifier.weight(1f),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.lg,
+        fontSize = OopbotTokens.FontSize.lg,
         fontWeight = FontWeight.ExtraBold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -281,7 +281,7 @@ private fun InboxTray(entries: List<InboxEntry>, onOpen: (InboxEntry) -> Unit, o
         modifier = Modifier
           .clip(CircleShape)
           .clickable(onClick = onClearAll)
-          .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s8),
+          .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s8),
         color = colors.accent,
         fontSize = 12.5.sp,
         fontWeight = FontWeight.Bold,
@@ -290,7 +290,7 @@ private fun InboxTray(entries: List<InboxEntry>, onOpen: (InboxEntry) -> Unit, o
     }
     Column(
       modifier = Modifier.heightIn(max = TRAY_LIST_MAX_HEIGHT).verticalScroll(rememberScrollState()),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s2),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s2),
     ) {
       for (entry in entries) {
         key(entry.location.sessionPath) { InboxRow(entry, now, onOpen) }
@@ -301,7 +301,7 @@ private fun InboxTray(entries: List<InboxEntry>, onOpen: (InboxEntry) -> Unit, o
 
 @Composable
 private fun InboxRow(entry: InboxEntry, now: Long, onOpen: (InboxEntry) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val detail = entry.detail?.lineSequence()?.map(String::trim)?.firstOrNull(String::isNotEmpty)
     ?: if (entry.reason == InboxReason.Waiting) stringResource(R.string.dialog_notification_text) else null
   val reason = reasonText(entry)
@@ -313,8 +313,8 @@ private fun InboxRow(entry: InboxEntry, now: Long, onOpen: (InboxEntry) -> Unit)
       .fillMaxWidth()
       .clip(ROW_SHAPE)
       .clickable(onClickLabel = stringResource(R.string.inbox_open_chat)) { onOpen(entry) }
-      .padding(PipkinTokens.Spacing.s8),
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+      .padding(OopbotTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     ReasonBadge(entry.reason, ROW_BADGE_SIZE)
     Column(modifier = Modifier.weight(1f)) {
@@ -335,16 +335,16 @@ private fun InboxRow(entry: InboxEntry, now: Long, onOpen: (InboxEntry) -> Unit)
           detail?.let { append(separator + it) }
         },
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.sm,
+        fontSize = OopbotTokens.FontSize.sm,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
     }
     Text(
       text = timeAgo(entry.at, now),
-      modifier = Modifier.padding(top = PipkinTokens.Spacing.s2),
+      modifier = Modifier.padding(top = OopbotTokens.Spacing.s2),
       color = colors.foregroundExtraMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       maxLines = 1,
     )
   }
@@ -365,17 +365,17 @@ private fun ReasonBadge(reason: InboxReason, size: Dp) {
       },
       contentDescription = null,
       size = size * BADGE_ICON_SCALE,
-      tint = pipkinColors.surface0,
+      tint = oopbotColors.surface0,
     )
   }
 }
 
 @Composable
 private fun InboxReason.color(): Color = when (this) {
-  InboxReason.Finished -> pipkinColors.dotSuccess
-  InboxReason.Failed -> pipkinColors.dotDanger
-  InboxReason.Exited -> pipkinColors.foregroundExtraMuted
-  InboxReason.Waiting -> pipkinColors.dotWarning
+  InboxReason.Finished -> oopbotColors.dotSuccess
+  InboxReason.Failed -> oopbotColors.dotDanger
+  InboxReason.Exited -> oopbotColors.foregroundExtraMuted
+  InboxReason.Waiting -> oopbotColors.dotWarning
 }
 
 private val InboxReason.label: Int
@@ -386,7 +386,7 @@ private val InboxReason.label: Int
     InboxReason.Waiting -> R.string.inbox_waiting
   }
 
-/** The subagent whose question the chat waits on, when Pipkin can tell; null for any other entry. */
+/** The subagent whose question the chat waits on, when OOPBoT can tell; null for any other entry. */
 private val InboxEntry.waitingOn: String?
   get() = asker?.takeIf { reason == InboxReason.Waiting }
 

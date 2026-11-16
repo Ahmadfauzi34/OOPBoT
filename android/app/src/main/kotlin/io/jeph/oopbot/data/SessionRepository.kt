@@ -119,6 +119,6 @@ internal class SessionRepository(
   }
 
   private companion object {
-    const val TAG = "Pipkin"
+    const val TAG = "OOPBoT"
   }
 }

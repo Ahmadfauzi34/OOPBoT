@@ -54,8 +54,8 @@ import io.jeph.oopbot.ui.remote.AutoReconnect
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
 import io.jeph.oopbot.ui.remote.rememberRemoteConnector
 import io.jeph.oopbot.ui.sidebar.rememberFolderNames
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.PaneHeader
 import io.jeph.oopbot.ui.workspace.PublishTabActions
@@ -72,7 +72,7 @@ internal fun TerminalScreen(session: TerminalSession, controls: PaneControls, mo
   val graph = LocalContext.current.appGraph
   var dialog by rememberSaveable(session.id) { mutableStateOf<TerminalDialog?>(null) }
 
-  Column(modifier = modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = modifier.fillMaxSize().background(oopbotColors.surface0)) {
     PaneHeader(title = terminalTitle(session), cwd = session.cwd, controls = controls)
     // The terminal view and its key state are per session; a new session starts fresh.
     key(session) { TerminalPane(session, Modifier.weight(1f)) }
@@ -104,7 +104,7 @@ internal fun TerminalScreen(session: TerminalSession, controls: PaneControls, mo
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TerminalPane(session: TerminalSession, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   val state by session.state.collectAsStateWithLifecycle()
   val terminalState = rememberGhosttyTerminalState()
@@ -220,20 +220,20 @@ private fun StatusBar(state: TerminalState, cwd: String, onRestart: () -> Unit) 
   RemoteConnectDialogs(connector)
   val host = folder?.host?.takeIf { remote?.needsConnect == true }
   if (host != null) AutoReconnect(connector, host, remote?.code, onConnected = onRestart)
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .background(colors.surface1)
       .topHairline(colors.border)
-      .padding(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s6),
+      .padding(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s6),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Text(
       text = message,
       color = colors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.sm,
+      fontSize = OopbotTokens.FontSize.sm,
       modifier = Modifier.weight(1f),
     )
     if (host != null) {

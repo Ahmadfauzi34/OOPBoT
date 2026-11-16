@@ -38,7 +38,7 @@ internal sealed interface DownloadState {
  * The catalog's files on this phone: which are downloaded, downloading them, and which build of each model to run.
  * Files live in `noBackupFilesDir/local-models/`, out of Android's backups, since they're gigabytes anyone can
  * download again. Downloads run in the app's [scope] rather than a screen's, holding [keepAlive] so they go on while
- * Pipkin is in the background. Methods are called on the main thread.
+ * OOPBoT is in the background. Methods are called on the main thread.
  */
 internal class ModelStore(
   context: Context,
@@ -175,7 +175,7 @@ internal class ModelStore(
 
   private companion object {
     const val DIRECTORY = "local-models"
-    const val TAG = "Pipkin"
+    const val TAG = "OOPBoT"
   }
 }
 

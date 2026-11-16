@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 
 /**
  * On-device models: the downloaded files ([store]), the process serving one of them to Pi ([runtime]), and Pi's
- * `pipkin-local` provider, kept listing exactly the downloaded models while the feature is on.
+ * `oopbot-local` provider, kept listing exactly the downloaded models while the feature is on.
  */
 internal class LocalModels(
   context: Context,
@@ -48,7 +48,7 @@ internal class LocalModels(
 
   /**
    * Writes the provider on every start and whenever what it should list changes, since a backup restore, removing the
-   * provider or reinstalling Pi can change models.json behind Pipkin's back. Waits for the first scan of the downloaded
+   * provider or reinstalling Pi can change models.json behind OOPBoT's back. Waits for the first scan of the downloaded
    * models, so a start doesn't remove the provider and then add it back. Retries while the Termux host can't be
    * reached or refuses, as it does while Pi is being installed. An empty list is only written once a provider was, so
    * a feature that was never on doesn't call the host.
@@ -86,7 +86,7 @@ internal class LocalModels(
   )
 
   private companion object {
-    const val TAG = "PipkinLocalModels"
+    const val TAG = "OopbotLocalModels"
     const val PREFS = "local-models"
     const val KEY_API_KEY = "api-key"
 

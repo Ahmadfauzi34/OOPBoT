@@ -59,9 +59,9 @@ import io.jeph.oopbot.ui.components.HeaderButton
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.PillButton
 import io.jeph.oopbot.ui.components.SimmeringPot
-import io.jeph.oopbot.ui.theme.PipkinFonts
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotFonts
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
 import java.text.NumberFormat
 import kotlinx.coroutines.Dispatchers
@@ -249,7 +249,7 @@ internal fun SubagentScreen(
   var toolKey by remember(facts.toolCallId) { mutableStateOf<String?>(null) }
   val loaded = transcript as? SubagentTranscript.Loaded
   val live = transcript as? SubagentTranscript.Live
-  Column(modifier = modifier.fillMaxSize().background(pipkinColors.surface0)) {
+  Column(modifier = modifier.fillMaxSize().background(oopbotColors.surface0)) {
     SubagentHeader(chatTitle, facts, loaded?.stats, onBack, trailing)
     ChatStack(
       modifier = Modifier.weight(1f),
@@ -276,46 +276,46 @@ private fun SubagentHeader(
   onBack: () -> Unit,
   trailing: @Composable RowScope.() -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val breadcrumb = stringResource(R.string.subagent_breadcrumb, chatTitle)
   Column(modifier = Modifier.fillMaxWidth().background(colors.surface0).windowInsetsPadding(WindowInsets.statusBars)) {
     Row(
       modifier = Modifier
         .heightIn(min = HeaderBarHeight)
-        .padding(horizontal = PipkinTokens.Spacing.s12, vertical = PipkinTokens.Spacing.s4),
+        .padding(horizontal = OopbotTokens.Spacing.s12, vertical = OopbotTokens.Spacing.s4),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+      horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
     ) {
       HeaderButton(
         icon = R.drawable.ic_lucide_chevron_left,
         contentDescription = stringResource(R.string.subagent_back),
         onClick = onBack,
       )
-      Column(modifier = Modifier.weight(1f).padding(horizontal = PipkinTokens.Spacing.s4)) {
+      Column(modifier = Modifier.weight(1f).padding(horizontal = OopbotTokens.Spacing.s4)) {
         Row(
           modifier = Modifier.clearAndSetSemantics { contentDescription = breadcrumb },
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s2),
+          horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s2),
         ) {
           Text(
             text = chatTitle,
             modifier = Modifier.weight(1f, fill = false),
             color = colors.foregroundMuted,
-            fontSize = PipkinTokens.FontSize.sm,
+            fontSize = OopbotTokens.FontSize.sm,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
           LucideIcon(
             icon = R.drawable.ic_lucide_chevron_right,
             contentDescription = null,
-            size = PipkinTokens.IconSize.xs,
+            size = OopbotTokens.IconSize.xs,
             tint = colors.foregroundMuted,
           )
         }
         Text(
           text = stringResource(R.string.subagent_title, facts.agent, facts.description),
           color = colors.foreground,
-          fontSize = PipkinTokens.FontSize.title,
+          fontSize = OopbotTokens.FontSize.title,
           fontWeight = FontWeight.ExtraBold,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
@@ -333,7 +333,7 @@ private fun SubagentHeader(
  */
 @Composable
 private fun StatusLine(facts: SubagentFacts, stats: TranscriptStats?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val numbers = remember { NumberFormat.getIntegerInstance() }
   val separator = stringResource(R.string.separator_dot)
   val run = facts.run
@@ -360,13 +360,13 @@ private fun StatusLine(facts: SubagentFacts, stats: TranscriptStats?) {
   Text(
     text = text,
     modifier = Modifier.padding(
-      start = PipkinTokens.Spacing.s16,
-      end = PipkinTokens.Spacing.s16,
-      bottom = PipkinTokens.Spacing.s8,
+      start = OopbotTokens.Spacing.s16,
+      end = OopbotTokens.Spacing.s16,
+      bottom = OopbotTokens.Spacing.s8,
     ),
     color = colors.foregroundMuted,
-    fontSize = PipkinTokens.FontSize.sm,
-    style = LocalTextStyle.current.copy(fontFeatureSettings = PipkinFonts.TABULAR),
+    fontSize = OopbotTokens.FontSize.sm,
+    style = LocalTextStyle.current.copy(fontFeatureSettings = OopbotFonts.TABULAR),
     maxLines = 1,
     overflow = TextOverflow.Ellipsis,
   )
@@ -396,14 +396,14 @@ private fun TranscriptBody(
     is SubagentTranscript.StartFailed -> Note(stringResource(R.string.subagent_not_started), transcript.reason)
 
     is SubagentTranscript.Failed -> Column(
-      modifier = Modifier.fillMaxSize().padding(PipkinTokens.Spacing.s24),
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8, Alignment.CenterVertically),
+      modifier = Modifier.fillMaxSize().padding(OopbotTokens.Spacing.s24),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8, Alignment.CenterVertically),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       Text(
         text = transcript.message,
-        color = pipkinColors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.base,
+        color = oopbotColors.foregroundMuted,
+        fontSize = OopbotTokens.FontSize.base,
         textAlign = TextAlign.Center,
       )
       PillButton(label = stringResource(R.string.subagent_retry), onClick = transcript.retry)
@@ -441,12 +441,12 @@ private fun TranscriptRows(state: TimelineState, taskKey: String?, view: ChatVie
 private fun Waiting(@StringRes text: Int?) {
   Column(
     modifier = Modifier.fillMaxSize(),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8, Alignment.CenterVertically),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8, Alignment.CenterVertically),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     SimmeringPot()
     text?.let {
-      Text(text = stringResource(it), color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+      Text(text = stringResource(it), color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
     }
   }
 }
@@ -455,21 +455,21 @@ private fun Waiting(@StringRes text: Int?) {
 @Composable
 private fun Note(text: String, detail: String? = null) {
   Column(
-    modifier = Modifier.fillMaxSize().padding(PipkinTokens.Spacing.s24),
-    verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8, Alignment.CenterVertically),
+    modifier = Modifier.fillMaxSize().padding(OopbotTokens.Spacing.s24),
+    verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8, Alignment.CenterVertically),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Text(
       text = text,
-      color = pipkinColors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.base,
+      color = oopbotColors.foregroundMuted,
+      fontSize = OopbotTokens.FontSize.base,
       textAlign = TextAlign.Center,
     )
     detail?.let {
       Text(
         text = it,
-        color = pipkinColors.foreground,
-        fontSize = PipkinTokens.FontSize.sm,
+        color = oopbotColors.foreground,
+        fontSize = OopbotTokens.FontSize.sm,
         textAlign = TextAlign.Center,
       )
     }

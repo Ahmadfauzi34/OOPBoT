@@ -35,14 +35,14 @@ import io.jeph.oopbot.agent.parsePartialJsonObject
 import io.jeph.oopbot.ui.components.CodeBox
 import io.jeph.oopbot.ui.components.CodeText
 import io.jeph.oopbot.ui.components.LucideIcon
-import io.jeph.oopbot.ui.components.PipkinMarkdown
-import io.jeph.oopbot.ui.components.PipkinSheet
+import io.jeph.oopbot.ui.components.OopbotMarkdown
+import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.components.fileLanguage
 import io.jeph.oopbot.ui.components.rememberHighlightedCode
 import io.jeph.oopbot.ui.components.splitLines
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -73,7 +73,7 @@ internal fun ToolCallSheet(item: TimelineItem, streamingArguments: (key: String)
     is TimelineItem.Thinking -> item.text
     is TimelineItem.ToolCall -> remember(item) { item.cardText() }
   }.takeUnless { presentation.running || it.isBlank() }
-  PipkinSheet(onDismissRequest = onDismiss) {
+  OopbotSheet(onDismissRequest = onDismiss) {
     SheetTitle(presentation, subtitle, copyText)
     SelectionContainer {
       Column(
@@ -82,11 +82,11 @@ internal fun ToolCallSheet(item: TimelineItem, streamingArguments: (key: String)
             .fillMaxWidth()
             .pinEnd(scrollState, follow)
             .verticalScroll(scrollState)
-            .padding(horizontal = PipkinTokens.Spacing.s16),
-        verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+            .padding(horizontal = OopbotTokens.Spacing.s16),
+        verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
       ) {
         when (item) {
-          is TimelineItem.Thinking -> PipkinMarkdown(item.text)
+          is TimelineItem.Thinking -> OopbotMarkdown(item.text)
           is TimelineItem.ToolCall -> ToolDetails(withStreamedArguments(item, streamingArguments))
         }
       }
@@ -119,14 +119,14 @@ private fun withStreamedArguments(
 /** The sheet's header; once the item finished, [copyText] backs a copy button at its end. */
 @Composable
 private fun SheetTitle(presentation: ToolPresentation, subtitle: String?, copyText: String?) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier =
       Modifier
         .fillMaxWidth()
-        .padding(start = PipkinTokens.Spacing.s16, end = PipkinTokens.Spacing.s16, bottom = PipkinTokens.Spacing.s12),
+        .padding(start = OopbotTokens.Spacing.s16, end = OopbotTokens.Spacing.s16, bottom = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
     if (presentation.running) {
       SimmeringPot()
@@ -138,12 +138,12 @@ private fun SheetTitle(presentation: ToolPresentation, subtitle: String?, copyTe
       )
     }
     Column(modifier = Modifier.weight(1f)) {
-      Text(text = presentation.title, color = colors.foreground, fontSize = PipkinTokens.FontSize.lg)
+      Text(text = presentation.title, color = colors.foreground, fontSize = OopbotTokens.FontSize.lg)
       subtitle?.let {
         Text(
           text = it,
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.sm,
+          fontSize = OopbotTokens.FontSize.sm,
           maxLines = 2,
           overflow = TextOverflow.Ellipsis,
         )
@@ -154,7 +154,7 @@ private fun SheetTitle(presentation: ToolPresentation, subtitle: String?, copyTe
         text = it,
         contentDescription = stringResource(R.string.chat_copy_details),
         tint = colors.foregroundMuted,
-        iconSize = PipkinTokens.IconSize.md,
+        iconSize = OopbotTokens.IconSize.md,
       )
     }
   }
@@ -170,7 +170,7 @@ private fun ToolDetails(item: TimelineItem.ToolCall) {
         val command = rememberHighlightedCode(args?.stringOrNull("command").orEmpty(), "sh")
         CodeText(AnnotatedString("$ ") + command)
         item.output?.takeIf { it.isNotEmpty() }?.let {
-          CodeText(it, color = if (item.isError) pipkinColors.destructive else pipkinColors.foreground)
+          CodeText(it, color = if (item.isError) oopbotColors.destructive else oopbotColors.foreground)
         }
       }
       if (item.output == null && item.status != ToolStatus.Done) RunningLine()
@@ -202,12 +202,12 @@ private fun ToolDetails(item: TimelineItem.ToolCall) {
 /** The tool's result text, in a [SheetCode] coloured for [language] when [codeBox]; errors stay plain destructive. */
 @Composable
 private fun Output(item: TimelineItem.ToolCall, codeBox: Boolean = false, language: String? = null) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val output = item.output
   when {
     output == null -> if (item.status != ToolStatus.Done) RunningLine()
-    item.isError -> Text(text = output, color = colors.destructive, fontSize = PipkinTokens.FontSize.base)
-    !codeBox -> Text(text = output, color = colors.foregroundMuted, fontSize = PipkinTokens.FontSize.base)
+    item.isError -> Text(text = output, color = colors.destructive, fontSize = OopbotTokens.FontSize.base)
+    !codeBox -> Text(text = output, color = colors.foregroundMuted, fontSize = OopbotTokens.FontSize.base)
     output.isEmpty() -> SheetCode { CodeText(stringResource(R.string.chat_no_output)) }
     else -> SheetCode { CodeText(output, language) }
   }
@@ -216,31 +216,31 @@ private fun Output(item: TimelineItem.ToolCall, codeBox: Boolean = false, langua
 /** Code in the sheet: a card in the page's colour, which stands out against the sheet's raised surface. */
 @Composable
 internal fun SheetCode(
-  radius: Dp = PipkinTokens.Radius.lg,
-  padding: Dp = PipkinTokens.Spacing.s12,
+  radius: Dp = OopbotTokens.Radius.lg,
+  padding: Dp = OopbotTokens.Spacing.s12,
   content: @Composable ColumnScope.() -> Unit,
 ) {
-  CodeBox(background = pipkinColors.surface0, radius = radius, padding = padding, content = content)
+  CodeBox(background = oopbotColors.surface0, radius = radius, padding = padding, content = content)
 }
 
 @Composable
 private fun RunningLine() {
   Row(
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
-    SimmeringPot(size = PipkinTokens.IconSize.sm)
+    SimmeringPot(size = OopbotTokens.IconSize.sm)
     Text(
       text = stringResource(R.string.chat_running),
-      color = pipkinColors.foregroundMuted,
-      fontSize = PipkinTokens.FontSize.meta,
+      color = oopbotColors.foregroundMuted,
+      fontSize = OopbotTokens.FontSize.meta,
     )
   }
 }
 
 @Composable
 private fun Label(text: String) {
-  Text(text = text, color = pipkinColors.foregroundMuted, fontSize = PipkinTokens.FontSize.sm)
+  Text(text = text, color = oopbotColors.foregroundMuted, fontSize = OopbotTokens.FontSize.sm)
 }
 
 /** The sheet's body for tool call [this] as plain text, sections separated by blank lines; the header stays out. */

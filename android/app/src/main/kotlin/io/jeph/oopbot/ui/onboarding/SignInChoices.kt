@@ -31,22 +31,22 @@ import io.jeph.oopbot.ui.auth.ProviderLogo
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.settings.isSignedIn
 import io.jeph.oopbot.ui.settings.subscriptions
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
- * The ways to reach a model: the providers Pi ships that Pipkin connects, an OpenAI-compatible API, or the experimental
+ * The ways to reach a model: the providers Pi ships that OOPBoT connects, an OpenAI-compatible API, or the experimental
  * models that run on the phone, ready once one is downloaded with local models on.
  */
 @Composable
 internal fun SignInChoices(authStatus: AuthStatus?, enabled: Boolean, onAction: (SetupAction) -> Unit) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val graph = LocalContext.current.appGraph
   val localModelsOn by graph.preferences.localModelsEnabled.collectAsStateWithLifecycle()
   val localModels by graph.localModels.store.installed.collectAsStateWithLifecycle()
-  val shape = RoundedCornerShape(PipkinTokens.Radius.xl)
+  val shape = RoundedCornerShape(OopbotTokens.Radius.xl)
   Column(
-    modifier = Modifier.fillMaxWidth().background(colors.surface1, shape).padding(vertical = PipkinTokens.Spacing.s4),
+    modifier = Modifier.fillMaxWidth().background(colors.surface1, shape).padding(vertical = OopbotTokens.Spacing.s4),
   ) {
     subscriptions.forEach { subscription ->
       SignInRow(
@@ -79,23 +79,23 @@ private fun SignInRow(
   onClick: () -> Unit,
   icon: @Composable () -> Unit,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .heightIn(min = 52.dp)
       .alpha(if (enabled) 1f else 0.5f)
       .clickable(enabled = enabled, onClick = onClick)
-      .padding(horizontal = PipkinTokens.Spacing.s16),
+      .padding(horizontal = OopbotTokens.Spacing.s16),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s12),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12),
   ) {
     Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) { icon() }
     Text(
       text = label,
       modifier = Modifier.weight(1f),
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
       // Two lines fit "OpenAI-compatible API" at the largest font size.
       maxLines = 2,

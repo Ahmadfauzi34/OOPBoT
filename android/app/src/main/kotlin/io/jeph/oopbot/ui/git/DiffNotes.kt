@@ -24,8 +24,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.files.Spinner
 import io.jeph.oopbot.ui.onboarding.PrimaryButton
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * A note in place of a diff, centred on a card: a spinner first while [loading], then [text] if any, then Connect when
@@ -38,14 +38,14 @@ internal fun DiffNote(
   loading: Boolean = false,
   onConnect: (() -> Unit)? = null,
 ) {
-  val colors = pipkinColors
-  NoteCard(modifier, Alignment.Center, PipkinTokens.Spacing.s8) {
-    if (loading) Spinner(PipkinTokens.IconSize.md, contentDescription = null)
+  val colors = oopbotColors
+  NoteCard(modifier, Alignment.Center, OopbotTokens.Spacing.s8) {
+    if (loading) Spinner(OopbotTokens.IconSize.md, contentDescription = null)
     if (text != null) {
       Text(
         text = text,
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.base,
+        fontSize = OopbotTokens.FontSize.base,
         textAlign = TextAlign.Center,
       )
     }
@@ -53,7 +53,7 @@ internal fun DiffNote(
       PrimaryButton(
         text = stringResource(R.string.remote_connect),
         onClick = onConnect,
-        modifier = Modifier.padding(top = PipkinTokens.Spacing.s4),
+        modifier = Modifier.padding(top = OopbotTokens.Spacing.s4),
       )
     }
   }
@@ -62,34 +62,34 @@ internal fun DiffNote(
 /** A diff too large to send, on a card: a file warning on its tile over the title and how to narrow it. */
 @Composable
 internal fun DiffTooLarge(modifier: Modifier = Modifier) {
-  val colors = pipkinColors
-  NoteCard(modifier, Alignment.TopCenter, PipkinTokens.Spacing.s12) {
+  val colors = oopbotColors
+  NoteCard(modifier, Alignment.TopCenter, OopbotTokens.Spacing.s12) {
     Box(
-      modifier = Modifier.size(36.dp).background(colors.warningSoft, RoundedCornerShape(PipkinTokens.Radius.md)),
+      modifier = Modifier.size(36.dp).background(colors.warningSoft, RoundedCornerShape(OopbotTokens.Radius.md)),
       contentAlignment = Alignment.Center,
     ) {
       LucideIcon(
         icon = R.drawable.ic_lucide_file_warning,
         contentDescription = null,
-        size = PipkinTokens.IconSize.lg,
+        size = OopbotTokens.IconSize.lg,
         tint = colors.dotWarning,
       )
     }
     Column(
-      verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s4),
+      verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s4),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
       Text(
         text = stringResource(R.string.git_diff_too_large_title),
         color = colors.foreground,
-        fontSize = PipkinTokens.FontSize.content,
+        fontSize = OopbotTokens.FontSize.content,
         fontWeight = FontWeight.Bold,
         textAlign = TextAlign.Center,
       )
       Text(
         text = stringResource(R.string.git_diff_too_large_description),
         color = colors.foregroundMuted,
-        fontSize = PipkinTokens.FontSize.meta,
+        fontSize = OopbotTokens.FontSize.meta,
         textAlign = TextAlign.Center,
       )
     }
@@ -108,15 +108,15 @@ private fun NoteCard(
   content: @Composable ColumnScope.() -> Unit,
 ) {
   Box(
-    modifier = modifier.fillMaxSize().padding(horizontal = CARD_MARGIN, vertical = PipkinTokens.Spacing.s24),
+    modifier = modifier.fillMaxSize().padding(horizontal = CARD_MARGIN, vertical = OopbotTokens.Spacing.s24),
     contentAlignment = alignment,
   ) {
     Column(
       modifier = Modifier
-        .widthIn(max = PipkinTokens.noteMaxWidth)
+        .widthIn(max = OopbotTokens.noteMaxWidth)
         .fillMaxWidth()
-        .background(pipkinColors.surface1, CardShape)
-        .padding(PipkinTokens.Spacing.s24),
+        .background(oopbotColors.surface1, CardShape)
+        .padding(OopbotTokens.Spacing.s24),
       verticalArrangement = Arrangement.spacedBy(spacing),
       horizontalAlignment = Alignment.CenterHorizontally,
       content = content,

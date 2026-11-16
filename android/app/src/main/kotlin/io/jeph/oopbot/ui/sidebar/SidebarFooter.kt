@@ -26,8 +26,8 @@ import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.host.TermuxWaker
 import io.jeph.oopbot.ui.components.HeaderButton
 import io.jeph.oopbot.ui.components.StatusDot
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.launch
 
 /** A card at the foot of the sidebar: Termux/Pi health (tap fixes what needs attention), Archive and Settings. */
@@ -36,13 +36,13 @@ internal fun SidebarFooter(onOpenArchive: () -> Unit, onOpenSettings: () -> Unit
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .padding(start = PipkinTokens.Spacing.s12, end = PipkinTokens.Spacing.s12, bottom = PipkinTokens.Spacing.s8)
+      .padding(start = OopbotTokens.Spacing.s12, end = OopbotTokens.Spacing.s12, bottom = OopbotTokens.Spacing.s8)
       .clip(FOOTER_SHAPE)
-      .background(pipkinColors.surface1)
+      .background(oopbotColors.surface1)
       .heightIn(min = 60.dp)
-      .padding(start = PipkinTokens.Spacing.s4, end = 10.dp),
+      .padding(start = OopbotTokens.Spacing.s4, end = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6),
+    horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6),
   ) {
     HostStatus(onOpenOnboarding, Modifier.weight(1f))
     HeaderButton(
@@ -66,7 +66,7 @@ internal fun SidebarFooter(onOpenArchive: () -> Unit, onOpenSettings: () -> Unit
  */
 @Composable
 private fun HostStatus(onOpenOnboarding: () -> Unit, modifier: Modifier) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val hostClient = context.appGraph.hostClient
@@ -94,9 +94,9 @@ private fun HostStatus(onOpenOnboarding: () -> Unit, modifier: Modifier) {
     ?: stringResource(R.string.shell_host_status_unknown)
   Row(
     modifier = modifier
-      .clip(RoundedCornerShape(PipkinTokens.Radius.lg))
+      .clip(RoundedCornerShape(OopbotTokens.Radius.lg))
       .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-      .padding(horizontal = PipkinTokens.Spacing.s8, vertical = PipkinTokens.Spacing.s12),
+      .padding(horizontal = OopbotTokens.Spacing.s8, vertical = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
@@ -104,7 +104,7 @@ private fun HostStatus(onOpenOnboarding: () -> Unit, modifier: Modifier) {
     Text(
       text = label,
       color = colors.foreground,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = if (onClick != null) FontWeight.Bold else FontWeight.SemiBold,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,

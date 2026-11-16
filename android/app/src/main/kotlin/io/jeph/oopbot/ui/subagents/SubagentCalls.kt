@@ -35,16 +35,16 @@ internal enum class SubagentPhase {
 }
 
 /**
- * Whose `subagent` tool a chat's calls go to now. A finished call is Pipkin subagents' only when its result says so,
+ * Whose `subagent` tool a chat's calls go to now. A finished call is OOPBoT subagents' only when its result says so,
  * whoever's tool it is now: the user may have installed another extension's `subagent` tool and reloaded since, or
  * removed one, leaving calls of both in the chat. A call with no result goes to the tool's owner now, since another
  * extension's call cut off can't be told from a subagent interrupted.
  */
 internal enum class SubagentTool {
-  /** Pipkin subagents', in a chat Pi runs, or not known, as in an archived chat. */
-  Pipkin,
+  /** OOPBoT subagents', in a chat OOPBoT runs, or not known, as in an archived chat. */
+  Oopbot,
 
-  /** Another extension's, which Pipkin subagents stands aside for: its calls are ordinary tool calls. */
+  /** Another extension's, which OOPBoT subagents stands aside for: its calls are ordinary tool calls. */
   Other,
 }
 
@@ -52,14 +52,14 @@ internal enum class SubagentTool {
  * What a chat knows of its subagents now: the [runs] its extension lists, whose question the chat's card shows
  * ([asker]), whether the chat is [working], which with a call's status tells a call still waiting to start from one an
  * earlier run left behind, and whose [tool] its `subagent` calls go to now. [cutOff] holds when the runs active as the
- * chat's Pi went away were cut off, by tool call id.
+ * chat's OOPBoT went away were cut off, by tool call id.
  */
 @Immutable
 internal class ChatSubagents(
   val runs: List<SubagentRun>,
   val asker: SubagentAsker,
   val working: Boolean,
-  val tool: SubagentTool = SubagentTool.Pipkin,
+  val tool: SubagentTool = SubagentTool.Oopbot,
   val cutOff: Map<String, Long> = emptyMap(),
 ) {
   /** The run [toolCallId] started, while the extension still lists it. */
@@ -81,11 +81,11 @@ internal class ChatSubagents(
   /** A subagent may be waiting on the user: the chat's question comes from one, named or not. */
   val waiting: Boolean get() = asker != SubagentAsker.Unknown
 
-  /** Whether [call] is the agent's call starting one of Pipkin's subagents, rather than an ordinary tool call. */
+  /** Whether [call] is the agent's call starting one of OOPBoT's subagents, rather than an ordinary tool call. */
   fun startsSubagent(call: TimelineItem.ToolCall): Boolean {
     if (call.toolName != SUBAGENT_TOOL || call.byUser) return false
-    if (call.output == null) return tool == SubagentTool.Pipkin
-    return SubagentResult.from(call.details)?.pipkins == true
+    if (call.output == null) return tool == SubagentTool.Oopbot
+    return SubagentResult.from(call.details)?.oopbots == true
   }
 
   companion object {

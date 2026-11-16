@@ -28,8 +28,8 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.host.ModelConfig
 import io.jeph.oopbot.ui.chat.thinkingLevelLabel
 import io.jeph.oopbot.ui.components.PillButton
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** One model's settings; edits go straight into the draft, which the provider page saves. */
 @Composable
@@ -75,7 +75,7 @@ internal fun ModelEditorScreen(draft: ModelDraft, modelId: String, onBack: () ->
         onBack()
       },
       modifier = Modifier.fillMaxWidth(),
-      colors = ButtonDefaults.textButtonColors(contentColor = pipkinColors.destructive),
+      colors = ButtonDefaults.textButtonColors(contentColor = oopbotColors.destructive),
     ) {
       Text(stringResource(R.string.model_remove))
     }
@@ -100,9 +100,9 @@ private fun ThinkingLevels(model: ModelForm) {
         Checkbox(checked = enabled, onCheckedChange = null)
         Text(
           text = thinkingLevelLabel(level),
-          modifier = Modifier.padding(start = PipkinTokens.Spacing.s8),
-          color = pipkinColors.foreground,
-          fontSize = PipkinTokens.FontSize.base,
+          modifier = Modifier.padding(start = OopbotTokens.Spacing.s8),
+          color = oopbotColors.foreground,
+          fontSize = OopbotTokens.FontSize.base,
         )
       }
     }
@@ -111,20 +111,20 @@ private fun ThinkingLevels(model: ModelForm) {
 
 @Composable
 private fun CostFields(model: ModelForm) {
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(stringResource(R.string.model_cost))
-    Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
       PriceField(R.string.model_cost_input, model.costInput, Modifier.weight(1f)) { model.costInput = it }
       PriceField(R.string.model_cost_output, model.costOutput, Modifier.weight(1f)) { model.costOutput = it }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8)) {
       PriceField(R.string.model_cost_cache_read, model.costCacheRead, Modifier.weight(1f)) { model.costCacheRead = it }
       PriceField(R.string.model_cost_cache_write, model.costCacheWrite, Modifier.weight(1f)) {
         model.costCacheWrite = it
       }
     }
     if (model.costInvalid) {
-      SettingsCaption(text = stringResource(R.string.model_cost_invalid), color = pipkinColors.destructive)
+      SettingsCaption(text = stringResource(R.string.model_cost_invalid), color = oopbotColors.destructive)
     } else {
       SettingsCaption(text = stringResource(R.string.model_cost_hint))
     }
@@ -154,7 +154,7 @@ private fun LabeledField(
   keyboardType: KeyboardType = KeyboardType.Text,
   error: String? = null,
 ) {
-  Column(verticalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s6)) {
+  Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s6)) {
     FieldLabel(label)
     OutlinedTextField(
       value = value,

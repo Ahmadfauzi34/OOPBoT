@@ -9,7 +9,7 @@ import androidx.compose.ui.text.font.createFontFamilyResolver
 import io.jeph.oopbot.R
 
 /** Manrope for the interface and JetBrains Mono for code, both from the APK's fonts. */
-object PipkinFonts {
+object OopbotFonts {
   /** Ligatures and contextual alternates off, so `->`, `!=` and `...` show as typed. */
   const val FEATURES = "liga 0, calt 0"
 

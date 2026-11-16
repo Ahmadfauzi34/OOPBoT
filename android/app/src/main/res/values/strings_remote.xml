@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Remote hosts: other machines Pipkin opens workspaces on over SSH. "SSH", "OpenSSH", "Termux" and file names such as
+    Remote hosts: other machines OOPBoT opens workspaces on over SSH. "SSH", "OpenSSH", "Termux" and file names such as
     ~/.ssh/config are names and aren't translated.
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">

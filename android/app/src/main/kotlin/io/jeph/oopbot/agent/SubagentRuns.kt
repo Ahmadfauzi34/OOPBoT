@@ -4,7 +4,7 @@ import io.jeph.oopbot.host.objects
 import io.jeph.oopbot.host.strings
 import org.json.JSONObject
 
-/** Where a subagent run stands, as the `pipkin-subagents` extension reports it. */
+/** Where a subagent run stands, as the `oopbot-subagents` extension reports it. */
 internal enum class SubagentStatus {
   /** Waiting for one of the chat's parallel slots. */
   Queued,
@@ -24,8 +24,8 @@ internal enum class SubagentStatus {
 }
 
 /**
- * One subagent the chat's Pi runs or ran since the user's last message, from the `runs` list the `pipkin-subagents`
- * extension sends on Pipkin's channel. [id] is the run's own id, [toolCallId] the parent's `subagent` tool call that
+ * One subagent the chat's Pi runs or ran since the user's last message, from the `runs` list the `oopbot-subagents`
+ * extension sends on OOPBoT's channel. [id] is the run's own id, [toolCallId] the parent's `subagent` tool call that
  * started it. [agent] is the agent definition's name, [description] the few words the model gave the task. Times are
  * epoch milliseconds. [messages] counts the messages in the subagent's transcript, so a screen showing it knows when
  * to read it again. [inFlight] counts the subagent's tool calls handed to the parent that haven't come back, which
@@ -81,7 +81,7 @@ internal data class SubagentRun(
   }
 }
 
-/** Whose question the chat's front dialog is, as far as Pipkin can tell; see [askingSubagent]. */
+/** Whose question the chat's front dialog is, as far as OOPBoT can tell; see [askingSubagent]. */
 internal sealed interface SubagentAsker {
   /** The question can't be told apart from the parent's own, so no subagent is named. */
   data object Unknown : SubagentAsker
@@ -150,7 +150,7 @@ internal const val SUBAGENT_DETAILS_EXTENSION = "oopbot-subagents"
  * [description], the transcript at [sessionFile] (null for a subagent that ran in memory), how it ended, the
  * [tokens] it used, and whether it [neverStarted], stopped while queued. They outlive the run's place in
  * [SubagentRun]'s list, so the tool row leads back to it.
- * [pipkins] says they carry [SUBAGENT_DETAILS_EXTENSION], which tells them from another extension's `subagent` tool,
+ * [oopbots] says they carry [SUBAGENT_DETAILS_EXTENSION], which tells them from another extension's `subagent` tool,
  * whose details may name an `id` or a `sessionFile` of their own.
  */
 internal data class SubagentResult(
@@ -161,7 +161,7 @@ internal data class SubagentResult(
   val status: SubagentStatus?,
   val tokens: Long?,
   val neverStarted: Boolean = false,
-  val pipkins: Boolean = false,
+  val oopbots: Boolean = false,
 ) {
   companion object {
     /** The result of a call whose `details` are [details]; null when they hold none of a subagent's. */
@@ -175,7 +175,7 @@ internal data class SubagentResult(
         status = details.textOrNull("status")?.let(SubagentStatus::from),
         tokens = details.optJSONObject("usage")?.optLong("totalTokens")?.takeIf { it > 0 },
         neverStarted = details.has("startedAt") && details.isNull("startedAt"),
-        pipkins = details.textOrNull("extension") == SUBAGENT_DETAILS_EXTENSION,
+        oopbots = details.textOrNull("extension") == SUBAGENT_DETAILS_EXTENSION,
       )
       return result.takeUnless { it == EMPTY }
     }

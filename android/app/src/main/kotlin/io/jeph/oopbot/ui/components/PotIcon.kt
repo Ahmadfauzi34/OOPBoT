@@ -12,7 +12,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /**
  * The headers' pot: a still, 24-unit pot in the accent with a prompt on its body and two muted wisps of steam. It
@@ -20,7 +20,7 @@ import io.jeph.oopbot.ui.theme.pipkinColors
  */
 @Composable
 fun PotIcon(modifier: Modifier = Modifier, size: Dp = 22.dp) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Canvas(modifier.size(size)) {
     scale(this.size.minDimension / VIEW_SIZE, pivot = Offset.Zero) {
       drawPath(STEAM, colors.foregroundMuted, style = STEAM_STROKE)

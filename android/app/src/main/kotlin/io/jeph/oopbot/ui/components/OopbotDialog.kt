@@ -42,8 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
-import io.jeph.oopbot.ui.theme.PipkinTokens
-import io.jeph.oopbot.ui.theme.pipkinColors
+import io.jeph.oopbot.ui.theme.OopbotTokens
+import io.jeph.oopbot.ui.theme.oopbotColors
 
 /** A dialog's confirm button: its [label], enabled while [enabled], and red when [destructive], cobalt otherwise. */
 class DialogConfirm(
@@ -54,13 +54,13 @@ class DialogConfirm(
 )
 
 /**
- * Pipkin's dialog: an optional [icon] tile naming the kind of action, a bold [title] that wraps, the [text], any
+ * OOPBoT's dialog: an optional [icon] tile naming the kind of action, a bold [title] that wraps, the [text], any
  * [content] such as a field, and a row of two pill buttons, the tonal [dismissLabel] first, then [confirm]. The tile
  * takes the confirm button's colour. Back and a tap outside call [onDismiss] too.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PipkinDialog(
+fun OopbotDialog(
   title: String,
   confirm: DialogConfirm,
   dismissLabel: String,
@@ -70,11 +70,11 @@ fun PipkinDialog(
   @DrawableRes icon: Int? = null,
   content: @Composable ColumnScope.() -> Unit = {},
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   // Wider than Material's default, 24dp in from the screen's edges, so two-word buttons fit on one line.
   BasicAlertDialog(
     onDismissRequest = onDismiss,
-    modifier = modifier.padding(horizontal = PipkinTokens.Spacing.s24),
+    modifier = modifier.padding(horizontal = OopbotTokens.Spacing.s24),
     properties = DialogProperties(usePlatformDefaultWidth = false),
   ) {
     Column(
@@ -96,16 +96,16 @@ fun PipkinDialog(
       if (text != null) {
         Text(
           text = text,
-          modifier = Modifier.padding(top = PipkinTokens.Spacing.s8),
+          modifier = Modifier.padding(top = OopbotTokens.Spacing.s8),
           color = colors.foregroundMuted,
-          fontSize = PipkinTokens.FontSize.base,
+          fontSize = OopbotTokens.FontSize.base,
           lineHeight = 21.sp,
         )
       }
       content()
       Row(
         modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(PipkinTokens.Spacing.s8),
+        horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
       ) {
         PillButton(label = dismissLabel, onClick = onDismiss, modifier = Modifier.weight(1f), tone = PillTone.Tonal)
         PillButton(
@@ -123,10 +123,10 @@ fun PipkinDialog(
 /** The tile naming a dialog's kind of action, red for a [destructive] one and cobalt otherwise. */
 @Composable
 private fun DialogIconTile(@DrawableRes icon: Int, destructive: Boolean) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   Box(
     modifier = Modifier
-      .padding(bottom = PipkinTokens.Spacing.s12)
+      .padding(bottom = OopbotTokens.Spacing.s12)
       .size(40.dp)
       .clip(RoundedCornerShape(14.dp))
       .background(if (destructive) colors.dangerSoft else colors.accentSoft),
@@ -135,7 +135,7 @@ private fun DialogIconTile(@DrawableRes icon: Int, destructive: Boolean) {
     LucideIcon(
       icon = icon,
       contentDescription = null,
-      size = PipkinTokens.IconSize.lg,
+      size = OopbotTokens.IconSize.lg,
       tint = if (destructive) colors.destructive else colors.accent,
     )
   }
@@ -156,7 +156,7 @@ fun PillButton(
   enabled: Boolean = true,
   @DrawableRes icon: Int? = null,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val (container, content) = when (tone) {
     PillTone.Primary -> colors.accent to colors.accentForeground
     PillTone.Destructive -> colors.destructive to colors.destructiveForeground
@@ -173,15 +173,15 @@ fun PillButton(
       disabledContainerColor = container.copy(alpha = DISABLED_ALPHA * container.alpha),
       disabledContentColor = content.copy(alpha = DISABLED_ALPHA),
     ),
-    contentPadding = PaddingValues(horizontal = PipkinTokens.Spacing.s16, vertical = PipkinTokens.Spacing.s8),
+    contentPadding = PaddingValues(horizontal = OopbotTokens.Spacing.s16, vertical = OopbotTokens.Spacing.s8),
   ) {
     if (icon != null) {
       LucideIcon(icon = icon, contentDescription = null, size = 15.dp, tint = LocalContentColor.current)
-      Box(Modifier.size(PipkinTokens.Spacing.s8))
+      Box(Modifier.size(OopbotTokens.Spacing.s8))
     }
     Text(
       text = label,
-      fontSize = PipkinTokens.FontSize.base,
+      fontSize = OopbotTokens.FontSize.base,
       fontWeight = FontWeight.SemiBold,
       textAlign = TextAlign.Center,
       maxLines = 2,
@@ -206,12 +206,12 @@ fun DialogTextField(
   keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
   trailing: (@Composable () -> Unit)? = null,
 ) {
-  val colors = pipkinColors
+  val colors = oopbotColors
   val interaction = remember { MutableInteractionSource() }
   val focused by interaction.collectIsFocusedAsState()
   val shape = RoundedCornerShape(14.dp)
   val style = LocalTextStyle.current.merge(
-    TextStyle(color = colors.foreground, fontSize = PipkinTokens.FontSize.content),
+    TextStyle(color = colors.foreground, fontSize = OopbotTokens.FontSize.content),
   )
   BasicTextField(
     value = value,
