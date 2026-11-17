@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Pipkin's app storage only makes sense beside the Termux state it was set up with, so Android backs up and
+<!-- OOPBoT's app storage only makes sense beside the Termux state it was set up with, so Android backs up and
      transfers none of it. Every domain is listed because Android walks each one separately and matches an exclude
      only against the folder it names, so excluding root alone would still back up files, databases and preferences. -->
 <data-extraction-rules>

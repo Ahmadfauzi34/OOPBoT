@@ -24,8 +24,8 @@ impl Drop for PendingApprovalGuard {
     }
 }
 
-/// Approver berbasis RPC yang berinteraksi secara asinkron dengan UI Pipkin Android
-/// melalui protokol standar Pi `extension_ui_request` (`method: "confirm"`) dan `extension_ui_response`.
+/// Approver berbasis RPC yang berinteraksi secara asinkron dengan UI OOPBoT Android
+/// melalui protokol RPC OOPBoT `extension_ui_request` (`method: "confirm"`) dan `extension_ui_response`.
 #[derive(Clone)]
 pub struct RpcApprover {
     pending: PendingApprovals,

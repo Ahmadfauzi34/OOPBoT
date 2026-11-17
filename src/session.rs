@@ -1,4 +1,4 @@
-//! Manajemen Multi-Sesi & Tab (`WorkspaceTabs`) ala Pipkin.
+//! Manajemen Multi-Sesi & Tab (`WorkspaceTabs`) OOPBoT.
 //!
 //! Setiap tab/sesi menyimpan:
 //! - ID sesi (`tab-1`, `tab-2`, dst. atau nama kustom)

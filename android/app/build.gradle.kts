@@ -36,7 +36,7 @@ val hostInstall = tasks.register<Exec>("hostInstall") {
 }
 
 val hostBuild = tasks.register<HostBundle>("hostBuild") {
-  description = "Bundles the Termux host into the pipkin-host.mjs APK asset, and the Pi extensions Pipkin ships."
+  description = "Bundles the Termux helper daemon and setup scripts into APK assets."
   dependsOn(hostInstall)
   workingDir = hostDir.asFile
   inputs.dir(hostDir.dir("src"))
@@ -45,8 +45,6 @@ val hostBuild = tasks.register<HostBundle>("hostBuild") {
     hostDir.file("pnpm-lock.yaml"),
     hostDir.file("tsconfig.json"),
     hostDir.file("build.ts"),
-    // build.ts leaves the runtime's packages out of the extensions it bundles.
-    layout.projectDirectory.file("src/main/assets/pi/package.json"),
   )
   commandLine("pnpm", "run", "build")
 }
@@ -451,16 +449,16 @@ tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("bui
 }
 
 android {
-  namespace = "io.jeph.pipkin"
+  namespace = "io.jeph.oopbot"
   compileSdk = 37
 
   defaultConfig {
-    applicationId = "io.jeph.pipkin"
+    applicationId = "io.jeph.oopbot"
     minSdk = 29
     targetSdk = 37
     // Release builds get both from .github/workflows/release.yml; local builds keep these placeholders.
-    versionCode = providers.gradleProperty("pipkin.versionCode").map(String::toInt).getOrElse(1)
-    versionName = providers.gradleProperty("pipkin.versionName").getOrElse("0.0.0-dev")
+    versionCode = providers.gradleProperty("oopbot.versionCode").map(String::toInt).getOrElse(1)
+    versionName = providers.gradleProperty("oopbot.versionName").getOrElse("0.0.0-dev")
     ndk { abiFilters += listOf("arm64-v8a") }
     externalNativeBuild {
       cmake {
@@ -468,7 +466,7 @@ android {
         arguments += "-DLLAMA_SOURCES=${llamaSourcesDir.get().asFile}"
         arguments += "-DOPENCL_HEADERS=${llamaSourcesDir.get().dir("opencl-headers").asFile}"
         // Only the app's libraries: llama.cpp's tools and examples would build for nothing.
-        targets += listOf("pipkin-syntax", "pipkin-llama", "pipkin-opencl-probe")
+        targets += listOf("oopbot-syntax", "oopbot-llama", "oopbot-opencl-probe")
       }
     }
   }
@@ -490,14 +488,14 @@ android {
     compose = true
   }
 
-  // Android 13 and later list Pipkin under Settings › Apps › Language with every locale it has strings for, read from
+  // Android 13 and later list OOPBoT under Settings › Apps › Language with every locale it has strings for, read from
   // the values-* folders; src/main/res/resources.properties names the locale of the unqualified values folder.
   androidResources { generateLocaleConfig = true }
 
   // Debug builds carry the en-XA and ar-XB pseudolocales: switched to one, any text that skips the string resources
   // stays plain English, and layouts show how they take longer or right-to-left text.
   //
-  // Debug builds are Pipkin Dev, installable beside the release: their own package here, and in src/debug their own
+  // Debug builds are OOPBoT Dev, installable beside the release: their own package here, and in src/debug their own
   // name and folders in Termux and helper ports (TermuxBuild, with the release's in src/release), so both can share one
   // Termux without touching each other's state.
   buildTypes {

@@ -1,6 +1,6 @@
 /**
- * The helper's files, in the folder `helper.mjs` runs from: `$HOME/.pipkin/helper/` for the release and
- * `$HOME/.pipkin-dev/helper/` for the debug build. Shared with `run.sh`, `start.sh` and the installer.
+ * The helper's files, in the folder `helper.mjs` runs from: `$HOME/.oopbot/helper/` for the release and
+ * `$HOME/.oopbot-dev/helper/` for the debug build. Shared with `run.sh`, `start.sh` and the installer.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";

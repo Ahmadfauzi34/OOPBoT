@@ -67,7 +67,7 @@ pub(super) fn handle_auth_status(config_dir: &Path) -> Value {
             let api = pval["api"].as_str().unwrap_or("openai-completions");
             if let Some(arr) = pval.get("models").and_then(|v| v.as_array()) {
                 for m_item in arr {
-                    if let Some(info) = ModelInfo::from_pipkin_json(m_item, pid, api) {
+                    if let Some(info) = ModelInfo::from_oopbot_json(m_item, pid, api) {
                         if !universe.iter().any(|u| u.provider == *pid && u.id == info.id) {
                             universe.push(info);
                         }
@@ -136,7 +136,7 @@ pub(super) fn handle_auth_status(config_dir: &Path) -> Value {
                 if let Some(ov) = overrides.and_then(|o| o.get(&cloned.id)) {
                     cloned.apply_override(ov);
                 }
-                cloned.to_pipkin_json(Some(id))
+                cloned.to_oopbot_json(Some(id))
             })
             .collect();
 
@@ -152,8 +152,8 @@ pub(super) fn handle_auth_status(config_dir: &Path) -> Value {
                             .iter()
                             .any(|existing| existing["id"].as_str() == Some(mid))
                         {
-                            if let Some(info) = ModelInfo::from_pipkin_json(m, id, entry_api) {
-                                models_for_provider.push(info.to_pipkin_json(Some(id)));
+                            if let Some(info) = ModelInfo::from_oopbot_json(m, id, entry_api) {
+                                models_for_provider.push(info.to_oopbot_json(Some(id)));
                             }
                         }
                     }
@@ -246,7 +246,7 @@ pub(super) fn handle_auth_status(config_dir: &Path) -> Value {
     }
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": data
     })
@@ -254,7 +254,7 @@ pub(super) fn handle_auth_status(config_dir: &Path) -> Value {
 
 fn io_error_result(action: &str, err: impl std::fmt::Display) -> Value {
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": false,
         "code": "io_error",
         "error": format!("Failed to {}: {}", action, err),
@@ -275,7 +275,7 @@ pub(super) fn handle_logout(config_dir: &Path, params: &Value) -> Value {
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -315,7 +315,7 @@ pub(super) fn handle_provider_save(config_dir: &Path, params: &Value) -> Value {
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -342,7 +342,7 @@ pub(super) fn handle_provider_remove(config_dir: &Path, params: &Value) -> Value
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -360,11 +360,11 @@ pub(super) fn handle_subscription_models(params: &Value) -> Value {
         .list()
         .iter()
         .filter(|m| m.provider == filter || m.provider == provider_id)
-        .map(|m| m.to_pipkin_json(Some(provider_id)))
+        .map(|m| m.to_oopbot_json(Some(provider_id)))
         .collect();
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "models": models_json }
     })
@@ -425,16 +425,15 @@ pub(super) fn handle_subscription_save(config_dir: &Path, params: &Value) -> Val
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
 }
 
 pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Value {
-    const LOCAL_PROVIDER: &str = "pipkin-local";
-    const LEGACY_LOCAL_PROVIDER: &str = "oopbot-local";
-    const PI_AI_CONTEXT_MARGIN: u64 = 4096;
+    const LOCAL_PROVIDER: &str = "oopbot-local";
+    const CONTEXT_MARGIN: u64 = 4096;
     const KEPT_SHARE: u64 = 16;
 
     let base_url = params["baseUrl"].as_str().unwrap_or_default();
@@ -479,7 +478,6 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
         .get_mut("providers")
         .and_then(|v| v.as_object_mut())
     {
-        providers_obj.remove(LEGACY_LOCAL_PROVIDER);
         if normalized_models.is_empty() {
             providers_obj.remove(LOCAL_PROVIDER);
         } else {
@@ -509,7 +507,7 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
     if models_changed {
         if let Err(e) = write_json_file(&models_path, &models_json) {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("Failed to write models.json: {}", e)
@@ -530,10 +528,7 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
                 .into_iter()
                 .filter(|item| {
                     item.as_str()
-                        .map(|s| {
-                            !s.starts_with(&format!("{}/", LEGACY_LOCAL_PROVIDER))
-                                && !s.starts_with(&format!("{}/", LOCAL_PROVIDER))
-                        })
+                        .map(|s| !s.starts_with(&format!("{}/", LOCAL_PROVIDER)))
                         .unwrap_or(true)
                 })
                 .collect();
@@ -556,10 +551,7 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
             .and_then(|o| o.as_object())
             .cloned()
             .unwrap_or_default();
-        overrides.retain(|k, _| {
-            !k.starts_with(&format!("{}/", LOCAL_PROVIDER))
-                && !k.starts_with(&format!("{}/", LEGACY_LOCAL_PROVIDER))
-        });
+        overrides.retain(|k, _| !k.starts_with(&format!("{}/", LOCAL_PROVIDER)));
         for m in &raw_models {
             let Some(id) = m.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
                 continue;
@@ -571,7 +563,7 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
                 overrides.insert(
                     format!("{}/{}", LOCAL_PROVIDER, id),
                     json!({
-                        "reserveTokens": max_tok + PI_AI_CONTEXT_MARGIN,
+                        "reserveTokens": max_tok + CONTEXT_MARGIN,
                         "keepRecentTokens": ctx / KEPT_SHARE,
                     }),
                 );
@@ -595,7 +587,7 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
         if settings_changed {
             if let Err(e) = write_json_file(&settings_path, &settings_json) {
                 return json!({
-                    "type": "pipkin_result",
+                    "type": "oopbot_result",
                     "ok": false,
                     "code": "io_error",
                     "error": format!("Failed to write settings.json: {}", e)
@@ -605,7 +597,7 @@ pub(super) fn handle_local_models_sync(config_dir: &Path, params: &Value) -> Val
     }
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "changed": models_changed || settings_changed }
     })
@@ -669,7 +661,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
 
     if !is_valid_http_url(base_url) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_url",
             "error": format!("{} is not an http:// or https:// URL", base_url),
@@ -684,7 +676,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
         Ok(c) => c,
         Err(e) => {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "network",
                 "error": format!("Could not reach {}: {}", base_url, e),
@@ -729,7 +721,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
         Err(e) => {
             if e.is_timeout() {
                 return json!({
-                    "type": "pipkin_result",
+                    "type": "oopbot_result",
                     "ok": false,
                     "code": "timeout",
                     "error": format!("No response from {} within 15 s", base_url),
@@ -738,7 +730,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
             }
             let cause = e.to_string();
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "network",
                 "error": format!("Could not reach {}: {}", base_url, cause),
@@ -757,7 +749,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
         Err(e) => {
             if e.is_timeout() {
                 return json!({
-                    "type": "pipkin_result",
+                    "type": "oopbot_result",
                     "ok": false,
                     "code": "timeout",
                     "error": format!("No response from {} within 15 s", base_url),
@@ -765,7 +757,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
                 });
             }
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "network",
                 "error": format!("Could not reach {}: {}", base_url, e),
@@ -779,7 +771,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
         let said = extract_server_error_message(&body_text);
         if said.is_empty() {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": code,
                 "error": format!("HTTP {}", status.as_u16()),
@@ -788,7 +780,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
             });
         }
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": code,
             "error": format!("HTTP {}: {}", status.as_u16(), said),
@@ -805,7 +797,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
         Err(_) => {
             if is_html_body(&body_text) {
                 return json!({
-                    "type": "pipkin_result",
+                    "type": "oopbot_result",
                     "ok": false,
                     "code": "bad_response",
                     "error": format!("{} returned a web page, not JSON", url),
@@ -815,7 +807,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
             }
             let preview: String = body_text.chars().take(300).collect();
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "bad_response",
                 "error": format!("The server did not return JSON: {}", preview),
@@ -835,7 +827,7 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
 
     if !has_valid_list {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_response",
             "error": "The server's /models response has no data list",
@@ -857,14 +849,14 @@ pub(super) async fn handle_provider_models(params: &Value) -> Value {
     let models_json: Vec<Value> = models
         .iter()
         .map(|m| {
-            let mut item = m.to_pipkin_json(None);
+            let mut item = m.to_oopbot_json(None);
             item["api"] = json!(api);
             item
         })
         .collect();
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "models": models_json }
     })
@@ -877,7 +869,7 @@ pub(super) fn handle_model_defaults(params: &Value) -> Value {
         for id_val in ids {
             if let Some(id_str) = id_val.as_str() {
                 if let Some(m) = catalog.find(id_str) {
-                    models_json.push(m.to_pipkin_json(None));
+                    models_json.push(m.to_oopbot_json(None));
                 } else {
                     let api = params["api"].as_str().unwrap_or("openai-completions");
                     models_json.push(json!({
@@ -890,7 +882,7 @@ pub(super) fn handle_model_defaults(params: &Value) -> Value {
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "models": models_json }
     })
@@ -918,7 +910,7 @@ pub(super) fn handle_save_default_model(config_dir: &Path, params: &Value) -> Va
     }
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })

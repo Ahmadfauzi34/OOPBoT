@@ -1,7 +1,7 @@
 /**
- * Entry point of `pipkin-helper.mjs` (`helper.mjs` in Termux):
+ * Entry point of `oopbot-helper.mjs` (`helper.mjs` in Termux):
  * - `node helper.mjs`: the daemon (see `daemon.ts`).
- * - `node helper.mjs pair`: stores the pairing key from Pipkin's setup endpoint (see `pairing.ts`).
+ * - `node helper.mjs pair`: stores the pairing key from OOPBoT's setup endpoint (see `pairing.ts`).
  * - `node helper.mjs client …`: developer CLI that launches a command through a running helper (see `client.ts`).
  */
 import { runClient } from "./client.js";

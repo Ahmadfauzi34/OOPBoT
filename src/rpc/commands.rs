@@ -487,7 +487,7 @@ impl RpcRuntime {
                 Some("Memori percakapan sesi ini telah dibersihkan.".to_string())
             }
             "/todos" => {
-                let Some(plugin) = self.plugins.get_plugin("pipkin-todo") else {
+                let Some(plugin) = self.plugins.get_plugin("oopbot-todo") else {
                     return Some(NO_TODOS_MESSAGE.to_string());
                 };
                 let Some(todo_plugin) = plugin.as_any().and_then(|a| a.downcast_ref::<TodoPlugin>())
@@ -1383,7 +1383,7 @@ impl RpcRuntime {
     }
 
 
-    /// Tangani pesan event masuk dari Android UI atau ekstensi via Pipkin Channel
+    /// Tangani pesan event masuk dari Android UI atau ekstensi via OOPBoT Channel
     pub(super) fn handle_channel_message(&self, topic: &str, data: &Value) {
         match topic {
             "tool_approval" => {

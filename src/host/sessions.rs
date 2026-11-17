@@ -149,7 +149,7 @@ pub(super) fn handle_list_sessions(config_dir: &Path, home: &str) -> Value {
     });
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "sessions": sessions }
     })
@@ -186,7 +186,7 @@ pub(super) fn handle_session_messages(params: &Value) -> Value {
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "messages": messages }
     })
@@ -236,7 +236,7 @@ pub(super) fn unique_attachment_path(dir: &Path, safe_name: &str) -> PathBuf {
 pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Value {
     let Some(files) = params.get("files").and_then(|f| f.as_array()) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_params",
             "error": "Parameter 'files' must be an array."
@@ -244,7 +244,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
     };
     if files.is_empty() {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_params",
             "error": "Parameter 'files' must not be empty."
@@ -254,7 +254,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
     if let Some(cwd) = params.get("cwd").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
         if read_remote_stand_in(config_dir, cwd).is_some() {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "remote_not_connected",
                 "error": "Remote workspace attachment upload requires an active SSH connection."
@@ -266,7 +266,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
     for file in files {
         let Some(raw_name) = file.get("name").and_then(|v| v.as_str()) else {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "bad_params",
                 "error": "Each attachment must have a 'name' string."
@@ -274,7 +274,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
         };
         let Some(data) = file.get("data").and_then(|v| v.as_str()) else {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "bad_params",
                 "error": "Each attachment must have a base64 'data' string."
@@ -282,7 +282,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
         };
         let Some(bytes) = decode_base64(data) else {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "bad_params",
                 "error": format!("Invalid base64 payload for attachment '{}'.", raw_name)
@@ -297,7 +297,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
         .join(format!("{}_{}_{}", epoch_ms(), std::process::id(), seq));
     if let Err(e) = std::fs::create_dir_all(&attach_dir) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to create attachments directory: {}", e)
@@ -306,7 +306,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
 
     let Ok(canon_dir) = std::fs::canonicalize(&attach_dir) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": "Failed to resolve attachments directory."
@@ -318,7 +318,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
         let file_path = unique_attachment_path(&canon_dir, &name);
         if !file_path.starts_with(&canon_dir) {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "outside_workspace",
                 "error": "Attachment path escaped target directory."
@@ -326,7 +326,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
         }
         if let Err(e) = std::fs::write(&file_path, bytes) {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("Failed to write attachment: {}", e)
@@ -336,7 +336,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
     }
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "paths": paths }
     })
@@ -346,7 +346,7 @@ pub(super) fn handle_save_attachments(params: &Value, config_dir: &Path) -> Valu
 pub(super) fn handle_subagent_sessions(config_dir: &Path, params: &Value) -> Value {
     let Some(raw_path) = params.get("path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_params",
             "error": "Parameter 'path' is required.",
@@ -363,21 +363,21 @@ pub(super) fn handle_subagent_sessions(config_dir: &Path, params: &Value) -> Val
     };
     let Ok(canon_root) = std::fs::canonicalize(&sessions_root) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": { "sessions": [] }
         });
     };
     let Ok(canon_parent) = std::fs::canonicalize(&target) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": { "sessions": [] }
         });
     };
     if !canon_parent.starts_with(&canon_root) || !canon_parent.is_file() {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "outside_workspace",
             "error": "Session path is outside sessions directory.",
@@ -387,28 +387,28 @@ pub(super) fn handle_subagent_sessions(config_dir: &Path, params: &Value) -> Val
 
     let Ok(content) = std::fs::read_to_string(&canon_parent) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": { "sessions": [] }
         });
     };
     let Some(first_line) = content.lines().next() else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": { "sessions": [] }
         });
     };
     let Ok(header) = serde_json::from_str::<Value>(first_line) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": { "sessions": [] }
         });
     };
     let Some(sess_id) = header.get("id").and_then(|v| v.as_str()).filter(|s| is_valid_session_id(s)) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": true,
             "data": { "sessions": [] }
         });
@@ -443,7 +443,7 @@ pub(super) fn handle_subagent_sessions(config_dir: &Path, params: &Value) -> Val
             } else if entry["type"].as_str() == Some("message") {
                 msg_count += 1;
             } else if entry["type"].as_str() == Some("custom")
-                && entry["customType"].as_str() == Some("pipkin-subagent")
+                && entry["customType"].as_str() == Some("oopbot-subagent")
                 && entry["data"].is_object()
                 && link.is_none()
             {
@@ -477,7 +477,7 @@ pub(super) fn handle_subagent_sessions(config_dir: &Path, params: &Value) -> Val
     }
     sessions.sort_by_key(|s| s["created"].as_u64().unwrap_or(0));
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "sessions": sessions }
     })
@@ -493,7 +493,7 @@ pub(super) fn handle_delete_sessions(params: &Value) -> Value {
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })

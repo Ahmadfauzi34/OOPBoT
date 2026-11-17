@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signs an unsigned release APK with Pipkin's release key and checks that the result carries the release certificate.
+# Signs an unsigned release APK with OOPBoT's release key and checks that the result carries the release certificate.
 # .github/workflows/release.yml runs it in a job that holds the signing secrets and nothing else.
 #
 # Usage: sign-release-apk.sh <unsigned.apk> <signed.apk>

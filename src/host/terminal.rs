@@ -185,7 +185,7 @@ pub(super) fn run_terminal_loop<R: BufRead + Send + 'static, W: Write + Send + '
 
     if !Path::new(&cwd).is_dir() {
         let err = json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "error": "Folder not found",
             "code": "cwd_missing"
@@ -294,7 +294,7 @@ pub(super) fn run_terminal_loop<R: BufRead + Send + 'static, W: Write + Send + '
 
         let exit_code = status.and_then(|s| s.code());
         let exit_msg = json!({
-            "type": "pipkin_exit",
+            "type": "oopbot_exit",
             "code": exit_code,
             "signal": null,
             "stderr": ""

@@ -1,4 +1,4 @@
-// JNI bridge between io.jeph.pipkin.syntax.TreeSitter and tree-sitter's C API. Text crosses as
+// JNI bridge between io.jeph.oopbot.syntax.TreeSitter and tree-sitter's C API. Text crosses as
 // UTF-16, which tree-sitter parses natively, so a byte offset is always twice a Java char index.
 
 #include <jni.h>
@@ -57,7 +57,7 @@ static void throw_out_of_memory(JNIEnv *env, const char *message) {
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_language(JNIEnv *env, jclass type, jstring name) {
+Java_io_jeph_oopbot_syntax_TreeSitter_language(JNIEnv *env, jclass type, jstring name) {
   const char *chars = (*env)->GetStringUTFChars(env, name, NULL);
   if (chars == NULL) return 0;
   const TSLanguage *language = NULL;
@@ -72,7 +72,7 @@ Java_io_jeph_pipkin_syntax_TreeSitter_language(JNIEnv *env, jclass type, jstring
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_parserNew(JNIEnv *env, jclass type, jlong language) {
+Java_io_jeph_oopbot_syntax_TreeSitter_parserNew(JNIEnv *env, jclass type, jlong language) {
   TSParser *parser = ts_parser_new();
   if (!ts_parser_set_language(parser, (const TSLanguage *)(intptr_t)language)) {
     ts_parser_delete(parser);
@@ -83,11 +83,11 @@ Java_io_jeph_pipkin_syntax_TreeSitter_parserNew(JNIEnv *env, jclass type, jlong 
 }
 
 JNIEXPORT void JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_parserDelete(JNIEnv *env, jclass type, jlong parser) {
+Java_io_jeph_oopbot_syntax_TreeSitter_parserDelete(JNIEnv *env, jclass type, jlong parser) {
   ts_parser_delete((TSParser *)(intptr_t)parser);
 }
 
-JNIEXPORT jlong JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_parse(
+JNIEXPORT jlong JNICALL Java_io_jeph_oopbot_syntax_TreeSitter_parse(
     JNIEnv *env, jclass type, jlong parser, jlong old_tree, jstring text) {
   jsize length = (*env)->GetStringLength(env, text);
   const jchar *chars = (*env)->GetStringChars(env, text, NULL);
@@ -100,7 +100,7 @@ JNIEXPORT jlong JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_parse(
   return (jlong)(intptr_t)tree;
 }
 
-JNIEXPORT void JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_treeEdit(
+JNIEXPORT void JNICALL Java_io_jeph_oopbot_syntax_TreeSitter_treeEdit(
     JNIEnv *env, jclass type, jlong tree, jintArray edit) {
   jint e[9];
   (*env)->GetIntArrayRegion(env, edit, 0, 9, e);
@@ -116,7 +116,7 @@ JNIEXPORT void JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_treeEdit(
 }
 
 JNIEXPORT void JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_treeDelete(JNIEnv *env, jclass type, jlong tree) {
+Java_io_jeph_oopbot_syntax_TreeSitter_treeDelete(JNIEnv *env, jclass type, jlong tree) {
   ts_tree_delete((TSTree *)(intptr_t)tree);
 }
 
@@ -132,7 +132,7 @@ static const char *query_error_name(TSQueryError error) {
   }
 }
 
-JNIEXPORT jlong JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_queryNew(
+JNIEXPORT jlong JNICALL Java_io_jeph_oopbot_syntax_TreeSitter_queryNew(
     JNIEnv *env, jclass type, jlong language, jstring source) {
   const char *chars = (*env)->GetStringUTFChars(env, source, NULL);
   if (chars == NULL) return 0;
@@ -178,24 +178,24 @@ static jobjectArray strings(JNIEnv *env, const TSQuery *query, uint32_t count,
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_queryCaptureNames(JNIEnv *env, jclass type, jlong query) {
+Java_io_jeph_oopbot_syntax_TreeSitter_queryCaptureNames(JNIEnv *env, jclass type, jlong query) {
   const TSQuery *q = (const TSQuery *)(intptr_t)query;
   return strings(env, q, ts_query_capture_count(q), ts_query_capture_name_for_id);
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_queryStrings(JNIEnv *env, jclass type, jlong query) {
+Java_io_jeph_oopbot_syntax_TreeSitter_queryStrings(JNIEnv *env, jclass type, jlong query) {
   const TSQuery *q = (const TSQuery *)(intptr_t)query;
   return strings(env, q, ts_query_string_count(q), ts_query_string_value_for_id);
 }
 
 JNIEXPORT jint JNICALL
-Java_io_jeph_pipkin_syntax_TreeSitter_queryPatternCount(JNIEnv *env, jclass type, jlong query) {
+Java_io_jeph_oopbot_syntax_TreeSitter_queryPatternCount(JNIEnv *env, jclass type, jlong query) {
   return (jint)ts_query_pattern_count((const TSQuery *)(intptr_t)query);
 }
 
 // Pairs of (step type, value id) for one pattern's predicates, each ended by a Done step.
-JNIEXPORT jintArray JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_queryPredicates(
+JNIEXPORT jintArray JNICALL Java_io_jeph_oopbot_syntax_TreeSitter_queryPredicates(
     JNIEnv *env, jclass type, jlong query, jint pattern) {
   uint32_t count = 0;
   const TSQueryPredicateStep *steps =
@@ -232,7 +232,7 @@ static int push(IntBuffer *buffer, jint value) {
 
 // Every match of [query] over [tree] in one array: the pattern index and capture count, then for
 // each capture its index and start and end char. Predicates are left to the caller.
-JNIEXPORT jintArray JNICALL Java_io_jeph_pipkin_syntax_TreeSitter_matches(
+JNIEXPORT jintArray JNICALL Java_io_jeph_oopbot_syntax_TreeSitter_matches(
     JNIEnv *env, jclass type, jlong tree, jlong query) {
   TSQueryCursor *cursor = ts_query_cursor_new();
   ts_query_cursor_exec(cursor, (const TSQuery *)(intptr_t)query,

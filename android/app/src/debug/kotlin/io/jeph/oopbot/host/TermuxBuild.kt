@@ -1,0 +1,15 @@
+package io.jeph.oopbot.host
+
+/**
+ * OOPBoT Dev's names in Termux, apart from the release's (src/release) so both builds can share one Termux: Pi's
+ * config and the helper under `~/.oopbot-dev`, the host under `~/.local/share/oopbot-dev`, `oopbot-dev-start`.
+ */
+internal object TermuxBuild {
+  const val NAME = "oopbot-dev"
+
+  /** The first of the five loopback ports the Play-Termux helper may listen on. */
+  const val HELPER_FIRST_PORT = 47320
+
+  /** The loopback port Pi reaches OOPBoT's local models on, just past the helper's. */
+  const val LOCAL_MODEL_PORT = 47325
+}

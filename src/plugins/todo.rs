@@ -1,11 +1,11 @@
 //! TodoPlugin — Manajemen checklist tugas & progress multi-langkah.
 //!
-//! Kompatibel dengan ekstensi Pi/Pipkin `pipkin-todo` (`todo.ts` & `index.ts`):
+//! Kompatibel dengan ekstensi OOPBoT `oopbot-todo`:
 //! - Tool `todo` dengan aksi `create`, `update`, `list`, `get`, `delete`, `clear`.
 //! - Mesin status 4-kondisi (`pending` → `in_progress` → `completed`, plus `deleted` tombstone).
 //! - Pelacakan dependensi `blockedBy` (`addBlockedBy` / `removeBlockedBy`) dengan deteksi siklus graf.
 //! - Dukungan `owner` dan `metadata` (merge dengan penghapusan key bernilai `null`).
-//! - Persistensi per-branch sesi (`customType: "pipkin-todo-state"` & `toolResult.details`)
+//! - Persistensi per-branch sesi (`customType: "oopbot-todo-state"` & `toolResult.details`)
 //!   serta replay otomatis saat resume, switch session, fork, clone, dan compaction.
 //! - Render widget Android (`todos`) dan output slash command `/todos`.
 
@@ -18,11 +18,11 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-/// Key widget yang dikirim lewat `extension_ui_request` (`setWidget`) ke Pipkin UI.
+/// Key widget yang dikirim lewat `extension_ui_request` (`setWidget`) ke OOPBoT UI.
 pub const TODO_WIDGET_KEY: &str = "todos";
 
 /// `customType` entri JSONL sesi untuk snapshot state `TodoPlugin`.
-pub const TODO_STATE_ENTRY: &str = "pipkin-todo-state";
+pub const TODO_STATE_ENTRY: &str = "oopbot-todo-state";
 
 /// Pesan default ketika belum ada todo aktif pada branch saat ini.
 pub const NO_TODOS_MESSAGE: &str = "No todos yet. Ask the agent to add some!";
@@ -59,7 +59,7 @@ impl TaskStatus {
         }
     }
 
-    /// Aturan transisi status mengikuti state machine `pipkin-todo`:
+    /// Aturan transisi status mengikuti state machine `oopbot-todo`:
     /// - status yang sama selalu diizinkan (no-op bila field lain tidak berubah)
     /// - `pending` -> `in_progress | completed | deleted`
     /// - `in_progress` -> `pending | completed | deleted`
@@ -124,7 +124,7 @@ impl TodoState {
     }
 }
 
-/// Snapshot `details` yang disimpan pada `toolResult` dan entri sesi `pipkin-todo-state`.
+/// Snapshot `details` yang disimpan pada `toolResult` dan entri sesi `oopbot-todo-state`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TodoDetails {
     pub action: String,
@@ -209,11 +209,11 @@ impl TodoPlugin {
 #[async_trait]
 impl Plugin for TodoPlugin {
     fn id(&self) -> &str {
-        "pipkin-todo"
+        "oopbot-todo"
     }
 
     fn aliases(&self) -> Vec<&'static str> {
-        vec!["oopbot-todo", "todo", "rpiv-todo"]
+        vec!["todo", "rpiv-todo"]
     }
 
     fn name(&self) -> &str {
@@ -1505,8 +1505,8 @@ fn try_parse_todo_state(val: &Value) -> Option<TodoState> {
 
 /// Replay `TodoState` dari rangkaian entri branch sesi aktif (`active_branch_entries`).
 ///
-/// Sesuai perilaku `pipkin-todo`:
-/// - Entri custom `customType: "pipkin-todo-state"` menjadi sumber utama terbaru.
+/// Sesuai perilaku `oopbot-todo`:
+/// - Entri custom `customType: "oopbot-todo-state"` menjadi sumber utama terbaru.
 /// - Jika belum ada, fallback ke `details` pada `toolResult` terakhir milik tool `"todo"`.
 pub fn replay_branch_entries(entries: &[Value]) -> TodoState {
     let mut from_entries: Option<TodoState> = None;

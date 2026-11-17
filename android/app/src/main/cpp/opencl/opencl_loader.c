@@ -1,4 +1,4 @@
-// The OpenCL functions that ggml's OpenCL backend and pipkin-opencl-probe call, each forwarding to the vendor's driver,
+// The OpenCL functions that ggml's OpenCL backend and oopbot-opencl-probe call, each forwarding to the vendor's driver,
 // libOpenCL.so, which loads on the first call. Linking the driver instead would make Android refuse to load either
 // library on a phone without one, such as an emulator; without it, OpenCL here finds no platform and every other
 // function fails. Add a function to CL_FUNCTIONS and define it below when a new llama.cpp calls one more: the link
@@ -66,15 +66,15 @@ static pthread_once_t driver_once = PTHREAD_ONCE_INIT;
 
 static void load_driver(void) {
   // A model on the CPU never touches the driver, so a driver that crashes as it sets up can't take the CPU down too.
-  const char * wanted = getenv("PIPKIN_OPENCL");
+  const char * wanted = getenv("OOPBOT_OPENCL");
   if (wanted != NULL && strcmp(wanted, "off") == 0) {
-    __android_log_print(ANDROID_LOG_INFO, "PipkinOpenCL", "OpenCL is off for this process");
+    __android_log_print(ANDROID_LOG_INFO, "OopbotOpenCL", "OpenCL is off for this process");
     return;
   }
   // Android 12 and later let an app load it only when the manifest lists it in <uses-native-library>.
   void * library = dlopen("libOpenCL.so", RTLD_NOW | RTLD_LOCAL);
   if (library == NULL) {
-    __android_log_print(ANDROID_LOG_INFO, "PipkinOpenCL", "No OpenCL driver: %s", dlerror());
+    __android_log_print(ANDROID_LOG_INFO, "OopbotOpenCL", "No OpenCL driver: %s", dlerror());
     return;
   }
 #define RESOLVE(name) driver.name = (name##_fn) dlsym(library, #name);

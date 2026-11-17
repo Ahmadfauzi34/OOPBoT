@@ -159,7 +159,7 @@ pub(super) fn write_remote_hosts_and_ssh_config(ssh_dir: &Path, home: &str, host
         }
     };
     let mut lines = vec![
-        "# Written by Pipkin from hosts.json; changes here are overwritten.".to_string(),
+        "# Written by OOPBoT from hosts.json; changes here are overwritten.".to_string(),
         "Host *".to_string(),
         "  ServerAliveInterval 15".to_string(),
         "  ServerAliveCountMax 2".to_string(),
@@ -183,7 +183,7 @@ pub(super) fn write_remote_hosts_and_ssh_config(ssh_dir: &Path, home: &str, host
         };
         let port = h["port"].as_u64().unwrap_or(22);
         lines.push(String::new());
-        lines.push(format!("Host pipkin-{}", id));
+        lines.push(format!("Host oopbot-{}", id));
         lines.push(format!("  HostName {}", host));
         if let Some(u) = user {
             lines.push(format!("  User {}", u));
@@ -259,7 +259,7 @@ pub(super) fn handle_remote_hosts(config_dir: &Path, _home: &str) -> Value {
     let hosts = load_remote_hosts_list(&ssh_dir);
     let workspaces = list_remote_stand_ins(&remotes_dir);
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {
             "sshInstalled": ssh_installed,
@@ -272,7 +272,7 @@ pub(super) fn handle_remote_hosts(config_dir: &Path, _home: &str) -> Value {
 
 pub(super) fn invalid_remote_host(field: &str, key: &str, msg: &str) -> Value {
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": false,
         "code": "remote_host_invalid",
         "error": msg,
@@ -284,7 +284,7 @@ pub(super) fn invalid_remote_host(field: &str, key: &str, msg: &str) -> Value {
 pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Value) -> Value {
     let Some(draft) = params.get("host").and_then(|v| v.as_object()) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_params",
             "error": "Missing host",
@@ -296,7 +296,7 @@ pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Va
         Some(Value::String(s)) if is_valid_host_id(s) => Some(s.clone()),
         _ => {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "bad_params",
                 "error": "Bad host id",
@@ -310,7 +310,7 @@ pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Va
         .filter(|s| matches!(*s, "key" | "password" | "config"))
     else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_params",
             "error": "Bad host sign-in method",
@@ -344,7 +344,7 @@ pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Va
                 .is_some_and(|n| n.to_ascii_lowercase() == folded)
     }) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "remote_host_invalid",
             "error": format!("Another host is named {}.", name),
@@ -393,7 +393,7 @@ pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Va
         .and_then(|eid| hosts.iter().position(|h| h["id"].as_str() == Some(eid)));
     if id.is_some() && existing_idx.is_none() {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "remote_host_unknown",
             "error": "Remote host not found.",
@@ -432,7 +432,7 @@ pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Va
 
     if let Err(e) = write_remote_hosts_and_ssh_config(&ssh_dir, home, &hosts) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to write hosts config: {}", e),
@@ -441,7 +441,7 @@ pub(super) fn handle_remote_host_save(config_dir: &Path, home: &str, params: &Va
     }
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "host": saved }
     })
@@ -452,7 +452,7 @@ pub(super) fn disconnect_ssh_control(ssh_dir: &Path, host_id: &str) {
     if sock.exists() {
         if let Some(ssh) = find_termux_bin("ssh") {
             let _ = std::process::Command::new(ssh)
-                .args(["-S", &sock.to_string_lossy(), "-O", "exit", "pipkin-ctrl"])
+                .args(["-S", &sock.to_string_lossy(), "-O", "exit", "oopbot-ctrl"])
                 .output();
         }
         let _ = std::fs::remove_file(&sock);
@@ -470,7 +470,7 @@ pub(super) fn handle_remote_host_remove(config_dir: &Path, home: &str, params: &
         let _ = write_remote_hosts_and_ssh_config(&ssh_dir, home, &hosts);
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -479,7 +479,7 @@ pub(super) fn handle_remote_host_remove(config_dir: &Path, home: &str, params: &
 pub(super) fn normalize_remote_path(raw: &str) -> Result<String, Value> {
     if !raw.starts_with('/') || raw.contains('\0') {
         return Err(json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_params",
             "error": format!("Not an absolute remote path: {}", raw),
@@ -510,7 +510,7 @@ pub(super) fn handle_remote_workspace(config_dir: &Path, params: &Value) -> Valu
     let hosts = load_remote_hosts_list(&ssh_dir);
     if !hosts.iter().any(|h| h["id"].as_str() == Some(host_id)) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "remote_host_unknown",
             "error": "Remote host not found.",
@@ -525,7 +525,7 @@ pub(super) fn handle_remote_workspace(config_dir: &Path, params: &Value) -> Valu
     let cwd_dir = remote_remotes_dir(config_dir).join(host_id).join(hash);
     if let Err(e) = std::fs::create_dir_all(&cwd_dir) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to create stand-in folder: {}", e),
@@ -538,7 +538,7 @@ pub(super) fn handle_remote_workspace(config_dir: &Path, params: &Value) -> Valu
         &json!({ "version": 1, "hostId": host_id, "path": norm }),
     ) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to write stand-in manifest: {}", e),
@@ -546,7 +546,7 @@ pub(super) fn handle_remote_workspace(config_dir: &Path, params: &Value) -> Valu
         });
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "cwd": cwd_dir.to_string_lossy() }
     })
@@ -574,7 +574,7 @@ pub(super) fn handle_remote_status(config_dir: &Path, params: &Value) -> Value {
                 .as_ref()
                 .and_then(|ssh| {
                     std::process::Command::new(ssh)
-                        .args(["-S", &sock.to_string_lossy(), "-O", "check", "pipkin-ctrl"])
+                        .args(["-S", &sock.to_string_lossy(), "-O", "check", "oopbot-ctrl"])
                         .output()
                         .ok()
                 })
@@ -585,7 +585,7 @@ pub(super) fn handle_remote_status(config_dir: &Path, params: &Value) -> Value {
         connected.insert(id, json!(is_up));
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "connected": Value::Object(connected) }
     })
@@ -596,7 +596,7 @@ pub(super) fn handle_remote_disconnect(config_dir: &Path, params: &Value) -> Val
     let ssh_dir = remote_ssh_dir(config_dir);
     disconnect_ssh_control(&ssh_dir, id);
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -608,7 +608,7 @@ pub(super) fn handle_remote_forget_host_key(config_dir: &Path, params: &Value) -
     let hosts = load_remote_hosts_list(&ssh_dir);
     let Some(host) = hosts.into_iter().find(|h| h["id"].as_str() == Some(id)) else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "remote_host_unknown",
             "error": "Remote host not found.",
@@ -623,7 +623,7 @@ pub(super) fn handle_remote_forget_host_key(config_dir: &Path, params: &Value) -
             Ok(c) => c,
             Err(e) => {
                 return json!({
-                    "type": "pipkin_result",
+                    "type": "oopbot_result",
                     "ok": false,
                     "code": "io_error",
                     "error": format!("Failed to read known_hosts: {}", e),
@@ -642,7 +642,7 @@ pub(super) fn handle_remote_forget_host_key(config_dir: &Path, params: &Value) -
         };
         if let Err(e) = crate::util::write_text_atomic(&kh, &new_content, Some(0o600)) {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("Failed to update known_hosts: {}", e),
@@ -651,7 +651,7 @@ pub(super) fn handle_remote_forget_host_key(config_dir: &Path, params: &Value) -
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -664,7 +664,7 @@ pub(super) fn handle_remote_key(config_dir: &Path) -> Value {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": true,
                 "data": { "publicKey": trimmed }
             });
@@ -676,7 +676,7 @@ pub(super) fn handle_remote_key(config_dir: &Path) -> Value {
 pub(super) fn handle_remote_key_new(config_dir: &Path) -> Value {
     let Some(keygen) = find_termux_bin("ssh-keygen") else {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "ssh_missing",
             "error": "OpenSSH is not installed.",
@@ -687,7 +687,7 @@ pub(super) fn handle_remote_key_new(config_dir: &Path) -> Value {
     let ssh_dir = remote_ssh_dir(config_dir);
     if let Err(e) = std::fs::create_dir_all(&ssh_dir) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to prepare ssh directory: {}", e),
@@ -699,7 +699,7 @@ pub(super) fn handle_remote_key_new(config_dir: &Path) -> Value {
     let _ = std::fs::remove_file(&key_path);
     let _ = std::fs::remove_file(&pub_path);
     let out = std::process::Command::new(keygen)
-        .args(["-t", "ed25519", "-N", "", "-C", "pipkin", "-f"])
+        .args(["-t", "ed25519", "-N", "", "-C", "oopbot", "-f"])
         .arg(&key_path)
         .output();
     match out {
@@ -713,20 +713,20 @@ pub(super) fn handle_remote_key_new(config_dir: &Path) -> Value {
                 }
             }
             json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": true,
                 "data": { "publicKey": pub_key.trim() }
             })
         }
         Ok(o) => json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("ssh-keygen failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
             "data": {}
         }),
         Err(e) => json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "ssh_missing",
             "error": format!("OpenSSH failed to run: {}", e),

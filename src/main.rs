@@ -35,7 +35,7 @@ OPSI:
     -m, --model <NAMA>     Model AI (default sesuai provider aktif atau $OOPBOT_MODEL)
     -p, --prompt <TEKS>    Jalankan 1 prompt non-interaktif lalu keluar
         --mode <MODE>      Mode mesin:
-                           - `rpc`         : daemon JSONL untuk aplikasi Android Pipkin
+                           - `rpc`         : daemon JSONL untuk aplikasi Android OOPBoT
                            - `catalog`     : cetak katalog referensi provider & model JSON
                            - `scan-models` : scan daftar model live dari provider & cetak JSON
         --session <PATH>   Path file sesi JSONL (untuk `--mode rpc`)
@@ -551,7 +551,7 @@ async fn main() -> Result<(), BoxError> {
             let client = GeminiClient::new_with_base_url(api_key.clone(), "default".to_string(), base_url)?;
             match client.scan_models().await {
                 Ok(scanned) => {
-                    let models: Vec<_> = scanned.iter().map(|m| m.to_pipkin_json(None)).collect();
+                    let models: Vec<_> = scanned.iter().map(|m| m.to_oopbot_json(None)).collect();
                     println!("{}", json!({ "ok": true, "models": models }));
                 }
                 Err(e) => {

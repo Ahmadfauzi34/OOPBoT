@@ -8,9 +8,9 @@
 //! - `ensure`         : Verifikasi kesiapan engine native OOPBoT (tanpa npm / node).
 //! - `hello`          : Handshake info lingkungan Termux (direktori, storage, dll).
 //! - `login`          : Handshake autentikasi interaktif (input API key via prompt Android).
-//! - `browse`         : Penjelajahan direktori workspace (pipkin_places, pipkin_list, pipkin_search).
-//! - `files`          : File Explorer workspace (pipkin_files_list, pipkin_files_read, pipkin_files_mkdir).
-//! - `git`            : Tab Git Changes (pipkin_git_detect, pipkin_git_changes, pipkin_git_commits, pipkin_git_commit_diff).
+//! - `browse`         : Penjelajahan direktori workspace (oopbot_places, oopbot_list, oopbot_search).
+//! - `files`          : File Explorer workspace (oopbot_files_list, oopbot_files_read, oopbot_files_mkdir).
+//! - `git`            : Tab Git Changes (oopbot_git_detect, oopbot_git_changes, oopbot_git_commits, oopbot_git_commit_diff).
 //! - `terminal`       : Terminal interaktif shell bawaan (streaming stdout/stderr Base64 & input).
 //! - `utility`        : Penanganan one-off request (daftar sesi, model default, auth status, attachments, dll).
 //! - `package_install`: Penanganan instalasi paket ekstensi runtime.
@@ -58,8 +58,8 @@ const PROTOCOL_VERSION: i64 = 1;
 
 /// Jalankan mode `oopbot host <mode> <port>`
 pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
-    // 1. Ambil token dari environment atau baca 1 baris dari stdin (Dual-Support: OOPBOT_TOKEN / PIPKIN_TOKEN)
-    let token = match env::var("OOPBOT_TOKEN").or_else(|_| env::var("PIPKIN_TOKEN")) {
+    // 1. Ambil token dari environment atau baca 1 baris dari stdin
+    let token = match env::var("OOPBOT_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => {
             let mut line = String::new();
@@ -69,28 +69,21 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
     };
 
     if token.is_empty() {
-        return Err("OOPBOT_TOKEN / PIPKIN_TOKEN kosong atau tidak ditemukan".into());
+        return Err("OOPBOT_TOKEN kosong atau tidak ditemukan".into());
     }
 
     let home = env::var("HOME").unwrap_or_else(|_| ".".into());
     let prefix = env::var("PREFIX").unwrap_or_else(|_| "/data/data/com.termux/files/usr".into());
     let oopbot_root = env::var("OOPBOT_ROOT")
-        .or_else(|_| env::var("PIPKIN_ROOT"))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);
     let config_dir = env::var("OOPBOT_CONFIG_DIR")
-        .or_else(|_| env::var("PI_CODING_AGENT_DIR"))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let oopbot_dir = PathBuf::from(&home).join(".oopbot");
-            if oopbot_dir.exists() {
-                oopbot_dir
-            } else {
-                PathBuf::from(&home).join(".pipkin/pi")
-            }
-        });
+        .unwrap_or_else(|| PathBuf::from(&home).join(".oopbot"));
     let _ = std::fs::create_dir_all(&config_dir);
 
     // Cek shared storage
@@ -105,14 +98,13 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
     let mut reader = BufReader::new(stream);
     let mut writer = BufWriter::new(write_stream);
 
-    // 3. Kirim handshake `pipkin_hello` (Dual-Support: oopbotVersion & piVersion)
+    // 3. Kirim handshake `oopbot_hello`
     let hello = json!({
-        "type": "pipkin_hello",
+        "type": "oopbot_hello",
         "protocol": PROTOCOL_VERSION,
         "token": token,
         "mode": mode,
         "oopbotVersion": env!("CARGO_PKG_VERSION"),
-        "piVersion": env!("CARGO_PKG_VERSION"),
         "nodeVersion": "native-tokio",
         "configDir": config_dir.to_string_lossy(),
         "home": home,
@@ -122,7 +114,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
     writeln!(writer, "{}", serde_json::to_string(&hello)?)?;
     writer.flush()?;
 
-    // 4. Baca request pertama dari Android (`pipkin_request`)
+    // 4. Baca request pertama dari Android (`oopbot_request`)
     let mut req_line = String::new();
     let bytes_read = reader.read_line(&mut req_line)?;
     if bytes_read == 0 {
@@ -133,9 +125,9 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         Ok(v) => v,
         Err(_) => {
             let err = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
-                "error": "Expected a valid pipkin_request JSON",
+                "error": "Expected a valid oopbot_request JSON",
                 "code": "bad_request"
             });
             writeln!(writer, "{}", serde_json::to_string(&err)?)?;
@@ -153,7 +145,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         }
         "hello" => {
             let result = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": true,
                 "data": {}
             });
@@ -184,7 +176,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         }
         "package_install" => {
             let result = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "unsupported",
                 "error": "Native OOPBoT engine does not run npm/pi package installs.",
@@ -196,7 +188,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         }
         "update_extensions" => {
             let result = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "unsupported",
                 "error": "Native OOPBoT engine does not run npm extension updates.",
@@ -208,7 +200,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         }
         "remote_connect" | "remote_install" => {
             let result = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "unsupported",
                 "error": "Interactive SSH connection is not supported in OOPBoT host mode yet.",
@@ -221,7 +213,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         "backup_create" => {
             let mut progress_cb = |line: &str, key: &str, count: usize| {
                 let msg = json!({
-                    "type": "pipkin_progress",
+                    "type": "oopbot_progress",
                     "line": line,
                     "lineI18n": { "key": key, "args": { "count": count } }
                 });
@@ -236,7 +228,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         "backup_restore" => {
             let mut progress_cb = |line: &str, key: &str, count: usize| {
                 let msg = json!({
-                    "type": "pipkin_progress",
+                    "type": "oopbot_progress",
                     "line": line,
                     "lineI18n": { "key": key, "args": { "count": count } }
                 });
@@ -250,7 +242,7 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         }
         other => {
             let result = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "unsupported",
                 "error": format!("Unsupported host mode: {}", other),
@@ -287,7 +279,7 @@ async fn handle_login_mode(
 
     // Kirim prompt ke UI Android
     let prompt_msg = json!({
-        "type": "pipkin_auth_prompt",
+        "type": "oopbot_auth_prompt",
         "id": 1,
         "prompt": {
             "type": "input",
@@ -312,13 +304,13 @@ async fn handle_login_mode(
 
         if let Ok(resp) = serde_json::from_str::<Value>(trimmed) {
             match resp["type"].as_str() {
-                Some("pipkin_auth_response") | Some("oopbot_auth_response") => {
+                Some("oopbot_auth_response") => {
                     if let Some(val) = resp["value"].as_str() {
                         let key = val.trim();
                         if !key.is_empty() {
                             if let Err(e) = save_auth_key(config_dir, &provider_id, key) {
                                 let err = json!({
-                                    "type": "pipkin_result",
+                                    "type": "oopbot_result",
                                     "ok": false,
                                     "error": format!("Failed to save API key: {}", e),
                                     "code": "io_error",
@@ -331,7 +323,7 @@ async fn handle_login_mode(
                         }
                     }
                     let res = json!({
-                        "type": "pipkin_result",
+                        "type": "oopbot_result",
                         "ok": true,
                         "data": {}
                     });
@@ -339,9 +331,9 @@ async fn handle_login_mode(
                     writer.flush()?;
                     return Ok(());
                 }
-                Some("pipkin_auth_cancel") | Some("oopbot_auth_cancel") => {
+                Some("oopbot_auth_cancel") => {
                     let err = json!({
-                        "type": "pipkin_result",
+                        "type": "oopbot_result",
                         "ok": false,
                         "error": "Login cancelled",
                         "code": "cancelled"
@@ -357,7 +349,7 @@ async fn handle_login_mode(
     }
 
     let res = json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     });
@@ -383,7 +375,7 @@ async fn handle_rpc_mode(
     if let Some(ref dir) = cwd {
         if !dir.is_dir() {
             let err = json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "error": "Folder not found",
                 "code": "cwd_missing"
@@ -400,7 +392,7 @@ async fn handle_rpc_mode(
 
     // Ambil ekstensi yang diaktifkan
     let mut extensions = Vec::new();
-    if let Some(ext_arr) = params["pipkinExtensions"].as_array() {
+    if let Some(ext_arr) = params["oopbotExtensions"].as_array() {
         for ext in ext_arr {
             if let Some(name) = ext["name"].as_str() {
                 extensions.push(name.to_string());
@@ -425,7 +417,7 @@ async fn handle_rpc_mode(
     // Kirim sinyal exit ke Android
     if let Ok(mut w) = writer_arc.lock() {
         let exit_msg = json!({
-            "type": "pipkin_exit",
+            "type": "oopbot_exit",
             "code": 0,
             "signal": Value::Null,
             "stderr": ""
@@ -444,8 +436,8 @@ async fn handle_utility_mode(
     mut reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
-    // Kirim `pipkin_utility_ready`
-    let ready = json!({ "type": "pipkin_utility_ready" });
+    // Kirim `oopbot_utility_ready`
+    let ready = json!({ "type": "oopbot_utility_ready" });
     writeln!(writer, "{}", serde_json::to_string(&ready)?)?;
     writer.flush()?;
 
@@ -466,7 +458,7 @@ async fn handle_utility_mode(
         };
 
         let req_type = req["type"].as_str().unwrap_or_default();
-        if req_type != "pipkin_utility_request" && req_type != "oopbot_utility_request" {
+        if req_type != "oopbot_utility_request" {
             line.clear();
             continue;
         }
@@ -503,7 +495,7 @@ async fn handle_utility_mode(
             "remote_key" => handle_remote_key(config_dir),
             "remote_key_new" => handle_remote_key_new(config_dir),
             other => json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "unknown_op",
                 "error": format!("Unknown utility operation: {}", other),

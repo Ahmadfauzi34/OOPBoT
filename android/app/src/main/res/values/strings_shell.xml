@@ -25,7 +25,7 @@
     <string name="shell_settings">Settings</string>
     <string name="shell_session_actions">Chat actions</string>
     <string name="shell_session_untitled">New chat</string>
-    <!-- The sidebar footer while Pipkin's agent is reachable: %1$s is the version of OOPBoT native agent. -->
+    <!-- The sidebar footer while OOPBoT's agent is reachable: %1$s is the version of OOPBoT native agent. -->
     <string name="shell_host_status">OOPBoT %1$s</string>
     <string name="shell_host_status_unknown">OOPBoT</string>
     <string name="shell_termux_attention">Termux needs attention</string>

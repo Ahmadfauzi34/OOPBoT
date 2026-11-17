@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-pub(super) const BACKUP_FORMAT: &str = "pipkin-config-backup";
+pub(super) const BACKUP_FORMAT: &str = "oopbot-config-backup";
 pub(super) const BACKUP_VERSION: u64 = 1;
-pub(super) const BACKUP_EXCLUDED: &[&str] = &["sessions", "bin", "tmp", "pi-debug.log", "crashes.json"];
+pub(super) const BACKUP_EXCLUDED: &[&str] = &["sessions", "bin", "tmp", "oopbot-debug.log", "crashes.json"];
 
 pub(super) fn backups_dir(config_dir: &Path) -> PathBuf {
     config_dir.parent().unwrap_or(config_dir).join("backups")
@@ -24,7 +24,7 @@ pub(super) fn validate_backup_path(config_dir: &Path, name: &str) -> Result<Path
         || name.contains('\0');
     if bad {
         return Err(json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "bad_name",
             "error": format!("Not a backup name: {}", name),
@@ -135,8 +135,8 @@ pub(super) fn read_backup_manifest_from_tar(archive: &Path) -> Result<(Value, Ve
     if entries[0] != "manifest.json" {
         return Err((
             "not_backup",
-            "backup_not_pipkin",
-            "This file is not a Pipkin configuration backup".to_string(),
+            "backup_not_oopbot",
+            "This file is not an OOPBoT configuration backup".to_string(),
         ));
     }
 
@@ -149,29 +149,29 @@ pub(super) fn read_backup_manifest_from_tar(archive: &Path) -> Result<(Value, Ve
     if !manifest_out.status.success() {
         return Err((
             "not_backup",
-            "backup_not_pipkin",
-            "This file is not a Pipkin configuration backup".to_string(),
+            "backup_not_oopbot",
+            "This file is not an OOPBoT configuration backup".to_string(),
         ));
     }
     let parsed: Value = serde_json::from_slice(&manifest_out.stdout).map_err(|_| {
         (
             "not_backup",
-            "backup_not_pipkin",
-            "This file is not a Pipkin configuration backup".to_string(),
+            "backup_not_oopbot",
+            "This file is not an OOPBoT configuration backup".to_string(),
         )
     })?;
     if parsed.get("format").and_then(|v| v.as_str()) != Some(BACKUP_FORMAT) {
         return Err((
             "not_backup",
-            "backup_not_pipkin",
-            "This file is not a Pipkin configuration backup".to_string(),
+            "backup_not_oopbot",
+            "This file is not an OOPBoT configuration backup".to_string(),
         ));
     }
     if parsed.get("version").and_then(|v| v.as_u64()) != Some(BACKUP_VERSION) {
         return Err((
             "backup_version",
-            "backup_from_newer_pipkin",
-            "This backup is from a newer Pipkin; update Pipkin to restore it".to_string(),
+            "backup_from_newer_oopbot",
+            "This backup is from a newer OOPBoT; update OOPBoT to restore it".to_string(),
         ));
     }
     Ok((parsed, entries))
@@ -237,12 +237,12 @@ pub(super) fn backup_info_json(archive: &Path, name: &str) -> Value {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty() && parse_iso_to_epoch_ms(s).is_some())
                 .unwrap_or(&fallback_iso);
-            let pi_version = manifest.get("piVersion").cloned().unwrap_or(Value::Null);
+            let oopbot_version = manifest.get("oopbotVersion").cloned().unwrap_or(Value::Null);
             json!({
                 "name": name,
                 "size": size,
                 "createdAt": created_at,
-                "piVersion": pi_version,
+                "oopbotVersion": oopbot_version,
                 "error": Value::Null
             })
         }
@@ -250,7 +250,7 @@ pub(super) fn backup_info_json(archive: &Path, name: &str) -> Value {
             "name": name,
             "size": size,
             "createdAt": fallback_iso,
-            "piVersion": Value::Null,
+            "oopbotVersion": Value::Null,
             "error": message,
             "errorI18n": { "key": i18n_key }
         }),
@@ -280,7 +280,7 @@ pub(super) fn handle_list_backups(config_dir: &Path) -> Value {
         cb.cmp(ca).then_with(|| nb.cmp(na))
     });
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {
             "dir": dir.to_string_lossy(),
@@ -296,7 +296,7 @@ pub(super) fn handle_backup_create(
     let dir = backups_dir(config_dir);
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to create backups directory: {}", e),
@@ -305,10 +305,10 @@ pub(super) fn handle_backup_create(
     }
 
     let stamp = compact_iso_stamp();
-    let mut candidate_name = format!("pipkin-config-{}.tar.gz", stamp);
+    let mut candidate_name = format!("oopbot-config-{}.tar.gz", stamp);
     let mut counter = 2u32;
     while dir.join(&candidate_name).exists() {
-        candidate_name = format!("pipkin-config-{}-{}.tar.gz", stamp, counter);
+        candidate_name = format!("oopbot-config-{}-{}.tar.gz", stamp, counter);
         counter += 1;
     }
 
@@ -325,7 +325,7 @@ pub(super) fn handle_backup_create(
     if let Err(e) = std::fs::create_dir_all(staging.join("config")) {
         cleanup(&staging, &partial);
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to stage backup: {}", e),
@@ -338,12 +338,12 @@ pub(super) fn handle_backup_create(
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
         "createdAt": created_at,
-        "piVersion": env!("CARGO_PKG_VERSION"),
+        "oopbotVersion": env!("CARGO_PKG_VERSION"),
     });
     if let Err(e) = write_json_file(&staging.join("manifest.json"), &manifest) {
         cleanup(&staging, &partial);
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to write backup manifest: {}", e),
@@ -356,7 +356,7 @@ pub(super) fn handle_backup_create(
     {
         cleanup(&staging, &partial);
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to copy configuration: {}", e),
@@ -379,7 +379,7 @@ pub(super) fn handle_backup_create(
         Ok(o) => {
             let _ = std::fs::remove_file(&partial);
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("tar failed: {}", String::from_utf8_lossy(&o.stderr).trim()),
@@ -389,7 +389,7 @@ pub(super) fn handle_backup_create(
         Err(e) => {
             let _ = std::fs::remove_file(&partial);
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("tar not available: {}", e),
@@ -401,7 +401,7 @@ pub(super) fn handle_backup_create(
     if let Err(e) = std::fs::rename(&partial, &final_path) {
         let _ = std::fs::remove_file(&partial);
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to finalize backup: {}", e),
@@ -411,7 +411,7 @@ pub(super) fn handle_backup_create(
 
     let info = backup_info_json(&final_path, &candidate_name);
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": { "backup": info }
     })
@@ -426,7 +426,7 @@ pub(super) fn handle_backup_delete(config_dir: &Path, params: &Value) -> Value {
     if let Err(e) = std::fs::remove_file(&path) {
         if e.kind() != std::io::ErrorKind::NotFound {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("Failed to delete backup: {}", e),
@@ -435,7 +435,7 @@ pub(super) fn handle_backup_delete(config_dir: &Path, params: &Value) -> Value {
         }
     }
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })
@@ -453,7 +453,7 @@ pub(super) fn handle_backup_restore(
     };
     if !archive.is_file() {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "not_found",
             "error": "This backup no longer exists",
@@ -466,7 +466,7 @@ pub(super) fn handle_backup_restore(
         Ok(v) => v,
         Err((code, key, msg)) => {
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": code,
                 "error": msg,
@@ -477,7 +477,7 @@ pub(super) fn handle_backup_restore(
     };
     if let Err((code, key, msg)) = validate_backup_entries(&entries) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": code,
             "error": msg,
@@ -501,7 +501,7 @@ pub(super) fn handle_backup_restore(
     ));
     if let Err(e) = std::fs::create_dir_all(&staging) {
         return json!({
-            "type": "pipkin_result",
+            "type": "oopbot_result",
             "ok": false,
             "code": "io_error",
             "error": format!("Failed to create restore staging folder: {}", e),
@@ -520,7 +520,7 @@ pub(super) fn handle_backup_restore(
         Ok(o) => {
             let _ = std::fs::remove_dir_all(&staging);
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "bad_backup",
                 "error": format!("The backup is damaged: {}", String::from_utf8_lossy(&o.stderr).trim()),
@@ -530,7 +530,7 @@ pub(super) fn handle_backup_restore(
         Err(e) => {
             let _ = std::fs::remove_dir_all(&staging);
             return json!({
-                "type": "pipkin_result",
+                "type": "oopbot_result",
                 "ok": false,
                 "code": "io_error",
                 "error": format!("tar failed: {}", e),
@@ -573,7 +573,7 @@ pub(super) fn handle_backup_restore(
                 let _ = std::fs::remove_dir_all(&old_dir);
                 let _ = std::fs::remove_dir_all(&staging);
                 return json!({
-                    "type": "pipkin_result",
+                    "type": "oopbot_result",
                     "ok": false,
                     "code": "io_error",
                     "error": format!("Failed to move restored files into place: {}", e),
@@ -587,7 +587,7 @@ pub(super) fn handle_backup_restore(
     let _ = std::fs::remove_dir_all(&staging);
 
     json!({
-        "type": "pipkin_result",
+        "type": "oopbot_result",
         "ok": true,
         "data": {}
     })

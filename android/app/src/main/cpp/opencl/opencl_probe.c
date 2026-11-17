@@ -1,4 +1,4 @@
-// JNI binding for io.jeph.pipkin.localmodel.engine.OpenClProbe: the name of the first GPU the vendor's OpenCL driver
+// JNI binding for io.jeph.oopbot.localmodel.engine.OpenClProbe: the name of the first GPU the vendor's OpenCL driver
 // reports, through opencl_loader.c, which loads the driver on this first call.
 
 #define CL_TARGET_OPENCL_VERSION 300
@@ -8,7 +8,7 @@
 
 enum { MAX_PLATFORMS = 16 };
 
-JNIEXPORT jstring JNICALL Java_io_jeph_pipkin_localmodel_engine_OpenClProbe_gpuName(JNIEnv * env, jclass clazz) {
+JNIEXPORT jstring JNICALL Java_io_jeph_oopbot_localmodel_engine_OpenClProbe_gpuName(JNIEnv * env, jclass clazz) {
   (void) clazz;
   cl_platform_id platforms[MAX_PLATFORMS];
   cl_uint platform_count = 0;

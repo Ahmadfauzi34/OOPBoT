@@ -98,7 +98,7 @@ impl RpcRuntime {
 
     pub(super) fn current_model_json(&self) -> Value {
         let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
-        Self::model_info_from_state(&m).to_pipkin_json(Some(&m.active_provider))
+        Self::model_info_from_state(&m).to_oopbot_json(Some(&m.active_provider))
     }
 
     pub(super) fn available_models_json(&self) -> Vec<Value> {
@@ -155,14 +155,14 @@ impl RpcRuntime {
                 let scoped = resolve_model_scope(&patterns, &all_models);
                 return scoped
                     .into_iter()
-                    .map(|(m, _)| m.to_pipkin_json(Some(&m.provider)))
+                    .map(|(m, _)| m.to_oopbot_json(Some(&m.provider)))
                     .collect();
             }
         }
 
         all_models
             .iter()
-            .map(|m| m.to_pipkin_json(Some(&m.provider)))
+            .map(|m| m.to_oopbot_json(Some(&m.provider)))
             .collect()
     }
 
@@ -337,7 +337,6 @@ pub(super) fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashM
 
             let raw_model_key = pval["apiKey"].as_str().unwrap_or("");
             let is_keyless_local = raw_model_key == "no-api-key"
-                || id == "pipkin-local"
                 || id == "oopbot-local"
                 || base_url.contains("127.0.0.1")
                 || base_url.contains("localhost");
@@ -355,7 +354,7 @@ pub(super) fn load_providers(config_dir: &Path, catalog: &ModelCatalog) -> HashM
             let mut merged_models: Vec<ModelInfo> = Vec::new();
             if let Some(arr) = pval["models"].as_array().filter(|a| !a.is_empty()) {
                 for item in arr {
-                    if let Some(mut info) = ModelInfo::from_pipkin_json(item, id, &api) {
+                    if let Some(mut info) = ModelInfo::from_oopbot_json(item, id, &api) {
                         if let Some(ov) = overrides.and_then(|o| o.get(&info.id)) {
                             info.apply_override(ov);
                         }
@@ -509,7 +508,7 @@ pub(super) fn save_scanned_models_to_config(
     }
     let serialized: Vec<Value> = scanned
         .iter()
-        .map(|m| m.to_pipkin_json(Some(provider_id)))
+        .map(|m| m.to_oopbot_json(Some(provider_id)))
         .collect();
     models_json["providers"][provider_id]["models"] = json!(serialized);
     if !api_key.is_empty() {

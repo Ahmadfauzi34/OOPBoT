@@ -48,7 +48,7 @@
     <string name="host_provider_http_status">HTTP <xliff:g id="status" example="401">%1$s</xliff:g></string>
     <!-- %1$s: the HTTP status code the server answered with; %2$s: the error message the server sent, in its own language. -->
     <string name="host_provider_http_status_said">HTTP <xliff:g id="status" example="401">%1$s</xliff:g>: <xliff:g id="message" example="Invalid API key">%2$s</xliff:g></string>
-    <!-- %1$s: the URL Pipkin asked for its list of models, ending in /models. -->
+    <!-- %1$s: the URL OOPBoT asked for its list of models, ending in /models. -->
     <string name="host_provider_web_page"><xliff:g id="url" example="https://example.com/models">%1$s</xliff:g> returned a web page, not JSON</string>
     <!-- %1$s: the start of what the server answered instead. -->
     <string name="host_provider_not_json">The server did not return JSON: <xliff:g id="body" example="Not Found">%1$s</xliff:g></string>
@@ -67,8 +67,8 @@
         <item quantity="one">Restored %1$d item</item>
         <item quantity="other">Restored %1$d items</item>
     </plurals>
-    <string name="host_backup_not_pipkin">This file is not an OOPBoT configuration backup</string>
-    <string name="host_backup_from_newer_pipkin">This backup is from a newer OOPBoT; update OOPBoT to restore it</string>
+    <string name="host_backup_not_oopbot">This file is not an OOPBoT configuration backup</string>
+    <string name="host_backup_from_newer_oopbot">This backup is from a newer OOPBoT; update OOPBoT to restore it</string>
     <string name="host_backup_unreadable">This file can\'t be read as a backup</string>
     <string name="host_backup_missing">This backup no longer exists</string>
     <!-- %1$s: a path inside the backup file. -->

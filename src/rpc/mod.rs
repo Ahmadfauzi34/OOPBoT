@@ -1,8 +1,7 @@
-//! Mode RPC (`oopbot --mode rpc`) yang kompatibel 100% dengan protokol JSONL
-//! aplikasi Android Pipkin (`AgentProcess.kt` & `ChatTimeline.kt`).
+//! Mode RPC (`oopbot --mode rpc`) yang berkomunikasi lewat protokol JSONL
+//! dengan aplikasi Android OOPBoT (`AgentProcess.kt` & `ChatTimeline.kt`).
 //!
-//! Menggantikan `@earendil-works/pi-coding-agent` (`pi --mode rpc`) di Termux
-//! dengan binary native Rust `oopbot`.
+//! Menggunakan binary native Rust `oopbot` sebagai engine agent di Termux.
 
 
 mod approver;
@@ -170,16 +169,12 @@ impl std::ops::Deref for RpcServer {
 impl RpcServer {
     pub fn resolve_default_config_dir() -> PathBuf {
         std::env::var("OOPBOT_CONFIG_DIR")
-            .or_else(|_| std::env::var("PI_CODING_AGENT_DIR"))
+            .ok()
+            .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+            .unwrap_or_else(|| {
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                let oopbot_dir = PathBuf::from(&home).join(".oopbot");
-                if oopbot_dir.exists() {
-                    oopbot_dir
-                } else {
-                    PathBuf::from(home).join(".pipkin/pi")
-                }
+                PathBuf::from(home).join(".oopbot")
             })
     }
 
@@ -223,7 +218,7 @@ impl RpcServer {
         Ok(Self { runtime })
     }
 
-    /// Kirim pesan dua arah pada Pipkin/OOPBoT channel: `{"type": "pipkin_channel", "topic": ..., "data": ...}`
+    /// Kirim pesan dua arah pada OOPBoT channel: `{"type": "oopbot_channel", "topic": ..., "data": ...}`
     pub fn send_channel(topic: &str, data: Value) {
         RpcRuntime::send_channel(topic, data);
     }
@@ -444,7 +439,7 @@ impl RpcRuntime {
     /// Pancarkan event widget aktif (misal checklist Todo) dan status channel plugin ke antarmuka aplikasi Android via RPC JSONL.
     pub fn emit_active_widgets(&self) {
         for plugin in self.plugins.active_plugins() {
-            if plugin.id() == "pipkin-todo" {
+            if plugin.id() == "oopbot-todo" {
                 if let Some(lines) = plugin.render_widget("todos") {
                     Self::send_line(&json!({
                         "type": "extension_ui_request",
@@ -468,15 +463,15 @@ impl RpcRuntime {
                 Self::send_channel(topic, data);
             }
         }
-        if self.plugins.is_active("pipkin-subagents") {
+        if self.plugins.is_active("oopbot-subagents") {
             Self::send_channel("subagents", json!({ "runs": [], "standingAside": false }));
         }
     }
 
-    /// Kirim pesan dua arah pada Pipkin/OOPBoT channel: `{"type": "pipkin_channel", "topic": ..., "data": ...}`
+    /// Kirim pesan dua arah pada OOPBoT channel: `{"type": "oopbot_channel", "topic": ..., "data": ...}`
     pub fn send_channel(topic: &str, data: Value) {
         Self::send_line(&json!({
-            "type": "pipkin_channel",
+            "type": "oopbot_channel",
             "topic": topic,
             "data": data,
         }));
@@ -549,7 +544,7 @@ impl RpcRuntime {
                 m.auto_compaction_enabled,
                 m.auto_retry_enabled,
                 m.steering_queue.len() + m.follow_up_queue.len(),
-                model_info.to_pipkin_json(Some(&m.active_provider)),
+                model_info.to_oopbot_json(Some(&m.active_provider)),
             )
         };
         let message_count = self.ui_state.lock().unwrap_or_else(|e| e.into_inner()).ui_messages.len();
@@ -584,9 +579,9 @@ impl RpcRuntime {
         self: &Arc<Self>,
         mut reader: R,
     ) -> Result<(), BoxError> {
-        Self::send_channel("pipkin", Value::Null);
+        Self::send_channel("oopbot", Value::Null);
         Self::send_channel(
-            "pipkin:hello",
+            "oopbot:hello",
             json!({
                 "version": 1,
                 "engine": "oopbot-native",
@@ -629,9 +624,7 @@ impl RpcRuntime {
                                 }
                                 continue;
                             }
-                            let is_channel =
-                                msg_type == "pipkin_channel" || msg_type == "oopbot_channel";
-                            if is_channel && val["topic"] == "tool_approval" {
+                            if msg_type == "oopbot_channel" && val["topic"] == "tool_approval" {
                                 let data = &val["data"];
                                 let req_id = data["request_id"]
                                     .as_str()
@@ -707,7 +700,7 @@ impl RpcRuntime {
             let id = cmd["id"].as_str().unwrap_or_default().to_string();
 
             match cmd_type.as_str() {
-                "pipkin_channel" | "oopbot_channel" => {
+                "oopbot_channel" => {
                     let topic = cmd["topic"].as_str().unwrap_or_default();
                     let data = &cmd["data"];
                     self.handle_channel_message(topic, data);
@@ -1362,7 +1355,7 @@ pub async fn run_rpc_mode(
 
 fn default_rpc_system_instruction(cwd: &Path, tools: &ToolRegistry) -> String {
     format!(
-        "Kamu adalah OOPBoT, mesin agen Rust native yang terhubung ke antarmuka Android Pipkin melalui Termux.\n\
+        "Kamu adalah OOPBoT, mesin agen Rust native yang terhubung ke antarmuka Android OOPBoT melalui Termux.\n\
          Direktori kerja (cwd): {}.\n\
          Tool yang tersedia: {}.\n\
          Gunakan tool untuk memeriksa isi file atau menjalankan perintah di Termux bila diperlukan.",

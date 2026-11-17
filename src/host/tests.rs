@@ -179,7 +179,7 @@ fn test_handle_model_defaults() {
         "api": "openai-completions"
     });
     let res = handle_model_defaults(&params);
-    assert_eq!(res["type"], "pipkin_result");
+    assert_eq!(res["type"], "oopbot_result");
     assert_eq!(res["ok"], true);
     let models = res["data"]["models"].as_array().unwrap();
     assert_eq!(models.len(), 2);
@@ -197,7 +197,7 @@ fn test_auth_status_schema_and_builtin() {
     let _ = std::fs::write(&auth_path, r#"{"google": {"apiKey": "test-key"}}"#);
 
     let res = handle_auth_status(&temp_dir);
-    assert_eq!(res["type"], "pipkin_result");
+    assert_eq!(res["type"], "oopbot_result");
     assert_eq!(res["ok"], true);
 
     let data = &res["data"];
@@ -236,7 +236,7 @@ fn test_save_attachments() {
     });
 
     let res = handle_save_attachments(&params, &temp_dir);
-    assert_eq!(res["type"], "pipkin_result");
+    assert_eq!(res["type"], "oopbot_result");
     assert_eq!(res["ok"], true);
     let paths = res["data"]["paths"].as_array().unwrap();
     assert_eq!(paths.len(), 1);
@@ -272,7 +272,7 @@ fn test_list_sessions_format() {
     std::fs::write(&session_file, content).unwrap();
 
     let res = handle_list_sessions(&temp_dir, "/home");
-    assert_eq!(res["type"], "pipkin_result");
+    assert_eq!(res["type"], "oopbot_result");
     assert_eq!(res["ok"], true);
     let sessions = res["data"]["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1);
@@ -373,7 +373,7 @@ fn test_run_browse_loop() {
     let _ = std::fs::create_dir_all(&sub);
 
     let input = format!(
-        "{{\"type\":\"pipkin_list\",\"id\":1,\"path\":\"{}\"}}\n",
+        "{{\"type\":\"oopbot_list\",\"id\":1,\"path\":\"{}\"}}\n",
         temp_dir.to_string_lossy()
     );
     let cursor = Cursor::new(input.into_bytes());
@@ -383,8 +383,8 @@ fn test_run_browse_loop() {
     assert!(res.is_ok());
 
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("pipkin_places"));
-    assert!(out_str.contains("pipkin_listing"));
+    assert!(out_str.contains("oopbot_places"));
+    assert!(out_str.contains("oopbot_listing"));
     assert!(out_str.contains("workspace_folder"));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -398,9 +398,9 @@ fn test_run_files_loop_list_and_read() {
     let _ = std::fs::write(&file_path, "Hello Native Files!");
 
     let input = format!(
-        "{{\"type\":\"pipkin_files_list\",\"id\":10,\"root\":\"{}\",\"path\":\".\"}}\n\
-         {{\"type\":\"pipkin_files_read\",\"id\":11,\"root\":\"{}\",\"path\":\"hello.txt\"}}\n\
-         {{\"type\":\"pipkin_files_mkdir\",\"id\":12,\"root\":\"{}\",\"path\":\".\",\"name\":\"new_dir\"}}\n",
+        "{{\"type\":\"oopbot_files_list\",\"id\":10,\"root\":\"{}\",\"path\":\".\"}}\n\
+         {{\"type\":\"oopbot_files_read\",\"id\":11,\"root\":\"{}\",\"path\":\"hello.txt\"}}\n\
+         {{\"type\":\"oopbot_files_mkdir\",\"id\":12,\"root\":\"{}\",\"path\":\".\",\"name\":\"new_dir\"}}\n",
         temp_dir.to_string_lossy(),
         temp_dir.to_string_lossy(),
         temp_dir.to_string_lossy(),
@@ -412,12 +412,12 @@ fn test_run_files_loop_list_and_read() {
     assert!(res.is_ok());
 
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("pipkin_files_ready"));
-    assert!(out_str.contains("pipkin_files_listing"));
+    assert!(out_str.contains("oopbot_files_ready"));
+    assert!(out_str.contains("oopbot_files_listing"));
     assert!(out_str.contains("hello.txt"));
-    assert!(out_str.contains("pipkin_files_file"));
+    assert!(out_str.contains("oopbot_files_file"));
     assert!(out_str.contains("Hello Native Files!"));
-    assert!(out_str.contains("pipkin_files_made"));
+    assert!(out_str.contains("oopbot_files_made"));
     assert!(out_str.contains("new_dir"));
     assert!(temp_dir.join("new_dir").is_dir());
 
@@ -502,13 +502,11 @@ Binary files a/image.png and b/image.png differ
 fn test_run_git_loop_detect_and_changes() {
     let repo_root = env!("CARGO_MANIFEST_DIR");
     let input = format!(
-        "{{\"type\":\"pipkin_git_detect\",\"id\":100,\"root\":\"{}\",\"trusted\":true}}\n\
-         {{\"type\":\"oopbot_git_detect\",\"id\":101,\"root\":\"{}\",\"trusted\":true}}\n\
-         {{\"type\":\"pipkin_git_changes\",\"id\":102,\"root\":\"{}\",\"mode\":\"uncommitted\",\"ignoreWhitespace\":false}}\n\
+        "{{\"type\":\"oopbot_git_detect\",\"id\":101,\"root\":\"{}\",\"trusted\":true}}\n\
          {{\"type\":\"oopbot_git_changes\",\"id\":103,\"root\":\"{}\",\"mode\":\"uncommitted\",\"ignoreWhitespace\":false}}\n\
-         {{\"type\":\"pipkin_git_commits\",\"id\":104,\"root\":\"{}\"}}\n\
-         {{\"type\":\"pipkin_git_commit_diff\",\"id\":105,\"root\":\"{}\",\"sha\":\"0000000000000000000000000000000000000000\",\"ignoreWhitespace\":false}}\n",
-        repo_root, repo_root, repo_root, repo_root, repo_root, repo_root
+         {{\"type\":\"oopbot_git_commits\",\"id\":104,\"root\":\"{}\"}}\n\
+         {{\"type\":\"oopbot_git_commit_diff\",\"id\":105,\"root\":\"{}\",\"sha\":\"0000000000000000000000000000000000000000\",\"ignoreWhitespace\":false}}\n",
+        repo_root, repo_root, repo_root, repo_root
     );
     let cursor = Cursor::new(input.into_bytes());
     let mut output = Vec::new();
@@ -517,14 +515,14 @@ fn test_run_git_loop_detect_and_changes() {
     assert!(res.is_ok());
 
     let out_str = String::from_utf8_lossy(&output);
-    assert!(out_str.contains("pipkin_git_ready"));
-    assert!(out_str.contains("pipkin_git_detected"));
+    assert!(out_str.contains("oopbot_git_ready"));
+    assert!(out_str.contains("oopbot_git_detected"));
     assert!(out_str.contains("\"repo\":true"));
     assert!(out_str.contains("\"git\":true"));
-    assert!(out_str.contains("pipkin_git_changes_result"));
+    assert!(out_str.contains("oopbot_git_changes_result"));
     assert!(out_str.contains("fingerprint"));
-    assert!(out_str.contains("pipkin_git_commits_result"));
-    assert!(out_str.contains("pipkin_git_commit_diff_result"));
+    assert!(out_str.contains("oopbot_git_commits_result"));
+    assert!(out_str.contains("oopbot_git_commit_diff_result"));
     assert!(out_str.contains("commit_not_found"));
 }
 
@@ -749,9 +747,9 @@ fn test_check_rpc_expected_version() {
     assert!(check_rpc_expected_version(&json!({ "expectedVersion": "0.5.4" }), "0.5.4").is_none());
 
     let refusal = check_rpc_expected_version(&json!({ "expectedVersion": "0.5.5" }), "0.5.4").unwrap();
-    assert_eq!(refusal["type"], "pipkin_result");
+    assert_eq!(refusal["type"], "oopbot_result");
     assert_eq!(refusal["ok"], false);
-    assert_eq!(refusal["code"], "pi_version");
+    assert_eq!(refusal["code"], "oopbot_version");
     assert_eq!(refusal["i18n"]["key"], "agent_version_mismatch");
 }
 
@@ -821,7 +819,7 @@ async fn test_pkg_version_056_rejects_055_rpc_and_upgrades_055_binary() {
 
     let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.5").unwrap();
     assert_eq!(refusal["ok"], false);
-    assert_eq!(refusal["code"], "pi_version");
+    assert_eq!(refusal["code"], "oopbot_version");
 
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let temp_dir = std::env::temp_dir().join(format!("oopbot_ensure_056_{}_{}", epoch_ms(), seq));
@@ -918,17 +916,10 @@ fn reg005_auth_status_oauth_unrestricted_scope_and_corrupt_json_errors() {
 }
 
 #[test]
-fn reg008_local_models_sync_uses_pipkin_local_only_compaction_and_changed_flag() {
+fn reg008_local_models_sync_uses_oopbot_local_only_compaction_and_changed_flag() {
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let temp_dir = std::env::temp_dir().join(format!("oopbot_local_reg008_{}_{}", epoch_ms(), seq));
     std::fs::create_dir_all(&temp_dir).unwrap();
-
-    // Seed legacy oopbot-local so we verify cleanup
-    std::fs::write(
-        temp_dir.join("models.json"),
-        json!({ "providers": { "oopbot-local": { "baseUrl": "http://127.0.0.1:1/v1", "models": [] } } }).to_string(),
-    )
-    .unwrap();
 
     let params = json!({
         "baseUrl": "http://127.0.0.1:11434/v1",
@@ -943,19 +934,18 @@ fn reg008_local_models_sync_uses_pipkin_local_only_compaction_and_changed_flag()
     assert_eq!(first["data"]["changed"], true);
 
     let models_doc = read_json_file(&temp_dir.join("models.json"));
-    assert!(models_doc["providers"].get("pipkin-local").is_some());
-    assert!(models_doc["providers"].get("oopbot-local").is_none());
+    assert!(models_doc["providers"].get("oopbot-local").is_some());
     assert_eq!(
-        models_doc["providers"]["pipkin-local"]["compat"]["sendSessionAffinityHeaders"],
+        models_doc["providers"]["oopbot-local"]["compat"]["sendSessionAffinityHeaders"],
         true
     );
     assert_eq!(
-        models_doc["providers"]["pipkin-local"]["models"][0]["cost"]["input"],
+        models_doc["providers"]["oopbot-local"]["models"][0]["cost"]["input"],
         0
     );
 
     let settings_doc = read_json_file(&temp_dir.join("settings.json"));
-    let ov = &settings_doc["compaction"]["modelOverrides"]["pipkin-local/qwen2.5-7b"];
+    let ov = &settings_doc["compaction"]["modelOverrides"]["oopbot-local/qwen2.5-7b"];
     assert_eq!(ov["reserveTokens"], 2048 + 4096);
     assert_eq!(ov["keepRecentTokens"], 16384 / 16);
 
@@ -971,7 +961,7 @@ fn reg008_local_models_sync_uses_pipkin_local_only_compaction_and_changed_flag()
     );
     assert_eq!(cleared["data"]["changed"], true);
     let models_after = read_json_file(&temp_dir.join("models.json"));
-    assert!(models_after["providers"].get("pipkin-local").is_none());
+    assert!(models_after["providers"].get("oopbot-local").is_none());
     let settings_after = read_json_file(&temp_dir.join("settings.json"));
     assert!(settings_after["compaction"].get("modelOverrides").is_none());
 
@@ -1077,10 +1067,10 @@ fn reg010_save_attachments_and_files_containment_reject_traversal() {
 
     let ws_str = workspace.to_string_lossy();
     let reqs = format!(
-        "{{\"type\":\"pipkin_files_read\",\"id\":1,\"root\":\"{}\",\"path\":\"../outside/secret.txt\"}}\n\
-         {{\"type\":\"pipkin_files_read\",\"id\":2,\"root\":\"{}\",\"path\":\"escape_link.txt\"}}\n\
-         {{\"type\":\"pipkin_files_list\",\"id\":3,\"root\":\"{}\",\"path\":\".\"}}\n\
-         {{\"type\":\"pipkin_files_mkdir\",\"id\":4,\"root\":\"{}\",\"path\":\"..\",\"name\":\"bad\"}}\n",
+        "{{\"type\":\"oopbot_files_read\",\"id\":1,\"root\":\"{}\",\"path\":\"../outside/secret.txt\"}}\n\
+         {{\"type\":\"oopbot_files_read\",\"id\":2,\"root\":\"{}\",\"path\":\"escape_link.txt\"}}\n\
+         {{\"type\":\"oopbot_files_list\",\"id\":3,\"root\":\"{}\",\"path\":\".\"}}\n\
+         {{\"type\":\"oopbot_files_mkdir\",\"id\":4,\"root\":\"{}\",\"path\":\"..\",\"name\":\"bad\"}}\n",
         ws_str, ws_str, ws_str, ws_str
     );
     let mut out = Vec::new();
@@ -1117,7 +1107,7 @@ fn reg004_backups_create_list_restore_delete_and_fail_closed_on_corrupt_or_bad_n
     std::fs::create_dir_all(config_dir.join("sessions/proj")).unwrap();
     std::fs::write(config_dir.join("settings.json"), r#"{"defaultProvider":"google"}"#).unwrap();
     std::fs::write(config_dir.join("sessions/proj/s1.jsonl"), "live-session").unwrap();
-    std::fs::write(config_dir.join("pi-debug.log"), "keep-me-log").unwrap();
+    std::fs::write(config_dir.join("oopbot-debug.log"), "keep-me-log").unwrap();
 
     let mut progress_msgs = Vec::new();
     let created = handle_backup_create(&config_dir, &mut |line, _key, _count| {
@@ -1126,7 +1116,7 @@ fn reg004_backups_create_list_restore_delete_and_fail_closed_on_corrupt_or_bad_n
     assert_eq!(created["ok"], true);
     let backup = &created["data"]["backup"];
     let bkp_name = backup["name"].as_str().unwrap().to_string();
-    assert!(bkp_name.starts_with("pipkin-config-"));
+    assert!(bkp_name.starts_with("oopbot-config-"));
     assert!(bkp_name.ends_with(".tar.gz"));
     assert!(backup["size"].as_u64().unwrap() > 0);
     assert!(backup["error"].is_null());
@@ -1156,7 +1146,7 @@ fn reg004_backups_create_list_restore_delete_and_fail_closed_on_corrupt_or_bad_n
         "live-session"
     );
     assert_eq!(
-        std::fs::read_to_string(config_dir.join("pi-debug.log")).unwrap(),
+        std::fs::read_to_string(config_dir.join("oopbot-debug.log")).unwrap(),
         "keep-me-log"
     );
 
@@ -1190,7 +1180,7 @@ fn reg004_backups_create_list_restore_delete_and_fail_closed_on_corrupt_or_bad_n
 }
 
 #[test]
-fn reg004_subagent_sessions_reads_pipkin_subagent_transcripts_and_ignores_unrelated() {
+fn reg004_subagent_sessions_reads_oopbot_subagent_transcripts_and_ignores_unrelated() {
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let config_dir =
         std::env::temp_dir().join(format!("oopbot_sub_reg004_{}_{}", epoch_ms(), seq));
@@ -1211,7 +1201,7 @@ fn reg004_subagent_sessions_reads_pipkin_subagent_transcripts_and_ignores_unrela
             .to_string(),
         json!({
             "type": "custom",
-            "customType": "pipkin-subagent",
+            "customType": "oopbot-subagent",
             "data": { "toolCallId": "call_1", "agent": "research", "description": "Audit files" }
         })
         .to_string(),
@@ -1219,7 +1209,7 @@ fn reg004_subagent_sessions_reads_pipkin_subagent_transcripts_and_ignores_unrela
     ]
     .join("\n");
     std::fs::write(&sub_file, format!("{}\n", sub_lines)).unwrap();
-    // Unrelated file without pipkin-subagent link must be ignored
+    // Unrelated file without oopbot-subagent link must be ignored
     std::fs::write(
         proj_dir.join("subagents/parent1/orphan.jsonl"),
         json!({ "type": "session", "id": "sub_b" }).to_string(),
@@ -1374,7 +1364,7 @@ fn reg007_terminal_pty_echo_and_resize_without_tmp_hardcode() {
                             captured.push_str(&String::from_utf8_lossy(&d));
                         }
                     }
-                    Some("pipkin_exit") => {
+                    Some("oopbot_exit") => {
                         saw_exit = true;
                         break;
                     }
@@ -1386,7 +1376,7 @@ fn reg007_terminal_pty_echo_and_resize_without_tmp_hardcode() {
 
         drop(cli_write);
         server_handle.join().unwrap();
-        assert!(saw_exit, "terminal must emit pipkin_exit");
+        assert!(saw_exit, "terminal must emit oopbot_exit");
         assert!(captured.contains("PTY_OK"), "PTY output missed marker: {}", captured);
         assert!(captured.contains("42 111"), "PTY TIOCSWINSZ resize did not propagate: {}", captured);
     }
@@ -1453,9 +1443,9 @@ fn reg_err_browse_and_files_report_missing_non_dir_fifo_and_name_taken() {
 
     // 1. Browse loop: relative path -> browse_path_not_absolute; file path -> not_a_folder; missing -> browse_folder_missing
     let browse_reqs = format!(
-        "{{\"type\":\"pipkin_list\",\"id\":1,\"path\":\"relative/dir\"}}\n\
-         {{\"type\":\"pipkin_list\",\"id\":2,\"path\":\"{}\"}}\n\
-         {{\"type\":\"pipkin_list\",\"id\":3,\"path\":\"{}\"}}\n",
+        "{{\"type\":\"oopbot_list\",\"id\":1,\"path\":\"relative/dir\"}}\n\
+         {{\"type\":\"oopbot_list\",\"id\":2,\"path\":\"{}\"}}\n\
+         {{\"type\":\"oopbot_list\",\"id\":3,\"path\":\"{}\"}}\n",
         ws.join("regular.txt").to_string_lossy(),
         ws.join("no_such_dir").to_string_lossy(),
     );
@@ -1485,7 +1475,7 @@ fn reg_err_browse_and_files_report_missing_non_dir_fifo_and_name_taken() {
         if let Ok(st) = status {
             if st.success() {
                 let req = format!(
-                    "{{\"type\":\"pipkin_files_read\",\"id\":20,\"root\":\"{}\",\"path\":\"pipe.fifo\"}}\n",
+                    "{{\"type\":\"oopbot_files_read\",\"id\":20,\"root\":\"{}\",\"path\":\"pipe.fifo\"}}\n",
                     ws.to_string_lossy()
                 );
                 let mut out = Vec::new();
@@ -1510,10 +1500,10 @@ fn reg_err_browse_and_files_report_missing_non_dir_fifo_and_name_taken() {
         std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
         let ws_s = ws.to_string_lossy();
         let reqs = format!(
-            "{{\"type\":\"pipkin_files_list\",\"id\":30,\"root\":\"{}\",\"path\":\"regular.txt\"}}\n\
-             {{\"type\":\"pipkin_files_read\",\"id\":31,\"root\":\"{}\",\"path\":\"missing.txt\"}}\n\
-             {{\"type\":\"pipkin_files_read\",\"id\":32,\"root\":\"{}\",\"path\":\"locked.txt\"}}\n\
-             {{\"type\":\"pipkin_files_mkdir\",\"id\":33,\"root\":\"{}\",\"path\":\".\",\"name\":\"existing_dir\"}}\n",
+            "{{\"type\":\"oopbot_files_list\",\"id\":30,\"root\":\"{}\",\"path\":\"regular.txt\"}}\n\
+             {{\"type\":\"oopbot_files_read\",\"id\":31,\"root\":\"{}\",\"path\":\"missing.txt\"}}\n\
+             {{\"type\":\"oopbot_files_read\",\"id\":32,\"root\":\"{}\",\"path\":\"locked.txt\"}}\n\
+             {{\"type\":\"oopbot_files_mkdir\",\"id\":33,\"root\":\"{}\",\"path\":\".\",\"name\":\"existing_dir\"}}\n",
             ws_s, ws_s, ws_s, ws_s
         );
         let mut out = Vec::new();

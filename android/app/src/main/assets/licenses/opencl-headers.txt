@@ -1,4 +1,4 @@
-OpenCL-Headers v2026.05.29 (https://github.com/KhronosGroup/OpenCL-Headers), Apache License 2.0. Khronos's OpenCL API headers, which Pipkin's llama.cpp library and its OpenCL GPU probe are built against.
+OpenCL-Headers v2026.05.29 (https://github.com/KhronosGroup/OpenCL-Headers), Apache License 2.0. Khronos's OpenCL API headers, which OOPBoT's llama.cpp library and its OpenCL GPU probe are built against.
 
 Copyright (c) 2008-2026 The Khronos Group Inc.
 

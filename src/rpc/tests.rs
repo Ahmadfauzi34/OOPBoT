@@ -10,8 +10,8 @@ use super::*;
 use std::io::Cursor;
 
 #[test]
-fn maps_tools_for_pipkin_timeline() {
-    let (name, args) = map_tool_for_pipkin_ui("run_shell", &json!({ "command": "ls" }));
+fn maps_tools_for_oopbot_timeline() {
+    let (name, args) = map_tool_for_oopbot_ui("run_shell", &json!({ "command": "ls" }));
     assert_eq!(name, "bash");
     assert_eq!(args["command"], "ls");
 }
@@ -45,7 +45,7 @@ fn load_providers_applies_model_overrides_and_local_providers() {
                         }
                     }
                 },
-                "pipkin-local": {
+                "oopbot-local": {
                     "baseUrl": "http://127.0.0.1:8080/v1",
                     "api": "openai-completions",
                     "apiKey": "no-api-key",
@@ -77,7 +77,7 @@ fn load_providers_applies_model_overrides_and_local_providers() {
     assert_eq!(flash.output_token_limit, Some(8192));
     assert!(!flash.reasoning);
 
-    let local = providers.get("pipkin-local").unwrap();
+    let local = providers.get("oopbot-local").unwrap();
     assert!(local.has_auth);
     assert_eq!(local.models.len(), 1);
     assert_eq!(local.models[0].id, "qwen3-4b");
@@ -159,14 +159,14 @@ impl Drop for TempConfigGuard {
 fn rpc_server_activates_plugins_from_extensions_arg() {
     let tmp = TempConfigGuard::new("oopbot_plugins_test");
     let extensions = vec![
-        "/data/user/0/io.jeph.pipkin/files/extensions/pipkin-todo/index.js".to_string(),
-        "pipkin-web-access".to_string(),
+        "/data/user/0/io.jeph.oopbot/files/extensions/oopbot-todo/index.js".to_string(),
+        "oopbot-web-access".to_string(),
     ];
 
     let server = RpcServer::new_in_dir(tmp.path().to_path_buf(), None, None, extensions).unwrap();
-    assert!(server.plugins.is_active("pipkin-todo"));
-    assert!(server.plugins.is_active("pipkin-web-access"));
-    assert!(!server.plugins.is_active("pipkin-background"));
+    assert!(server.plugins.is_active("oopbot-todo"));
+    assert!(server.plugins.is_active("oopbot-web-access"));
+    assert!(!server.plugins.is_active("oopbot-background"));
 
     // Tool & system instruction kini milik agen (langkah 4) — intent tes
     // sama: new() mengaktifkan plugin dan merakit instruksi RPC-nya.
@@ -250,7 +250,7 @@ fn session_preserves_tokens_and_cost_on_reload() {
 }
 
 #[tokio::test]
-async fn test_pipkin_channel_handshake_and_incoming_events() {
+async fn test_oopbot_channel_handshake_and_incoming_events() {
     use std::io::Cursor;
     let _sink_guard = output_sink_test_mutex().lock().await;
     let tmp = TempConfigGuard::new("oopbot_channel_test");
@@ -270,15 +270,14 @@ async fn test_pipkin_channel_handshake_and_incoming_events() {
     set_output_sink(Some(output_buf));
 
     let extensions = vec![
-        "pipkin-background".to_string(),
-        "pipkin-subagents".to_string(),
+        "oopbot-background".to_string(),
+        "oopbot-subagents".to_string(),
     ];
     let mut server = RpcServer::new_in_dir(tmp.path().to_path_buf(), None, None, extensions).unwrap();
 
     let input = b"\
-{\"type\":\"pipkin_channel\",\"topic\":\"background\",\"data\":{\"action\":\"stop\"}}\n\
-{\"type\":\"pipkin_channel\",\"topic\":\"subagents\",\"data\":{\"action\":\"stopAll\"}}\n\
-{\"type\":\"pipkin_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
+{\"type\":\"oopbot_channel\",\"topic\":\"background\",\"data\":{\"action\":\"stop\"}}\n\
+{\"type\":\"oopbot_channel\",\"topic\":\"subagents\",\"data\":{\"action\":\"stopAll\"}}\n\
 {\"type\":\"oopbot_channel\",\"topic\":\"remote\",\"data\":{\"action\":\"check\"}}\n\
 {\"type\":\"get_state\",\"id\":\"chk_1\"}\n";
     let cursor = Cursor::new(input);
@@ -291,9 +290,9 @@ async fn test_pipkin_channel_handshake_and_incoming_events() {
     let bytes = raw.lock().unwrap().clone();
     let written = String::from_utf8_lossy(&bytes);
 
-    // Verifikasi handshake awal pipkin & pipkin:hello
-    assert!(written.contains("\"topic\":\"pipkin\""));
-    assert!(written.contains("\"topic\":\"pipkin:hello\""));
+    // Verifikasi handshake awal oopbot & oopbot:hello
+    assert!(written.contains("\"topic\":\"oopbot\""));
+    assert!(written.contains("\"topic\":\"oopbot:hello\""));
     assert!(written.contains("\"engine\":\"oopbot-native\""));
 
     // Verifikasi channel background, subagents, dan remote
@@ -307,7 +306,7 @@ async fn test_pipkin_channel_handshake_and_incoming_events() {
     assert!(written.contains("chk_1"));
     assert!(written.contains("\"success\":true"));
 
-    // Pastikan tidak ada error komplain pipkin_channel
+    // Pastikan tidak ada error komplain oopbot_channel
     assert!(!written.contains("tidak dikenal"));
 }
 
@@ -595,7 +594,7 @@ async fn test_rpc_server_resolve_tool_approval() {
 }
 
 #[tokio::test]
-async fn test_rpc_loop_tool_approval_pipkin_channel_roundtrip() {
+async fn test_rpc_loop_tool_approval_oopbot_channel_roundtrip() {
     let tmp = TempConfigGuard::new("oopbot_chan_appr");
     let mut server = RpcServer::new_in_dir_with_cwd(
         tmp.path().to_path_buf(),
@@ -609,7 +608,7 @@ async fn test_rpc_loop_tool_approval_pipkin_channel_roundtrip() {
     server.pending_approvals().lock().unwrap().insert("appr-42".to_string(), tx);
 
     let input = b"\
-{\"type\":\"pipkin_channel\",\"topic\":\"tool_approval\",\"data\":{\"kind\":\"response\",\"request_id\":\"appr-42\",\"approved\":true}}\n\
+{\"type\":\"oopbot_channel\",\"topic\":\"tool_approval\",\"data\":{\"kind\":\"response\",\"request_id\":\"appr-42\",\"approved\":true}}\n\
 {\"type\":\"get_state\",\"id\":\"chk_approval\"}\n";
     let cursor = Cursor::new(input);
 
@@ -1032,7 +1031,7 @@ async fn reg002_get_state_nonblocking_while_streaming() {
 
     // Drain initial hello
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["type"] == "pipkin_channel" && v["topic"] == "pipkin:hello"
+        v["type"] == "oopbot_channel" && v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -1142,7 +1141,7 @@ async fn reg002_abort_cancels_inflight_http_and_pending_approver() {
     });
 
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -1294,7 +1293,7 @@ async fn reg002_steer_queue_and_clear_queue_behavior() {
     });
 
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -1466,7 +1465,7 @@ async fn reg003_session_reload_preserves_tool_calls_across_providers() {
             server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
         });
         let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-            v["topic"] == "pipkin:hello"
+            v["topic"] == "oopbot:hello"
         })
         .await;
 
@@ -1567,7 +1566,7 @@ async fn reg003_get_session_stats_full_fields() {
         server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -1658,7 +1657,7 @@ async fn reg003_compact_summarizes_prunes_history_and_reloads() {
         server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -1765,7 +1764,7 @@ async fn reg003_fork_clone_and_export_html() {
         server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -1910,7 +1909,7 @@ async fn reg002_abort_manual_compact_and_prompt_during_compact() {
             .unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -2083,7 +2082,7 @@ async fn reg002_follow_up_modes_and_retry_abort_semantics() {
             .unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -2306,7 +2305,7 @@ async fn reg003_fork_root_new_switch_entries_and_relative_export() {
             .unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -2493,7 +2492,7 @@ async fn reg003_legacy_missing_tool_ids_orphan_abort_and_consecutive_users() {
                 .unwrap();
         });
         let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-            v["topic"] == "pipkin:hello"
+            v["topic"] == "oopbot:hello"
         })
         .await;
 
@@ -2625,7 +2624,7 @@ async fn reg002_stdin_eof_during_active_turn_exits_cleanly() {
             .unwrap();
     });
     let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
-        v["topic"] == "pipkin:hello"
+        v["topic"] == "oopbot:hello"
     })
     .await;
 
@@ -2655,8 +2654,8 @@ async fn reg002_stdin_eof_during_active_turn_exits_cleanly() {
 async fn reg011_live_todo_widget_emitted_on_tool_call_end_and_background_active_count() {
     let tmp = TempConfigGuard::new("reg011_live_widget");
     let mut reg = PluginRegistry::with_defaults();
-    assert!(reg.activate("pipkin-todo"));
-    assert!(reg.activate("pipkin-background"));
+    assert!(reg.activate("oopbot-todo"));
+    assert!(reg.activate("oopbot-background"));
     let mut tools = ToolRegistry::new();
     reg.register_active_tools(&mut tools);
     let plugins = Arc::new(reg);
@@ -2719,7 +2718,7 @@ async fn reg011_live_todo_widget_emitted_on_tool_call_end_and_background_active_
         .expect("setWidget clear must be emitted when todo becomes empty");
     assert!(clear_evt.get("widgetLines").is_none());
 
-    // 2. Jalankan background tool -> ToolCallEnd harus memancarkan pipkin_channel active: 1, lalu kill -> active: 0
+    // 2. Jalankan background tool -> ToolCallEnd harus memancarkan oopbot_channel active: 1, lalu kill -> active: 0
     let bg_tool = tools.get("background").unwrap();
     let bg_start = bg_tool
         .execute(&json!({ "action": "start", "command": "sleep 30" }))
@@ -2738,7 +2737,7 @@ async fn reg011_live_todo_widget_emitted_on_tool_call_end_and_background_active_
     let bg_events = emitted.lock().unwrap().clone();
     let ch_active = bg_events
         .iter()
-        .find(|v| v["type"] == "pipkin_channel" && v["topic"] == "background")
+        .find(|v| v["type"] == "oopbot_channel" && v["topic"] == "background")
         .expect("background channel must be emitted on ToolCallEnd");
     assert_eq!(ch_active["data"]["active"], 1);
 
@@ -2758,7 +2757,7 @@ async fn reg011_live_todo_widget_emitted_on_tool_call_end_and_background_active_
     let bg_events_after = emitted.lock().unwrap().clone();
     let ch_killed = bg_events_after
         .iter()
-        .find(|v| v["type"] == "pipkin_channel" && v["topic"] == "background")
+        .find(|v| v["type"] == "oopbot_channel" && v["topic"] == "background")
         .unwrap();
     assert_eq!(ch_killed["data"]["active"], 0);
 }
@@ -2775,7 +2774,7 @@ fn reg005_available_models_empty_scope_and_no_local_duplicate() {
         tmp.path().join("models.json"),
         json!({
             "providers": {
-                "pipkin-local": {
+                "oopbot-local": {
                     "baseUrl": "http://127.0.0.1:11434/v1",
                     "api": "openai-completions",
                     "models": [{ "id": "llama3.2", "name": "Llama 3.2" }]
@@ -2797,7 +2796,7 @@ fn reg005_available_models_empty_scope_and_no_local_duplicate() {
     let models = server.available_models_json();
     let local_matches: Vec<&Value> = models
         .iter()
-        .filter(|m| m["id"] == "llama3.2" && m["provider"] == "pipkin-local")
+        .filter(|m| m["id"] == "llama3.2" && m["provider"] == "oopbot-local")
         .collect();
     assert_eq!(
         local_matches.len(),
@@ -2816,7 +2815,7 @@ async fn todo_plugin_persists_custom_entry_replays_on_resume_and_isolates_sessio
         tmp.path().to_path_buf(),
         None,
         None,
-        vec!["pipkin-todo".to_string()],
+        vec!["oopbot-todo".to_string()],
     )
     .unwrap();
 
@@ -2855,7 +2854,7 @@ async fn todo_plugin_persists_custom_entry_replays_on_resume_and_isolates_sessio
         duration_ms: 2,
     });
 
-    // Verify tool_execution_end includes details and session JSONL has pipkin-todo-state custom entry
+    // Verify tool_execution_end includes details and session JSONL has oopbot-todo-state custom entry
     {
         let evs = emitted.lock().unwrap();
         let exec_end = evs
@@ -2867,7 +2866,7 @@ async fn todo_plugin_persists_custom_entry_replays_on_resume_and_isolates_sessio
     let session_a_raw = std::fs::read_to_string(&session_a_path).unwrap();
     assert!(
         session_a_raw.contains(TODO_STATE_ENTRY),
-        "session JSONL must persist pipkin-todo-state custom entry"
+        "session JSONL must persist oopbot-todo-state custom entry"
     );
 
     // Resuming session A into a fresh RpcServer instance restores TodoPlugin state
@@ -2876,13 +2875,13 @@ async fn todo_plugin_persists_custom_entry_replays_on_resume_and_isolates_sessio
         tmp.path().to_path_buf(),
         Some(session_a_path.to_string_lossy().to_string()),
         None,
-        vec!["pipkin-todo".to_string()],
+        vec!["oopbot-todo".to_string()],
     )
     .unwrap();
     let resumed_plugin = resumed
         .runtime
         .plugins
-        .get_plugin("pipkin-todo")
+        .get_plugin("oopbot-todo")
         .unwrap();
     let lines = resumed_plugin
         .render_widget("todos")
@@ -2923,7 +2922,7 @@ async fn todo_slash_command_lists_and_clears_session_todos() {
         tmp.path().to_path_buf(),
         None,
         None,
-        vec!["pipkin-todo".to_string()],
+        vec!["oopbot-todo".to_string()],
     )
     .unwrap();
 
@@ -2960,7 +2959,7 @@ async fn todo_slash_command_lists_and_clears_session_todos() {
     assert!(server
         .runtime
         .plugins
-        .get_plugin("pipkin-todo")
+        .get_plugin("oopbot-todo")
         .unwrap()
         .render_widget("todos")
         .is_none());

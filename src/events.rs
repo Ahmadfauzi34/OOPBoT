@@ -1,4 +1,4 @@
-//! Event stream dan model timeline ala Pipkin (`TimelineModels.kt` & `StepStream.kt`).
+//! Event stream dan model timeline OOPBoT (`TimelineModels.kt` & `StepStream.kt`).
 //!
 //! Desain OOP berbasis trait [`EventSink`] memisahkan *mesin loop agen* dari
 //! tampilan:
@@ -22,7 +22,7 @@ pub enum ToolStatus {
     Error,
 }
 
-/// Hasil akhir satu grup langkah (`Steps` fold di Pipkin).
+/// Hasil akhir satu grup langkah (`Steps` fold di OOPBoT).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepsOutcome {
@@ -77,7 +77,7 @@ pub enum AgentEvent {
 }
 
 /// Satu item pada timeline percakapan setelah langkah-langkah berurutan dilipat
-/// (setara dengan `StepStream` di Pipkin).
+/// (setara dengan `StepStream` di OOPBoT).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TimelineEntry {
@@ -181,7 +181,7 @@ impl EventSink for CliEventSink {
 }
 
 /// Kolektor event di memori (dipakai oleh FFI `.so` dan pengujian untuk membangun
-/// lipatan `TimelineEntry::StepsFold` seperti `StepStream.kt` di Pipkin).
+/// lipatan `TimelineEntry::StepsFold` seperti `StepStream.kt` di OOPBoT).
 #[derive(Default)]
 pub struct MemoryEventCollector {
     events: Mutex<Vec<AgentEvent>>,
@@ -268,7 +268,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn folds_consecutive_steps_like_pipkin_step_stream() {
+    fn folds_consecutive_steps_like_oopbot_step_stream() {
         let collector = MemoryEventCollector::new();
         collector.on_event(&AgentEvent::TurnStart {
             session_id: "tab-1".into(),
