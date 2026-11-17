@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import org.json.JSONObject
 
 /** Everything the chat screen renders for one Pi process. [model] is Pi's model JSON (`provider`, `id`, `input`). */
+@Immutable
 data class TimelineState(
   val items: List<TimelineItem> = emptyList(),
   val busy: Boolean = false,
@@ -47,6 +48,7 @@ internal const val STREAM_UPDATE_MILLIS = 100L
  * messages and text blocks carry their message's `timestamp`: when Pi created it, or when this process first saw it
  * if Pi gave none.
  */
+@Immutable
 sealed interface TimelineItem {
   val key: String
 
@@ -54,6 +56,7 @@ sealed interface TimelineItem {
   data class User(override val key: String, val text: String, val images: List<ImagePart>, val timestamp: Long) :
     TimelineItem
 
+  @Immutable
   data class AssistantText(
     override val key: String,
     val markdown: String,
@@ -61,6 +64,7 @@ sealed interface TimelineItem {
     val timestamp: Long,
   ) : TimelineItem
 
+  @Immutable
   data class Thinking(override val key: String, val text: String, val streaming: Boolean) : TimelineItem
 
   /**
@@ -70,6 +74,7 @@ sealed interface TimelineItem {
    * are the result's `details`, kept only for a `subagent` call ([SUBAGENT_TOOL]), whose row leads to the run's
    * transcript through them once the run is gone; see [SubagentResult].
    */
+  @Immutable
   data class ToolCall(
     override val key: String,
     val id: String,
@@ -84,6 +89,7 @@ sealed interface TimelineItem {
     val details: JSONObject? = null,
   ) : TimelineItem
 
+  @Immutable
   data class Error(override val key: String, val cause: ErrorCause) : TimelineItem
 
   /**
@@ -103,6 +109,7 @@ sealed interface TimelineItem {
    * Pi keeps no record of either, so OOPBoT saves it as a [SavedNotice] and puts it back whenever the chat reloads its
    * history.
    */
+  @Immutable
   data class ExtensionNotice(
     override val key: String,
     val level: NoticeLevel,
@@ -110,12 +117,14 @@ sealed interface TimelineItem {
     val appNotice: AppNotice? = null,
   ) : TimelineItem
 
+  @Immutable
   data class Notice(override val key: String, val kind: NoticeKind) : TimelineItem
 
   /**
    * Closes a run that started at [startedAt]; [durationMillis] is null while Pi is still working. A run the user
    * [stopped] ended with Stop.
    */
+  @Immutable
   data class TurnFooter(
     override val key: String,
     val startedAt: Long,
@@ -123,6 +132,7 @@ sealed interface TimelineItem {
     val stopped: Boolean = false,
   ) : TimelineItem
 
+  @Immutable
   data class ExitBanner(override val key: String, val code: Int?, val stderr: String) : TimelineItem
 
   /**

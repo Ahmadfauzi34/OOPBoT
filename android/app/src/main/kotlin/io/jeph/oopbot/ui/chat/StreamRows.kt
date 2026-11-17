@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -129,7 +130,7 @@ internal fun ToolRow(
 @Composable
 private fun FigureText(figure: StepFigure) {
   val colors = oopbotColors
-  val numbers = NumberFormat.getIntegerInstance()
+  val numbers = remember { NumberFormat.getIntegerInstance() }
   val text = when (figure) {
     is StepFigure.Lines -> buildAnnotatedString {
       if (figure.added > 0) {
@@ -245,6 +246,7 @@ private val NoticeKind.icon: Int
  * phone's model is doing for the open run when the [chat]'s [model] is a local one. The footer reads the model's
  * activity itself, so its updates, several a second while the model writes, recompose that row alone.
  */
+@Stable
 internal data class TurnStatus(
   val backgroundTasks: Int = 0,
   val chat: AgentProcess? = null,
@@ -290,8 +292,8 @@ internal fun TurnFooterRow(
       )
     }
     if (subagents > 0) {
-      val count = NumberFormat.getIntegerInstance().format(subagents)
-      FooterText(pluralStringResource(R.plurals.chat_waiting_on_subagents, subagents, count))
+      val numbers = remember { NumberFormat.getIntegerInstance() }
+      FooterText(pluralStringResource(R.plurals.chat_waiting_on_subagents, subagents, numbers.format(subagents)))
     }
     if (backgroundTasks == 0) return@Row
     FooterText(pluralStringResource(R.plurals.chat_background_tasks_running, backgroundTasks, backgroundTasks))

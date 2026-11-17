@@ -150,25 +150,30 @@ private fun UserImages(images: List<ImagePart>) {
   }
 }
 
+private val ThumbnailShape = RoundedCornerShape(OopbotTokens.Radius.md)
+
 @Composable
 internal fun ImageThumbnail(part: ImagePart) {
-  val bitmap by produceState<ImageBitmap?>(null, part) { value = ChatImages.thumbnail(part) }
-  val shape = RoundedCornerShape(OopbotTokens.Radius.md)
-  val image = bitmap
-  if (image == null) {
-    Box(modifier = Modifier.size(ImageMaxEdge).clip(shape).background(oopbotColors.surface2))
-    return
+  val initial = remember(part) { ChatImages.cachedThumbnail(part) }
+  val bitmap by produceState<ImageBitmap?>(initial, part) {
+    if (value == null) value = ChatImages.thumbnail(part)
   }
-  val aspect = image.width.toFloat() / image.height.coerceAtLeast(1)
-  val size = if (aspect >= 1f) {
-    DpSize(ImageMaxEdge, ImageMaxEdge / aspect)
-  } else {
-    DpSize(ImageMaxEdge * aspect, ImageMaxEdge)
+  val cachedAspect = remember(part, bitmap) { ChatImages.cachedAspect(part) }
+  val image = bitmap
+  val aspect = image?.let { it.width.toFloat() / it.height.coerceAtLeast(1) } ?: cachedAspect
+  val size = when {
+    aspect == null -> DpSize(ImageMaxEdge, ImageMaxEdge)
+    aspect >= 1f -> DpSize(ImageMaxEdge, ImageMaxEdge / aspect)
+    else -> DpSize(ImageMaxEdge * aspect, ImageMaxEdge)
+  }
+  if (image == null) {
+    Box(modifier = Modifier.size(size).clip(ThumbnailShape).background(oopbotColors.surface2))
+    return
   }
   Image(
     bitmap = image,
     contentDescription = stringResource(R.string.chat_image),
-    modifier = Modifier.size(size).clip(shape),
+    modifier = Modifier.size(size).clip(ThumbnailShape),
     contentScale = ContentScale.Crop,
   )
 }
@@ -188,6 +193,7 @@ internal fun AssistantMessage(
       markdown = item.markdown,
       modifier = Modifier.fillMaxWidth(),
       cache = markdownCache.takeUnless { item.streaming },
+      selectable = !item.streaming,
     )
     if (item.streaming) {
       Spacer(modifier = Modifier.height(OopbotTokens.Spacing.s12))

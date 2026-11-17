@@ -18,10 +18,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** More items than a screen holds, at the height of the shortest rows. */
-private const val WARM_ITEMS = 30
+private const val WARM_ITEMS = 60
 
-/** More reply text than a screen holds. */
-private const val WARM_CHARS = 4_000
+/** More reply text than a screen holds, covering fast upward scroll without height jumps. */
+private const val WARM_CHARS = 64_000
 
 /** The item at the top of the stream's viewport, by its list key, and how far it is scrolled past. */
 internal data class StreamTop(val key: Any, val offset: Int)
@@ -99,8 +99,8 @@ internal class ChatViews {
 }
 
 /** The texts of the finished replies among the last [WARM_ITEMS] items, taken from the end until they reach [WARM_CHARS]. */
-private fun List<TimelineItem>.endReplies(): Set<String> {
-  val replies = HashSet<String>()
+internal fun List<TimelineItem>.endReplies(): Set<String> {
+  val replies = LinkedHashSet<String>()
   var chars = 0
   for (item in asReversed().asSequence().take(WARM_ITEMS)) {
     if (chars >= WARM_CHARS) break

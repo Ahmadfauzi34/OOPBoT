@@ -32,6 +32,8 @@
         <item quantity="other">%1$d lines</item>
     </plurals>
     <string name="file_actions">File actions</string>
+    <string name="file_select_text">Select text</string>
+    <string name="file_done_selecting">Done selecting</string>
     <string name="file_copy_path">Copy path</string>
     <string name="file_close">Close file</string>
 </resources>

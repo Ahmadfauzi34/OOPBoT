@@ -26,7 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -45,8 +44,6 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.platform.findViewTreeCompositionContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -126,6 +123,8 @@ internal fun ChatStream(
     }
   }
   val follow = scroll.follow
+  val activeReplies = remember(timeline.items) { timeline.items.endReplies() }
+  LaunchedEffect(view.markdown, activeReplies) { view.markdown.warmMissing(activeReplies) }
   val threshold = with(LocalDensity.current) { 120.dp.roundToPx() }
   AutoFollow(listState, follow)
   val showScrollButton by remember(listState, threshold) {
@@ -230,8 +229,20 @@ private fun StreamList(
   onOpenTool: (key: String) -> Unit,
 ) {
   val items = rows.items
-  val recomposer = LocalView.current.findViewTreeCompositionContext() as Recomposer
-  val anchor = remember(listState, follow, recomposer) { BottomAnchor(listState, follow, recomposer) }
+  val firstItemIndex = if (banner != null) 1 else 0
+  val itemCount = items.size + firstItemIndex
+  val lastFooterKey = remember(items) { items.lastOrNull { it is TimelineItem.TurnFooter }?.key }
+  val anchor = remember(listState, follow) { BottomAnchor(listState, follow) }
+  // Track stream-local changes instead of the whole activity's Recomposer.changeCount so unrelated animations
+  // (SimmeringPot at 10 FPS, tabs, timers) don't trigger requestScrollToItem during scrolling.
+  val streamRevision = remember(
+    rows,
+    banner,
+    lastTurn,
+    subagents,
+    view.markdown.version,
+    ChatImages.decodeVersion,
+  ) { anchor.nextRevision() }
   val gate = remember(listState) { FirstDrawGate(listState) }
   val currentItems by rememberUpdatedState(items)
   LaunchedEffect(gate) {
@@ -239,15 +250,12 @@ private fun StreamList(
     delay(MAX_HOLD_MILLIS)
     gate.stopHolding()
   }
-  val firstItemIndex = if (banner != null) 1 else 0
-  val itemCount = items.size + firstItemIndex
-  val lastFooterKey = remember(items) { items.lastOrNull { it is TimelineItem.TurnFooter }?.key }
   val railColor = oopbotColors.border
   LazyColumn(
     state = listState,
     modifier = Modifier
       .layout { measurable, constraints ->
-        anchor.beforeMeasure(constraints.maxHeight, itemCount)
+        anchor.beforeMeasure(constraints.maxHeight, itemCount, streamRevision)
         val placeable = measurable.measure(constraints)
         layout(placeable.width, placeable.height) { placeable.place(0, 0) }
       }.drawWithContent { if (gate.isOpen(items, firstItemIndex, view.markdown)) drawContent() }
@@ -332,23 +340,25 @@ private class FirstDrawGate(private val listState: LazyListState) {
 private class BottomAnchor(
   private val listState: LazyListState,
   private val follow: State<Boolean>,
-  private val recomposer: Recomposer,
 ) {
   private var height = UNMEASURED
-  private var changeCount = -1L
+  private var nextRev = 0
+  private var lastRevision = -1
+
+  fun nextRevision(): Int = nextRev++
 
   /**
    * [itemCount] is the list's item count as just composed. The list's own layout info still has the count of its
    * last measure: none before its first, so a new list would show its start for a frame, and one item too many
    * after an item is removed.
    */
-  fun beforeMeasure(newHeight: Int, itemCount: Int) {
+  fun beforeMeasure(newHeight: Int, itemCount: Int, revision: Int) {
     val shrink = if (height == UNMEASURED) 0 else height - newHeight
     height = newHeight
-    // Content grows only when composition changed or the list resized. A pin's request remeasures the
+    // Content grows only when the stream's inputs changed or the list resized. A pin's request remeasures the
     // list once more with neither; pinning again then would remeasure it every frame.
-    val changed = recomposer.changeCount != changeCount || shrink != 0
-    changeCount = recomposer.changeCount
+    val changed = revision != lastRevision || shrink != 0
+    lastRevision = revision
     // Read without observing: the scroll position is not an input to this layout step.
     Snapshot.withoutReadObservation {
       when {

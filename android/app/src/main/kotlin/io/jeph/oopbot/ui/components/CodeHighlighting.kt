@@ -25,29 +25,130 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withContext
 
 /**
+ * Bounded thread-safe in-memory cache of Tree-Sitter highlighted [AnnotatedString]s, keyed by grammar, theme
+ * palette and source text. Avoids flashing plain text and opening native [SyntaxSession]s again as code blocks
+ * re-enter the viewport.
+ */
+internal class HighlightCache(
+  private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+  private val maxChars: Int = DEFAULT_MAX_CHARS,
+) {
+  private data class Key(val grammar: Grammar, val colors: OopbotColors, val code: String)
+
+  private val lock = Any()
+  private val entries = LinkedHashMap<Key, AnnotatedString>(64, 0.75f, true)
+  private var totalChars = 0
+
+  fun get(grammar: Grammar, colors: OopbotColors, code: String): AnnotatedString? =
+    synchronized(lock) { entries[Key(grammar, colors, code)] }
+
+  fun put(grammar: Grammar, colors: OopbotColors, code: String, highlighted: AnnotatedString) {
+    if (code.length > maxChars / 2) return
+    val key = Key(grammar, colors, code)
+    synchronized(lock) {
+      val previous = entries.put(key, highlighted)
+      if (previous == null) totalChars += code.length
+      val iterator = entries.entries.iterator()
+      while ((entries.size > maxEntries || totalChars > maxChars) && iterator.hasNext()) {
+        val eldest = iterator.next()
+        totalChars -= eldest.key.code.length
+        iterator.remove()
+      }
+    }
+  }
+
+  fun clear() = synchronized(lock) {
+    entries.clear()
+    totalChars = 0
+  }
+
+  internal companion object {
+    const val DEFAULT_MAX_ENTRIES = 128
+    const val DEFAULT_MAX_CHARS = 512_000
+    val shared = HighlightCache()
+  }
+}
+
+/**
+ * Bounded thread-safe LRU cache of pre-split source lines so switching back to an open file tab
+ * renders lines from frame 1 without an empty flash while splitting off the main thread.
+ */
+internal class SourceLinesCache(
+  private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+  private val maxChars: Int = DEFAULT_MAX_CHARS,
+) {
+  private val lock = Any()
+  private val entries = LinkedHashMap<AnnotatedString, List<AnnotatedString>>(16, 0.75f, true)
+  private var totalChars = 0
+
+  fun get(source: AnnotatedString): List<AnnotatedString>? = synchronized(lock) { entries[source] }
+
+  fun put(source: AnnotatedString, lines: List<AnnotatedString>) {
+    if (source.length > maxChars / 2) return
+    synchronized(lock) {
+      val previous = entries.put(source, lines)
+      if (previous == null) totalChars += source.length
+      val iterator = entries.entries.iterator()
+      while ((entries.size > maxEntries || totalChars > maxChars) && iterator.hasNext()) {
+        val eldest = iterator.next()
+        totalChars -= eldest.key.length
+        iterator.remove()
+      }
+    }
+  }
+
+  fun clear() = synchronized(lock) {
+    entries.clear()
+    totalChars = 0
+  }
+
+  internal companion object {
+    const val DEFAULT_MAX_ENTRIES = 16
+    const val DEFAULT_MAX_CHARS = 512_000
+    val shared = SourceLinesCache()
+  }
+}
+
+/**
  * [code] coloured for [language] (a fence name or file extension), or plain when no grammar knows it.
  * Highlighting runs off the main thread, one pass at a time with the latest text, reparsing only what
  * changed; while a streamed block grows, the colours already computed stay on its start instead of
- * flashing back to plain.
+ * flashing back to plain. Finished blocks read directly from [HighlightCache.shared] on the first frame.
  */
 @Composable
 internal fun rememberHighlightedCode(code: String, language: String?): AnnotatedString {
   val grammar = language?.let(Grammar::forName) ?: return AnnotatedString(code)
   val themeColors = oopbotColors
+  val cached = remember(code, grammar, themeColors) { HighlightCache.shared.get(grammar, themeColors, code) }
+  if (cached != null) return cached
   val palette = remember(themeColors) { palette(themeColors) }
   val assets = LocalContext.current.assets
   val latestCode by rememberUpdatedState(code)
-  var highlighted by remember(grammar, palette) { mutableStateOf<AnnotatedString?>(null) }
-  LaunchedEffect(grammar, palette) {
-    val loaded = withContext(Dispatchers.Default) { loadGrammar(grammar, assets) }
-    val colors = captureColors(loaded, palette)
-    // Cancelling waits for a running parse to return, so the session is never closed under one.
-    SyntaxSession(loaded).use { session ->
+  var highlighted by remember(grammar, themeColors) { mutableStateOf<AnnotatedString?>(null) }
+  LaunchedEffect(grammar, themeColors) {
+    var colors: List<Color?> = emptyList()
+    var session: SyntaxSession? = null
+    try {
       snapshotFlow { latestCode }.conflate().collect { text ->
-        highlighted = withContext(Dispatchers.Default) {
-          paint(text, session.captures(text) { colors[it] != null }, colors::get)
+        val hit = HighlightCache.shared.get(grammar, themeColors, text)
+        if (hit != null) {
+          highlighted = hit
+        } else {
+          val active = session ?: withContext(Dispatchers.Default) {
+            val loaded = loadGrammar(grammar, assets)
+            colors = captureColors(loaded, palette)
+            SyntaxSession(loaded)
+          }.also { session = it }
+          val painted = withContext(Dispatchers.Default) {
+            paint(text, active.captures(text) { colors[it] != null }, colors::get)
+          }
+          HighlightCache.shared.put(grammar, themeColors, text, painted)
+          highlighted = painted
         }
       }
+    } finally {
+      // Cancelling waits for a running parse to return, so the session is never closed under one.
+      session?.close()
     }
   }
   return withPlainTail(highlighted, code)

@@ -49,10 +49,16 @@ internal fun MarkdownTable(content: String, node: ASTNode, style: TextStyle) {
   val table = remember(content, node) { parseTable(content, node) }
   if (table.columns == 0) return
   val colors = oopbotColors
-  val shape = RoundedCornerShape(16.dp)
   val annotator = annotatorSettings()
-  val headerStyle = style.copy(color = colors.foregroundMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-  val rows = listOf(table.header) + table.body
+  val cellStyles = remember(table, style, colors) {
+    val header = style.copy(color = colors.foregroundMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    TableStyles(
+      header = table.aligns.map { header.copy(textAlign = it) },
+      body = table.aligns.map { style.copy(textAlign = it) },
+    )
+  }
+  val rows = remember(table) { listOf(table.header) + table.body }
+  val scrollState = rememberScrollState()
   BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
     val available = constraints.maxWidth
     val measurePolicy = remember(rows.size, table.columns, available) {
@@ -62,23 +68,27 @@ internal fun MarkdownTable(content: String, node: ASTNode, style: TextStyle) {
       contents = listOf(
         {
           rows.forEachIndexed { rowIndex, cells ->
+            val rowStyles = if (rowIndex == 0) cellStyles.header else cellStyles.body
             cells.forEachIndexed { columnIndex, cell ->
-              val cellStyle = (if (rowIndex == 0) headerStyle else style).copy(textAlign = table.aligns[columnIndex])
-              TableCell(content, cell, cellStyle, annotator, rowIndex, columnIndex)
+              TableCell(content, cell, rowStyles[columnIndex], annotator, rowIndex, columnIndex)
             }
           }
         },
         { repeat(rows.size - 1) { Box(Modifier.background(colors.surface2)) } },
       ),
       modifier = Modifier
-        .horizontalScroll(rememberScrollState())
-        .clip(shape)
+        .horizontalScroll(scrollState)
+        .clip(TABLE_SHAPE)
         .background(colors.surface1)
         .semantics { collectionInfo = CollectionInfo(rows.size, table.columns) },
       measurePolicy = measurePolicy,
     )
   }
 }
+
+private class TableStyles(val header: List<TextStyle>, val body: List<TextStyle>)
+
+private val TABLE_SHAPE = RoundedCornerShape(16.dp)
 
 /** A cell's text, taking the column's whole width so its alignment has room to apply; an empty cell holds only padding. */
 @Composable

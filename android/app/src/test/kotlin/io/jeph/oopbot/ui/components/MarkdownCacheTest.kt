@@ -77,4 +77,31 @@ class MarkdownCacheTest {
     assertNotEquals(before, added)
     assertEquals(added, cache.version)
   }
+
+  @Test
+  fun boundedCacheEvictsLeastRecentlyUsedEntries() {
+    val bounded = MarkdownCache(maxEntries = 2)
+    bounded.put("one", State.Error(IllegalStateException("1")))
+    bounded.put("two", State.Error(IllegalStateException("2")))
+    // Touch "one" so "two" becomes the eldest entry.
+    assertNotNull(bounded["one"])
+
+    bounded.put("three", State.Error(IllegalStateException("3")))
+
+    assertNotNull(bounded["one"])
+    assertNull(bounded["two"])
+    assertNotNull(bounded["three"])
+  }
+
+  @Test
+  fun warmMissingKeepsEntriesWhenBackgroundWarmRunsLater() {
+    runBlocking {
+      cache.warmMissing(setOf("# Shown", "**Active**"))
+      cache.warm(setOf("other hidden reply"))
+    }
+
+    assertTrue(cache["# Shown"] is State.Success)
+    assertTrue(cache["**Active**"] is State.Success)
+    assertTrue(cache["other hidden reply"] is State.Success)
+  }
 }

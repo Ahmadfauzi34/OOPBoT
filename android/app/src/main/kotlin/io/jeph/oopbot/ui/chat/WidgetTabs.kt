@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -102,6 +104,7 @@ private val PANEL_TEXT_TOP = 4.5.dp
 private val SCROLL_FADE = 24.dp
 
 private const val TAB_RISE_MILLIS = 220
+private const val PANEL_FADE_MILLIS = 120
 private const val SHEET_MAX_HEIGHT = 0.9f
 
 /** A widget with its key, as a tab or panel shows it. */
@@ -368,7 +371,13 @@ private val START_FADE_COLORS = listOf(Color.Transparent, Color.Black)
 private val END_FADE_COLORS = listOf(Color.Black, Color.Transparent)
 
 private fun Modifier.fadeScrolledEdges(state: ScrollableState, vertical: Boolean): Modifier =
-  graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen).drawWithCache {
+  graphicsLayer {
+    compositingStrategy = if (state.canScrollBackward || state.canScrollForward) {
+      CompositingStrategy.Offscreen
+    } else {
+      CompositingStrategy.Auto
+    }
+  }.drawWithCache {
     val length = if (vertical) size.height else size.width
     val fade = SCROLL_FADE.toPx().coerceAtMost(length / 2)
     val endStart = length - fade
@@ -414,7 +423,10 @@ internal fun WidgetPanelSlot(
     targetState = shown,
     modifier = modifier,
     contentKey = { it?.key },
-    transitionSpec = { fadeIn() togetherWith fadeOut() using SizeTransform(clip = true) },
+    transitionSpec = {
+      fadeIn(tween(PANEL_FADE_MILLIS)) togetherWith fadeOut(tween(PANEL_FADE_MILLIS)) using
+        SizeTransform(clip = true) { _, _ -> spring(stiffness = Spring.StiffnessMedium) }
+    },
     contentAlignment = if (belowEditor) Alignment.TopStart else Alignment.BottomStart,
     label = "widget panel",
   ) { item ->

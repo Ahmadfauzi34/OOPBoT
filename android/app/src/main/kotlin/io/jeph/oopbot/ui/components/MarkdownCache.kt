@@ -15,8 +15,8 @@ import kotlinx.coroutines.withContext
  * the same way. Main-thread confined.
  */
 @Stable
-class MarkdownCache {
-  private val parsed = HashMap<String, State>()
+class MarkdownCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
+  private val parsed = LinkedHashMap<String, State>(64, 0.75f, true)
 
   /** Texts [warm] parsed that weren't shown since; only these does a later [warm] drop. */
   private val warmed = HashSet<String>()
@@ -29,7 +29,15 @@ class MarkdownCache {
   operator fun get(markdown: String): State? = parsed[markdown]
 
   fun put(markdown: String, state: State) {
-    if (parsed.put(markdown, state) !== state) version++
+    val previous = parsed.put(markdown, state)
+    if (previous !== state) version++
+    while (parsed.size > maxEntries) {
+      val iterator = parsed.entries.iterator()
+      if (!iterator.hasNext()) break
+      val eldest = iterator.next().key
+      iterator.remove()
+      warmed.remove(eldest)
+    }
   }
 
   /**
@@ -47,6 +55,14 @@ class MarkdownCache {
     }
   }
 
+  /** Parses [markdowns] not yet cached without marking them as background warms, for the active chat's history. */
+  suspend fun warmMissing(markdowns: Set<String>) {
+    for (markdown in markdowns) {
+      if (markdown in parsed) continue
+      put(markdown, parseOffMain(markdown))
+    }
+  }
+
   /**
    * Keeps only [markdowns], the texts a chat leaving the screen still has, as after a session switch it no longer has
    * the old ones. Everything kept counts as shown from then on, so [warm] leaves it.
@@ -54,6 +70,10 @@ class MarkdownCache {
   fun keepShown(markdowns: Set<String>) {
     parsed.keys.retainAll(markdowns)
     warmed.clear()
+  }
+
+  internal companion object {
+    const val DEFAULT_MAX_ENTRIES = 256
   }
 }
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +27,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
@@ -43,6 +45,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
 /** Share of the row's width past which letting go removes it. */
@@ -78,6 +81,7 @@ internal fun SwipeAway(
 ) {
   val swipe = remember { SwipeOffset() }
   var width by remember { mutableIntStateOf(0) }
+  val isLeaving by rememberUpdatedState(leaving)
   val latestOnSwiped by rememberUpdatedState(onSwiped)
   val latestOnLeft by rememberUpdatedState(onLeft)
   LaunchedEffect(leaving, width) {
@@ -89,7 +93,8 @@ internal fun SwipeAway(
       swipe.springBack()
     }
   }
-  val offset = swipe.offset.value
+  val active by remember { derivedStateOf { swipe.offset.value > 0f } }
+  val armed by remember { derivedStateOf { isLeaving || swipe.offset.value >= width * RELEASE_THRESHOLD } }
   val haptics = LocalHapticFeedback.current
   val scope = rememberCoroutineScope()
   val flingVelocity = with(LocalDensity.current) { FLING_VELOCITY.toPx() }
@@ -100,11 +105,11 @@ internal fun SwipeAway(
         if (swipeEnabled && !leaving) swipeDrag(swipe, scope, haptics, flingVelocity) { latestOnSwiped() }
       },
   ) {
-    if (offset > 0f) SwipeMark(mark, armed = leaving || offset >= width * RELEASE_THRESHOLD, Modifier.matchParentSize())
+    if (active) SwipeMark(mark, armed = armed, Modifier.matchParentSize())
     Box(
       modifier = Modifier
         .graphicsLayer { translationX = swipe.offset.value }
-        .background(if (offset > 0f) containerColor else Color.Transparent),
+        .drawBehind { if (swipe.offset.value > 0f) drawRect(containerColor) },
     ) {
       content()
     }
@@ -142,31 +147,46 @@ private suspend fun PointerInputScope.swipeDrag(
       }
     } ?: return@awaitEachGesture
     swipe.dragging = true
-    val tracker = VelocityTracker()
-    tracker.addPointerInputChange(start)
-    val width = size.width.toFloat()
-    val threshold = width * RELEASE_THRESHOLD
-    var position = (swipe.offset.value + overSlop).coerceIn(0f, width)
-    var wasArmed = position >= threshold
-    scope.launch { swipe.offset.snapTo(position) }
-    val ended = horizontalDrag(start.id) { change ->
-      tracker.addPointerInputChange(change)
-      position = (position + change.positionChange().x).coerceIn(0f, width)
-      change.consume()
-      scope.launch { swipe.offset.snapTo(position) }
-      val armed = position >= threshold
-      if (armed != wasArmed) {
-        haptics.performHapticFeedback(
-          if (armed) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.SegmentFrequentTick,
-        )
-        wasArmed = armed
+    val updates = Channel<Float>(Channel.CONFLATED)
+    val updater = scope.launch {
+      for (pos in updates) swipe.offset.snapTo(pos)
+    }
+    var position = 0f
+    var threshold = 0f
+    var ended = false
+    var velocity = 0f
+    try {
+      val tracker = VelocityTracker()
+      tracker.addPointerInputChange(start)
+      val width = size.width.toFloat()
+      threshold = width * RELEASE_THRESHOLD
+      position = (swipe.offset.value + overSlop).coerceIn(0f, width)
+      var wasArmed = position >= threshold
+      updates.trySend(position)
+      ended = horizontalDrag(start.id) { change ->
+        tracker.addPointerInputChange(change)
+        position = (position + change.positionChange().x).coerceIn(0f, width)
+        change.consume()
+        updates.trySend(position)
+        val armed = position >= threshold
+        if (armed != wasArmed) {
+          haptics.performHapticFeedback(
+            if (armed) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.SegmentFrequentTick,
+          )
+          wasArmed = armed
+        }
+      }
+      velocity = tracker.calculateVelocity().x
+    } finally {
+      updates.close()
+      scope.launch {
+        updater.join()
+        swipe.dragging = false
+        val flung = velocity >= flingVelocity
+        val released = position >= threshold && velocity > -flingVelocity
+        if (ended && position > 0f && (flung || released)) onSwiped() else swipe.springBack()
       }
     }
-    swipe.dragging = false
-    val velocity = tracker.calculateVelocity().x
-    val flung = velocity >= flingVelocity
-    val released = position >= threshold && velocity > -flingVelocity
-    if (ended && position > 0f && (flung || released)) onSwiped() else scope.launch { swipe.springBack() }
   }
 }
 
