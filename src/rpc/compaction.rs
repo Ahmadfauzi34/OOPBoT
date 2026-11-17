@@ -272,10 +272,16 @@ impl RpcRuntime {
                     m.next_op_seq += 1;
                     m.current_op_seq = seq;
                     m.active_op = ActiveOp::Streaming { cancel_tx };
-                    let rs: Vec<String> =
-                        m.steering_queue.iter().map(|q| q.message.clone()).collect();
-                    let rf: Vec<String> =
-                        m.follow_up_queue.iter().map(|q| q.message.clone()).collect();
+                    let rs: Vec<String> = m
+                        .steering_queue
+                        .iter()
+                        .map(QueuedPrompt::queue_display_text)
+                        .collect();
+                    let rf: Vec<String> = m
+                        .follow_up_queue
+                        .iter()
+                        .map(QueuedPrompt::queue_display_text)
+                        .collect();
                     Some((first, next_cancel_rx, seq, rs, rf))
                 } else {
                     m.active_op = ActiveOp::Idle;

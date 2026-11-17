@@ -3,10 +3,13 @@ use super::{
     load_session_from_path, new_unique_session_id, save_auth_key,
     save_model_override_to_config, save_scanned_models_to_config, save_settings_fields,
     unique_session_file_path, write_branched_session_file, ActiveOp, CoordinatorFinishGuard,
-    LoadedSession, QueueMode, QueuedPrompt, RpcRuntime, RpcUiState,
+    CustomWakeupMeta, LoadedSession, QueueMode, QueuedPrompt, RpcRuntime, RpcUiState,
 };
 use crate::agent::{ChatInput, SteerHook};
-use crate::plugins::{TodoPlugin, NO_TODOS_MESSAGE, TODO_STATE_ENTRY};
+use crate::plugins::{
+    BackgroundPlugin, BgCompletionEvent, TodoPlugin, NO_TODOS_MESSAGE, TODO_STATE_ENTRY,
+};
+use crate::tools::truncate;
 use crate::util::epoch_ms;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -17,11 +20,15 @@ impl RpcRuntime {
     pub(super) fn emit_queue_update(&self) {
         let (steering, follow_up) = {
             let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
-            let s: Vec<String> = m.steering_queue.iter().map(|q| q.message.clone()).collect();
+            let s: Vec<String> = m
+                .steering_queue
+                .iter()
+                .map(QueuedPrompt::queue_display_text)
+                .collect();
             let f: Vec<String> = m
                 .follow_up_queue
                 .iter()
-                .map(|q| q.message.clone())
+                .map(QueuedPrompt::queue_display_text)
                 .collect();
             (s, f)
         };
@@ -63,6 +70,153 @@ impl RpcRuntime {
             state.append_session_entry("message", json!({ "message": user_msg }));
         }
         started_ms
+    }
+
+    pub(super) fn emit_and_persist_wakeup_message(
+        &self,
+        custom_type: &str,
+        summary: &str,
+    ) -> u64 {
+        let started_ms = epoch_ms();
+        let custom_msg = json!({
+            "role": "custom",
+            "customType": custom_type,
+            "display": true,
+            "content": [{ "type": "text", "text": summary }],
+            "timestamp": started_ms,
+        });
+        Self::send_line(&json!({ "type": "message_start", "message": custom_msg }));
+        Self::send_line(&json!({ "type": "message_end", "message": custom_msg }));
+        {
+            self.ensure_session_header();
+            let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
+            state.ui_messages.push(custom_msg.clone());
+            state.append_session_entry("message", json!({ "message": custom_msg }));
+        }
+        started_ms
+    }
+
+    pub(super) fn emit_and_persist_queued_prompt(&self, q: &QueuedPrompt) -> u64 {
+        match &q.custom_notice {
+            Some(meta) => self.emit_and_persist_wakeup_message(&meta.custom_type, &meta.summary),
+            None => self.emit_and_persist_user_message(&q.message, &q.images),
+        }
+    }
+
+    /// Bangunkan agen otomatis (jika Idle) atau antrekan sebagai `followUp` (jika sedang aktif)
+    /// ketika proses background selesai, gagal, atau melewati batas waktu secara mandiri.
+    pub(super) fn trigger_background_wakeup(&self, evt: BgCompletionEvent) {
+        let task_name = evt
+            .label
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(evt.command.as_str());
+        let exit_str = evt
+            .exit_code
+            .map(|c| format!(" (exit {})", c))
+            .unwrap_or_default();
+        let summary = format!(
+            "Background #{} `{}` {} dalam {} dtk{}",
+            evt.id,
+            truncate(task_name, 60),
+            evt.status,
+            evt.elapsed_secs,
+            exit_str
+        );
+
+        let mut prompt_msg = format!(
+            "[System Event - Background Task Finished]\n\
+            Task background #{} telah selesai di latar belakang.\n\
+            - Status: {}\n",
+            evt.id, evt.status
+        );
+        if let Some(ref lbl) = evt.label {
+            prompt_msg.push_str(&format!("- Label: {}\n", lbl));
+        }
+        prompt_msg.push_str(&format!(
+            "- Command: {}\n\
+            - Exit code: {}\n\
+            - Durasi: {} dtk\n",
+            evt.command,
+            evt.exit_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            evt.elapsed_secs
+        ));
+        if evt.output_tail.trim().is_empty() {
+            prompt_msg.push_str("- Output tail: (kosong)\n");
+        } else {
+            prompt_msg.push_str(&format!("- Output tail:\n```\n{}\n```\n", evt.output_tail));
+        }
+        prompt_msg.push_str(
+            "\nSampaikan hasil/ringkasannya ke user (atau lanjutkan langkah kerja berikutnya bila relevan). Jika butuh log lebih lengkap, gunakan `background` action `output`.",
+        );
+
+        let queued = QueuedPrompt::wakeup(
+            prompt_msg,
+            "oopbot-background-wakeup".to_string(),
+            summary,
+        );
+
+        let rtx_opt = self
+            .resume_tx_slot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        enum WakeupDispatch {
+            Start {
+                rtx: super::ResumeTx,
+                cancel_rx: tokio::sync::watch::Receiver<bool>,
+                seq: u64,
+            },
+            Queued,
+            NoLoop,
+        }
+
+        let dispatch = {
+            let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+            match m.active_op {
+                ActiveOp::Idle => {
+                    if let Some(rtx) = rtx_opt {
+                        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                        let seq = m.next_op_seq;
+                        m.next_op_seq += 1;
+                        m.current_op_seq = seq;
+                        m.active_op = ActiveOp::Streaming { cancel_tx };
+                        WakeupDispatch::Start { rtx, cancel_rx, seq }
+                    } else {
+                        WakeupDispatch::NoLoop
+                    }
+                }
+                ActiveOp::Streaming { .. } => {
+                    m.follow_up_queue.push_back(queued.clone());
+                    WakeupDispatch::Queued
+                }
+                ActiveOp::Compacting { .. } => {
+                    m.follow_up_queue.push_back(queued.clone());
+                    m.resume_queues_after_compact = true;
+                    WakeupDispatch::Queued
+                }
+            }
+        };
+
+        match dispatch {
+            WakeupDispatch::Start { rtx, cancel_rx, seq } => {
+                if rtx.send((queued, cancel_rx, seq)).is_err() {
+                    let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+                    if matches!(m.active_op, ActiveOp::Streaming { .. }) && m.current_op_seq == seq
+                    {
+                        m.active_op = ActiveOp::Idle;
+                        let _ = self.completed_seq_tx.send(seq);
+                    }
+                }
+            }
+            WakeupDispatch::Queued => {
+                self.emit_queue_update();
+            }
+            WakeupDispatch::NoLoop => {}
+        }
     }
 
     pub(super) async fn handle_slash_command(&self, cmd_line: &str) -> Option<String> {
@@ -542,14 +696,18 @@ impl RpcRuntime {
         &self,
         prompt: &str,
         images: &[(String, String)],
+        custom_notice: Option<&CustomWakeupMeta>,
         cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
         steer_hook: &SteerHook,
     ) -> bool {
         self.refresh_credentials();
         self.sync_thinking_level_for_active_model();
-        let started_ms = self.emit_and_persist_user_message(prompt, images);
+        let started_ms = match custom_notice {
+            Some(meta) => self.emit_and_persist_wakeup_message(&meta.custom_type, &meta.summary),
+            None => self.emit_and_persist_user_message(prompt, images),
+        };
 
-        if prompt.trim_start().starts_with('/') && images.is_empty() {
+        if custom_notice.is_none() && prompt.trim_start().starts_with('/') && images.is_empty() {
             if let Some(reply_text) = self.handle_slash_command(prompt.trim()).await {
                 Self::send_line(&json!({ "type": "agent_start" }));
                 self.emit_assistant_reply_with_thoughts(&reply_text, &[], started_ms, None);
@@ -804,11 +962,15 @@ impl RpcRuntime {
                         out.push(q);
                     }
                 }
-                let rs: Vec<String> = m.steering_queue.iter().map(|q| q.message.clone()).collect();
+                let rs: Vec<String> = m
+                    .steering_queue
+                    .iter()
+                    .map(QueuedPrompt::queue_display_text)
+                    .collect();
                 let rf: Vec<String> = m
                     .follow_up_queue
                     .iter()
-                    .map(|q| q.message.clone())
+                    .map(QueuedPrompt::queue_display_text)
                     .collect();
                 (out, rs, rf)
             };
@@ -819,7 +981,7 @@ impl RpcRuntime {
                     "followUp": rem_f,
                 }));
                 for q in &drained {
-                    rt_hook.emit_and_persist_user_message(&q.message, &q.images);
+                    rt_hook.emit_and_persist_queued_prompt(q);
                 }
             }
             drained
@@ -840,7 +1002,7 @@ impl RpcRuntime {
                 break;
             };
             for extra in &current_inputs {
-                rt.emit_and_persist_user_message(&extra.message, &extra.images);
+                rt.emit_and_persist_queued_prompt(extra);
                 rt.agent
                     .append_user_message_to_active_history(&ChatInput::with_images(
                         extra.message.clone(),
@@ -848,7 +1010,13 @@ impl RpcRuntime {
                     ));
             }
             let turn_aborted = rt
-                .execute_single_turn(&last_input.message, &last_input.images, &mut cancel_rx, &steer_hook)
+                .execute_single_turn(
+                    &last_input.message,
+                    &last_input.images,
+                    last_input.custom_notice.as_ref(),
+                    &mut cancel_rx,
+                    &steer_hook,
+                )
                 .await;
             if turn_aborted || *cancel_rx.borrow() {
                 final_aborted = true;
@@ -895,10 +1063,16 @@ impl RpcRuntime {
                     };
                     let batch: Vec<_> =
                         (0..n).filter_map(|_| m.steering_queue.pop_front()).collect();
-                    let rs: Vec<String> =
-                        m.steering_queue.iter().map(|q| q.message.clone()).collect();
-                    let rf: Vec<String> =
-                        m.follow_up_queue.iter().map(|q| q.message.clone()).collect();
+                    let rs: Vec<String> = m
+                        .steering_queue
+                        .iter()
+                        .map(QueuedPrompt::queue_display_text)
+                        .collect();
+                    let rf: Vec<String> = m
+                        .follow_up_queue
+                        .iter()
+                        .map(QueuedPrompt::queue_display_text)
+                        .collect();
                     (Some(batch), rs, rf)
                 } else if !m.follow_up_queue.is_empty() {
                     let n = match m.follow_up_mode {
@@ -908,10 +1082,16 @@ impl RpcRuntime {
                     let batch: Vec<_> = (0..n)
                         .filter_map(|_| m.follow_up_queue.pop_front())
                         .collect();
-                    let rs: Vec<String> =
-                        m.steering_queue.iter().map(|q| q.message.clone()).collect();
-                    let rf: Vec<String> =
-                        m.follow_up_queue.iter().map(|q| q.message.clone()).collect();
+                    let rs: Vec<String> = m
+                        .steering_queue
+                        .iter()
+                        .map(QueuedPrompt::queue_display_text)
+                        .collect();
+                    let rf: Vec<String> = m
+                        .follow_up_queue
+                        .iter()
+                        .map(QueuedPrompt::queue_display_text)
+                        .collect();
                     (Some(batch), rs, rf)
                 } else {
                     (None, Vec::new(), Vec::new())
@@ -1399,6 +1579,13 @@ impl RpcRuntime {
             "background" => {
                 if let Some(action) = data["action"].as_str() {
                     if action == "stop" {
+                        if let Some(plugin) = self.plugins.get_plugin("oopbot-background") {
+                            if let Some(bg) =
+                                plugin.as_any().and_then(|a| a.downcast_ref::<BackgroundPlugin>())
+                            {
+                                bg.shutdown_all();
+                            }
+                        }
                         Self::send_channel("background", json!({ "active": 0 }));
                     }
                 }

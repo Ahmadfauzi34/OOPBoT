@@ -26,7 +26,10 @@ use session_store::*;
 use crate::agent::GeminiAgent;
 use crate::gemini::{BoxError, GeminiClient, DEFAULT_GEMINI_BASE_URL};
 use crate::models::ModelCatalog;
-use crate::plugins::PluginRegistry;
+use crate::plugins::{
+    BackgroundPlugin, InteractPlugin, PluginRegistry, UiDialogAnswer, UiDialogKind,
+    UiDialogRequest,
+};
 use crate::session::WorkspaceTabs;
 use crate::tools::ToolRegistry;
 use crate::util::read_json_file;
@@ -36,6 +39,14 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+
+pub type PendingUiRequests =
+    Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<UiDialogAnswer>>>>;
+type ResumeTx = tokio::sync::mpsc::UnboundedSender<(
+    QueuedPrompt,
+    tokio::sync::watch::Receiver<bool>,
+    u64,
+)>;
 
 type OutputSink = Arc<Mutex<Box<dyn Write + Send + Sync>>>;
 static OUTPUT_SINK: RwLock<Option<OutputSink>> = RwLock::new(None);
@@ -78,9 +89,72 @@ impl QueueMode {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct CustomWakeupMeta {
+    pub(super) custom_type: String,
+    pub(super) summary: String,
+}
+
+#[derive(Debug, Clone)]
 struct QueuedPrompt {
     message: String,
     images: Vec<(String, String)>,
+    custom_notice: Option<CustomWakeupMeta>,
+}
+
+impl QueuedPrompt {
+    fn user(message: String, images: Vec<(String, String)>) -> Self {
+        Self {
+            message,
+            images,
+            custom_notice: None,
+        }
+    }
+
+    pub(super) fn wakeup(message: String, custom_type: String, summary: String) -> Self {
+        Self {
+            message,
+            images: Vec::new(),
+            custom_notice: Some(CustomWakeupMeta {
+                custom_type,
+                summary,
+            }),
+        }
+    }
+
+    pub(super) fn queue_display_text(&self) -> String {
+        match &self.custom_notice {
+            Some(meta) => meta.summary.clone(),
+            None => self.message.clone(),
+        }
+    }
+}
+
+struct PendingUiRequestGuard {
+    pending: PendingUiRequests,
+    req_id: String,
+    active: bool,
+}
+
+impl Drop for PendingUiRequestGuard {
+    fn drop(&mut self) {
+        if self.active {
+            if let Ok(mut map) = self.pending.lock() {
+                map.remove(&self.req_id);
+            }
+        }
+    }
+}
+
+struct ResumeTxSlotGuard {
+    slot: Arc<Mutex<Option<ResumeTx>>>,
+}
+
+impl Drop for ResumeTxSlotGuard {
+    fn drop(&mut self) {
+        if let Ok(mut lock) = self.slot.lock() {
+            *lock = None;
+        }
+    }
 }
 
 enum ActiveOp {
@@ -149,6 +223,9 @@ pub struct RpcRuntime {
     pub agent: GeminiAgent,
     pub ui_state: Arc<Mutex<RpcUiState>>,
     pub pending_approvals: PendingApprovals,
+    pub pending_ui_requests: PendingUiRequests,
+    ui_req_counter: AtomicU64,
+    resume_tx_slot: Arc<Mutex<Option<ResumeTx>>>,
     defer_settled: Arc<AtomicBool>,
     mutable: Mutex<RpcMutableState>,
     completed_seq_tx: tokio::sync::watch::Sender<u64>,
@@ -215,6 +292,7 @@ impl RpcServer {
             system_append,
             extensions,
         )?);
+        runtime.install_plugin_callbacks();
         Ok(Self { runtime })
     }
 
@@ -258,7 +336,19 @@ impl RpcRuntime {
         for ext in &extensions {
             plugins.activate(ext);
         }
+        // Selalu aktifkan tool interaksi dua arah (`notify_user` & `ask_user`) pada mode RPC.
+        plugins.activate("oopbot-interact");
         plugins.register_active_tools(&mut tools);
+        if let Some(plugin) = plugins.get_plugin("oopbot-background") {
+            if let Some(bg) = plugin
+                .as_any()
+                .and_then(|a| a.downcast_ref::<BackgroundPlugin>())
+            {
+                bg.set_status_notifier(Arc::new(|active| {
+                    Self::send_channel("background", json!({ "active": active }));
+                }));
+            }
+        }
         let plugins = Arc::new(plugins);
 
         let mut system_instruction = default_rpc_system_instruction(&cwd, &tools);
@@ -341,6 +431,7 @@ impl RpcRuntime {
         plugins.replay_branch(&branch_entries);
 
         let pending_approvals: PendingApprovals = Arc::new(Mutex::new(HashMap::new()));
+        let pending_ui_requests: PendingUiRequests = Arc::new(Mutex::new(HashMap::new()));
         let ui_state = Arc::new(Mutex::new(RpcUiState::from_loaded_session(loaded)));
         let defer_settled = Arc::new(AtomicBool::new(false));
 
@@ -401,6 +492,9 @@ impl RpcRuntime {
             agent,
             ui_state,
             pending_approvals,
+            pending_ui_requests,
+            ui_req_counter: AtomicU64::new(1),
+            resume_tx_slot: Arc::new(Mutex::new(None)),
             defer_settled,
             mutable: Mutex::new(mutable),
             completed_seq_tx,
@@ -418,6 +512,133 @@ impl RpcRuntime {
         rt.agent.set_thinking_level(&clamped);
         rt.ensure_session_header();
         Ok(rt)
+    }
+
+    fn install_plugin_callbacks(self: &Arc<Self>) {
+        if let Some(plugin) = self.plugins.get_plugin("oopbot-background") {
+            if let Some(bg) = plugin
+                .as_any()
+                .and_then(|a| a.downcast_ref::<BackgroundPlugin>())
+            {
+                let weak_rt = Arc::downgrade(self);
+                bg.set_completion_notifier(Arc::new(move |evt| {
+                    if let Some(rt) = weak_rt.upgrade() {
+                        rt.trigger_background_wakeup(evt);
+                    }
+                }));
+            }
+        }
+
+        if let Some(plugin) = self.plugins.get_plugin("oopbot-interact") {
+            if let Some(interact) = plugin
+                .as_any()
+                .and_then(|a| a.downcast_ref::<InteractPlugin>())
+            {
+                interact.set_notify_handler(Arc::new(|level, message| {
+                    Self::send_line(&json!({
+                        "type": "extension_ui_request",
+                        "method": "notify",
+                        "notifyType": level,
+                        "message": message,
+                    }));
+                }));
+
+                let weak_rt = Arc::downgrade(self);
+                interact.set_ask_handler(Arc::new(move |req: UiDialogRequest| {
+                    let weak_rt = weak_rt.clone();
+                    Box::pin(async move {
+                        let Some(rt) = weak_rt.upgrade() else {
+                            return Err("Runtime RPC sudah dihentikan".to_string());
+                        };
+                        rt.request_ui_dialog(req).await
+                    })
+                }));
+            }
+        }
+    }
+
+    async fn request_ui_dialog(&self, req: UiDialogRequest) -> Result<UiDialogAnswer, String> {
+        let id_num = self.ui_req_counter.fetch_add(1, Ordering::SeqCst);
+        let req_id = format!("ui-ask-{}", id_num);
+        let (tx, rx) = tokio::sync::oneshot::channel::<UiDialogAnswer>();
+
+        {
+            let mut pending = self
+                .pending_ui_requests
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            pending.insert(req_id.clone(), tx);
+        }
+        let mut guard = PendingUiRequestGuard {
+            pending: Arc::clone(&self.pending_ui_requests),
+            req_id: req_id.clone(),
+            active: true,
+        };
+
+        let timeout_ms = req.timeout_secs.saturating_mul(1000);
+        let payload = match &req.kind {
+            UiDialogKind::Confirm { message } => {
+                let mut obj = json!({
+                    "type": "extension_ui_request",
+                    "id": req_id,
+                    "method": "confirm",
+                    "title": req.title,
+                    "timeout": timeout_ms,
+                });
+                if let Some(msg) = message {
+                    obj["message"] = json!(msg);
+                }
+                obj
+            }
+            UiDialogKind::Select { options } => json!({
+                "type": "extension_ui_request",
+                "id": req_id,
+                "method": "select",
+                "title": req.title,
+                "options": options,
+                "timeout": timeout_ms,
+            }),
+            UiDialogKind::Input { placeholder } => {
+                let mut obj = json!({
+                    "type": "extension_ui_request",
+                    "id": req_id,
+                    "method": "input",
+                    "title": req.title,
+                    "timeout": timeout_ms,
+                });
+                if let Some(ph) = placeholder {
+                    obj["placeholder"] = json!(ph);
+                }
+                obj
+            }
+            UiDialogKind::Editor { prefill } => {
+                let mut obj = json!({
+                    "type": "extension_ui_request",
+                    "id": req_id,
+                    "method": "editor",
+                    "title": req.title,
+                    "timeout": timeout_ms,
+                });
+                if let Some(pf) = prefill {
+                    obj["prefill"] = json!(pf);
+                }
+                obj
+            }
+        };
+        Self::send_line(&payload);
+
+        let dur = std::time::Duration::from_secs(req.timeout_secs);
+        match tokio::time::timeout(dur, rx).await {
+            Ok(Ok(answer)) => {
+                guard.active = false;
+                Ok(answer)
+            }
+            Ok(Err(_)) => {
+                guard.active = false;
+                Err("Koneksi UI terputus saat menunggu jawaban user".to_string())
+            }
+            Err(_) => Ok(UiDialogAnswer::TimedOut),
+        }
     }
 
     /// Akses thread-safe ke map approval yang sedang menunggu konfirmasi UI.
@@ -592,6 +813,7 @@ impl RpcRuntime {
         self.emit_active_widgets();
 
         let pending = Arc::clone(&self.pending_approvals);
+        let pending_ui = Arc::clone(&self.pending_ui_requests);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
         let reader_thread = std::thread::spawn(move || {
@@ -601,6 +823,7 @@ impl RpcRuntime {
                 match reader.read_line(&mut line) {
                     Ok(0) => {
                         pending.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                        pending_ui.lock().unwrap_or_else(|e| e.into_inner()).clear();
                         break;
                     }
                     Ok(_) => {
@@ -612,14 +835,35 @@ impl RpcRuntime {
                             let msg_type = val["type"].as_str().unwrap_or_default();
                             if msg_type == "extension_ui_response" {
                                 let req_id = val["id"].as_str().unwrap_or_default();
-                                let approved = if val["cancelled"].as_bool() == Some(true) {
-                                    false
-                                } else {
-                                    val["confirmed"].as_bool().unwrap_or(false)
-                                };
                                 if !req_id.is_empty() {
-                                    if let Some(sender) = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(req_id) {
+                                    let approval_sender = pending
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .remove(req_id);
+                                    if let Some(sender) = approval_sender {
+                                        let approved = if val["cancelled"].as_bool() == Some(true) {
+                                            false
+                                        } else {
+                                            val["confirmed"].as_bool().unwrap_or(false)
+                                        };
                                         let _ = sender.send(approved);
+                                    } else if let Some(ui_sender) = pending_ui
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .remove(req_id)
+                                    {
+                                        let answer = if val["cancelled"].as_bool() == Some(true) {
+                                            UiDialogAnswer::Cancelled
+                                        } else if let Some(confirmed) = val["confirmed"].as_bool() {
+                                            UiDialogAnswer::Confirmed(confirmed)
+                                        } else if let Some(value) = val["value"].as_str() {
+                                            UiDialogAnswer::Value(value.to_string())
+                                        } else if !val["value"].is_null() {
+                                            UiDialogAnswer::Value(val["value"].to_string())
+                                        } else {
+                                            UiDialogAnswer::Cancelled
+                                        };
+                                        let _ = ui_sender.send(answer);
                                     }
                                 }
                                 continue;
@@ -645,6 +889,7 @@ impl RpcRuntime {
                     }
                     Err(_) => {
                         pending.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                        pending_ui.lock().unwrap_or_else(|e| e.into_inner()).clear();
                         break;
                     }
                 }
@@ -657,6 +902,15 @@ impl RpcRuntime {
             tokio::sync::watch::Receiver<bool>,
             u64,
         )>();
+        {
+            *self
+                .resume_tx_slot
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(resume_tx.clone());
+        }
+        let _resume_slot_guard = ResumeTxSlotGuard {
+            slot: Arc::clone(&self.resume_tx_slot),
+        };
 
         loop {
             while tasks.try_join_next().is_some() {}
@@ -1226,20 +1480,20 @@ impl RpcRuntime {
                             let is_compacting = matches!(m.active_op, ActiveOp::Compacting { .. });
                             match behavior {
                                 Some("steer") => {
-                                    m.steering_queue.push_back(QueuedPrompt {
-                                        message: message.clone(),
-                                        images: images.clone(),
-                                    });
+                                    m.steering_queue.push_back(QueuedPrompt::user(
+                                        message.clone(),
+                                        images.clone(),
+                                    ));
                                     if is_compacting {
                                         m.resume_queues_after_compact = true;
                                     }
                                     PromptDispatch::Queued
                                 }
                                 Some("followUp") => {
-                                    m.follow_up_queue.push_back(QueuedPrompt {
-                                        message: message.clone(),
-                                        images: images.clone(),
-                                    });
+                                    m.follow_up_queue.push_back(QueuedPrompt::user(
+                                        message.clone(),
+                                        images.clone(),
+                                    ));
                                     if is_compacting {
                                         m.resume_queues_after_compact = true;
                                     }
@@ -1275,7 +1529,7 @@ impl RpcRuntime {
                         PromptDispatch::Start { cancel_rx, seq } => {
                             Self::send_response(&id, "prompt", json!({ "disposition": "started" }));
                             let rt = Arc::clone(self);
-                            let first = QueuedPrompt { message, images };
+                            let first = QueuedPrompt::user(message, images);
                             tasks.spawn(async move {
                                 Self::run_prompt_coordinator(rt, first, cancel_rx, seq).await;
                             });
@@ -1286,9 +1540,11 @@ impl RpcRuntime {
                     let message = cmd["message"].as_str().unwrap_or_default().to_string();
                     let images = extract_prompt_images(&cmd["images"]);
                     {
-                        self.mutable.lock().unwrap_or_else(|e| e.into_inner()).steering_queue.push_back(
-                            QueuedPrompt { message, images },
-                        );
+                        self.mutable
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .steering_queue
+                            .push_back(QueuedPrompt::user(message, images));
                     }
                     self.emit_queue_update();
                     Self::send_response(&id, "steer", json!({ "disposition": "queued" }));
@@ -1299,7 +1555,7 @@ impl RpcRuntime {
                     {
                         let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
                         m.follow_up_queue
-                            .push_back(QueuedPrompt { message, images });
+                            .push_back(QueuedPrompt::user(message, images));
                         if matches!(m.active_op, ActiveOp::Compacting { .. }) {
                             m.resume_queues_after_compact = true;
                         }
@@ -1317,6 +1573,12 @@ impl RpcRuntime {
         }
 
         // EOF / stdin ditutup: batalkan operasi aktif dan tunggu seluruh task selesai dengan rapi.
+        {
+            *self
+                .resume_tx_slot
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+        }
         resume_rx.close();
         {
             let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
