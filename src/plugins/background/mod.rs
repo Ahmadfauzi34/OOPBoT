@@ -173,7 +173,6 @@ impl Tool for BackgroundTool {
                 },
                 "env": {
                     "type": "object",
-                    "additionalProperties": { "type": "string" },
                     "description": "Variabel environment tambahan (pasangan key-value string) untuk aksi start."
                 },
                 "id": {
