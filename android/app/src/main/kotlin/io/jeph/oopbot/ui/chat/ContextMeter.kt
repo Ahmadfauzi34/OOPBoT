@@ -123,11 +123,13 @@ internal fun Modifier.closeContextDetailsOnPress(controller: ChatController): Mo
 private fun ContextRing(percent: Double?) {
   val colors = oopbotColors
   val progress = percent?.let { ringColor(it, colors) }
+  val strokePx = with(LocalDensity.current) { RING_STROKE.toPx() }
+  val trackStroke = remember(strokePx) { Stroke(strokePx) }
+  val arcStroke = remember(strokePx) { Stroke(strokePx, cap = StrokeCap.Round) }
   Canvas(modifier = Modifier.size(RING_SIZE)) {
-    val stroke = RING_STROKE.toPx()
-    val inset = stroke / 2
-    val arcSize = Size(size.width - stroke, size.height - stroke)
-    drawCircle(colors.surface3, radius = arcSize.minDimension / 2, style = Stroke(stroke))
+    val inset = strokePx / 2
+    val arcSize = Size(size.width - strokePx, size.height - strokePx)
+    drawCircle(colors.surface3, radius = arcSize.minDimension / 2, style = trackStroke)
     val sweep = (percent ?: 0.0).coerceIn(0.0, 100.0).toFloat() * 360f / 100f
     if (progress != null && sweep > 0f) {
       drawArc(
@@ -137,7 +139,7 @@ private fun ContextRing(percent: Double?) {
         useCenter = false,
         topLeft = Offset(inset, inset),
         size = arcSize,
-        style = Stroke(stroke, cap = StrokeCap.Round),
+        style = arcStroke,
       )
     }
   }

@@ -158,7 +158,7 @@ private class Pot(icon: ImageVector) {
   private fun DrawScope.drawWisp(wisp: PathMeasure, position: Float, tint: Color) {
     val start = (2 * position - 1).coerceAtLeast(0f) * wisp.length
     val end = (2 * position).coerceAtMost(1f) * wisp.length
-    wispSegment.reset()
+    wispSegment.rewind()
     if (!wisp.getSegment(start, end, wispSegment, startWithMoveTo = true)) return
     val fade = (position / 0.2f).coerceIn(0f, 1f) * ((1 - position) / 0.3f).coerceIn(0f, 1f)
     val sway = STEAM_SWAY * sin(2 * PI.toFloat() * position)
