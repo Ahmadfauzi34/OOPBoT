@@ -188,17 +188,17 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
       .put("models", JSONArray(models.map(ModelConfig::toJson))),
   ).optBoolean("changed")
 
-  /** Runs `pi install [source]`, adding a Pi package that chats load when their Pi next starts. */
+  /** Installs an extension package that chats load when OOPBoT next starts. */
   suspend fun installPackage(source: String, onProgress: (String) -> Unit) {
     call("package_install", JSONObject().put("source", source), PACKAGE_INSTALL_TIMEOUT_MILLIS, progress(onProgress))
   }
 
-  /** Makes new Pi sessions start with this model while it stays available and in scope. */
+  /** Makes new OOPBoT sessions start with this model while it stays available and in scope. */
   suspend fun setDefaultModel(provider: String, modelId: String) {
     utilityCall("default_model", JSONObject().put("provider", provider).put("modelId", modelId))
   }
 
-  /** Makes new Pi sessions start with this thinking level, clamped to their model. */
+  /** Makes new OOPBoT sessions start with this thinking level, clamped to their model. */
   suspend fun setDefaultThinkingLevel(level: String) {
     utilityCall("default_model", JSONObject().put("thinkingLevel", level))
   }
@@ -223,12 +223,12 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     return Backups(data.optString("dir"), data.optJSONArray("backups").objects().map(BackupInfo::from))
   }
 
-  /** Backs up the configuration (Pi's config folder without sessions, caches and logs); returns the new backup. */
+  /** Backs up the configuration (OOPBoT's config folder without sessions, caches and logs); returns the new backup. */
   suspend fun createBackup(onProgress: (String) -> Unit): BackupInfo = BackupInfo.from(
     call("backup_create", JSONObject(), BACKUP_TIMEOUT_MILLIS, progress(onProgress)).getJSONObject("backup"),
   )
 
-  /** Replaces the configuration with backup [name]'s; sessions stay. Every chat's Pi must be stopping already. */
+  /** Replaces the configuration with backup [name]'s; sessions stay. Every chat's OOPBoT must be stopping already. */
   suspend fun restoreBackup(name: String, onProgress: (String) -> Unit) {
     call("backup_restore", JSONObject().put("name", name), BACKUP_TIMEOUT_MILLIS, progress(onProgress))
   }
@@ -237,7 +237,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     utilityCall("backup_delete", JSONObject().put("name", name))
   }
 
-  /** Runs `pi update --extensions`, which updates every package in Pi's settings that isn't pinned to a version. */
+  /** Updates every extension package in OOPBoT's settings that isn't pinned to a version. */
   suspend fun updateExtensions(onProgress: (String) -> Unit) {
     call("update_extensions", JSONObject(), EXTENSIONS_UPDATE_TIMEOUT_MILLIS, progress(onProgress))
   }
@@ -340,10 +340,10 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   suspend fun openGit(): HostChannel = openRequestHost("git", "oopbot_git_ready")
 
   /**
-   * Starts `pi --mode rpc` and returns its channel: Pi's RPC JSONL both ways, ended by a
-   * `oopbot_exit` line. A refusal (`oopbot_version`, `cwd_missing`) arrives instead as a
-   * `oopbot_result` line; see [HostRejected.from], which is `oopbot_version` when an extension [ensure] installed is out of
-   * date too. Pi loads the bundled extensions not in [disabledExtensions], which are
+   * Starts `oopbot --mode rpc` and returns its channel: OOPBoT's RPC JSONL both ways, ended by an
+   * `oopbot_exit` line. A refusal (`oopbot_version`, `cwd_missing`) arrives instead as an
+   * `oopbot_result` line; see [HostRejected.from], which is `oopbot_version` when an extension [ensure] installed
+   * is out of date too. OOPBoT loads the bundled extensions not in [disabledExtensions], which are
    * [io.jeph.oopbot.data.BundledExtension.id]s, and always the ones Settings has no switch for.
    */
   suspend fun openRpc(cwd: String, sessionPath: String?, disabledExtensions: Set<String>): HostChannel {

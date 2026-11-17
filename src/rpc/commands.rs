@@ -1383,7 +1383,7 @@ impl RpcRuntime {
     }
 
 
-    /// Tangani pesan event masuk dari Android UI atau ekstensi via Pipkin Channel
+    /// Tangani pesan event masuk dari Android UI atau ekstensi via OOPBoT Channel
     pub(super) fn handle_channel_message(&self, topic: &str, data: &Value) {
         match topic {
             "tool_approval" => {

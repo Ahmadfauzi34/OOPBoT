@@ -59,7 +59,7 @@ impl TaskStatus {
         }
     }
 
-    /// Aturan transisi status mengikuti state machine `pipkin-todo`:
+    /// Aturan transisi status mengikuti state machine `oopbot-todo`:
     /// - status yang sama selalu diizinkan (no-op bila field lain tidak berubah)
     /// - `pending` -> `in_progress | completed | deleted`
     /// - `in_progress` -> `pending | completed | deleted`
@@ -124,7 +124,7 @@ impl TodoState {
     }
 }
 
-/// Snapshot `details` yang disimpan pada `toolResult` dan entri sesi `pipkin-todo-state`.
+/// Snapshot `details` yang disimpan pada `toolResult` dan entri sesi `oopbot-todo-state`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TodoDetails {
     pub action: String,
@@ -1505,8 +1505,8 @@ fn try_parse_todo_state(val: &Value) -> Option<TodoState> {
 
 /// Replay `TodoState` dari rangkaian entri branch sesi aktif (`active_branch_entries`).
 ///
-/// Sesuai perilaku `pipkin-todo`:
-/// - Entri custom `customType: "pipkin-todo-state"` menjadi sumber utama terbaru.
+/// Sesuai perilaku `oopbot-todo`:
+/// - Entri custom `customType: "oopbot-todo-state"` menjadi sumber utama terbaru.
 /// - Jika belum ada, fallback ke `details` pada `toolResult` terakhir milik tool `"todo"`.
 pub fn replay_branch_entries(entries: &[Value]) -> TodoState {
     let mut from_entries: Option<TodoState> = None;

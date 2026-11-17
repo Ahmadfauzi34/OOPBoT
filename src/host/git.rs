@@ -90,7 +90,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
     out
 }
 
-/// Parser teks diff patch git terpadu (unified diff) menjadi format objek berkas Paseo / Pipkin
+/// Parser teks diff patch git terpadu (unified diff) menjadi format objek berkas Paseo / OOPBoT
 pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
     let mut files = Vec::new();
     let mut current_path = String::new();

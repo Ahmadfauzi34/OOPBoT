@@ -1,5 +1,5 @@
 //! Katalog Referensi Model & Provider (`ModelCatalog`) + Auto-Scanner & Capability Detector
-//! ala Pipkin (`catalogue.ts`, `model-list.ts`, `detect.ts`, `scope.ts`).
+//! OOPBoT (`catalogue.ts`, `model-list.ts`, `detect.ts`, `scope.ts`).
 //!
 //! Menjadikan Rust (`oopbot`) sebagai mesin referensi tunggal (single source of truth) untuk:
 //! 1. **Katalog Provider & Model Bawaan (`builtin_providers`)**: mencakup Google Gemini,

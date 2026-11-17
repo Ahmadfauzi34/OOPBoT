@@ -1,5 +1,5 @@
 //! Klien HTTP multi-protokol untuk Gemini API, OpenAI-compatible (OpenRouter, Z.ai, Kimi,
-//! Local Server `pipkin-local`), dan Anthropic Messages API dengan:
+//! Local Server `oopbot-local`), dan Anthropic Messages API dengan:
 //! - Function/Tool Calling lintas provider
 //! - Kontrol penuh parameter inferensi dari aplikasi Android (`GenerationOptions`:
 //!   `api`, `max_tokens`, `thinking_level`, `reasoning`, `thinking_level_map`, `session_id`)
@@ -47,7 +47,7 @@ pub struct GenerationOptions {
     pub reasoning: bool,
     /// Pemetaan level penalaran ke string effort provider (`thinkingLevelMap`).
     pub thinking_level_map: Option<BTreeMap<String, Option<String>>>,
-    /// ID sesi untuk header `x-session-affinity` (digunakan oleh `LocalModelServer` / `pipkin-local`).
+    /// ID sesi untuk header `x-session-affinity` (digunakan oleh `LocalModelServer` / `oopbot-local`).
     pub session_id: Option<String>,
 }
 

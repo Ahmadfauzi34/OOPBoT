@@ -35,7 +35,7 @@ internal data class RemoteHost(
   val port: Int?,
   val home: String?,
 ) {
-  /** The address with the port when it isn't SSH's own, as the machine menu shows it: `pi@192.168.1.40:2222`. */
+  /** The address with the port when it isn't SSH's own, as the machine menu shows it: `oopbot@192.168.1.40:2222`. */
   val displayAddress: String get() = remoteAddress(address, port.takeIf { auth != RemoteAuth.Config })
 
   /** `remote_host_save`'s `host`: without an [id] for a new host, and without a port for a `config` one. */

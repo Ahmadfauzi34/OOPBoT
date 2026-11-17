@@ -80,9 +80,9 @@ internal fun slashQuery(text: CharSequence, selection: TextRange): String? {
 }
 
 /**
- * Every menu row, built-ins first, then [pi] in Pi's order (extension commands, prompt templates,
- * skills). One row per name: a built-in hides a Pi command of the same name, as in Pi's terminal UI, and
- * among Pi's the first is the one Pi runs, since it tries extension commands before templates.
+ * Every menu row, built-ins first, then [pi] in the agent's order (extension commands, prompt templates,
+ * skills). One row per name: a built-in hides an agent command of the same name, as in the CLI, and
+ * among the agent's the first is the one OOPBoT runs, since it tries extension commands before templates.
  */
 internal fun menuCommands(pi: List<SlashCommand>): List<SlashCommand> =
   (BuiltinCommand.entries.map { SlashCommand(it.command, null, CommandSource.Builtin, it) } + pi).distinctBy { it.name }

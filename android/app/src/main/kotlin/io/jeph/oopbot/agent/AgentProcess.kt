@@ -77,13 +77,13 @@ internal sealed interface UiAnswer {
 }
 
 /**
- * One `pi --mode rpc` for one chat, reached through a `host.mjs` channel. Starts on construction;
- * [restart] reconnects in place (exit banner Restart, failure Retry), [close] ends it for good.
- * Pi stops when the channel closes. Command wrappers throw [RpcError].
+ * One `oopbot --mode rpc` for one chat, reached through an OOPBoT host channel. Starts on
+ * construction; [restart] reconnects in place (exit banner Restart, failure Retry), [close] ends it for good.
+ * OOPBoT stops when the channel closes. Command wrappers throw [RpcError].
  */
 @Suppress(
-  "LargeClass", // Single-owner Pi process lifecycle, RPC dispatch, and state machine live together by design.
-  "TooManyFunctions", // One typed wrapper per Pi RPC command, beside the connection they share.
+  "LargeClass", // Single-owner OOPBoT process lifecycle, RPC dispatch, and state machine live together by design.
+  "TooManyFunctions", // One typed wrapper per OOPBoT RPC command, beside the connection they share.
   "LongParameterList", // AppGraph wires each dependency in by hand, as the app has no DI container.
 )
 internal class AgentProcess(

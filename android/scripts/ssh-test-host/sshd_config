@@ -4,7 +4,7 @@ HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_rsa_key
 PermitRootLogin no
 PubkeyAuthentication yes
-# entrypoint.sh replaces this line with "yes" when the container runs with PIPKIN_PASSWORD_AUTH=1.
+# entrypoint.sh replaces this line with "yes" when the container runs with OOPBOT_PASSWORD_AUTH=1.
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 UsePAM no

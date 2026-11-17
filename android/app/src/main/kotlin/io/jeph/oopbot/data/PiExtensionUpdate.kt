@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** How the last update of Pi's extensions ended; [Failed.message] is null when the host gave no reason. */
+/** How the last update of OOPBoT's extensions ended; [Failed.message] is null when the host gave no reason. */
 internal sealed interface PiExtensionUpdateOutcome {
   data object Updated : PiExtensionUpdateOutcome
 
@@ -19,11 +19,11 @@ internal sealed interface PiExtensionUpdateOutcome {
 }
 
 /**
- * Updates the Pi packages the user installed, through Pi's `pi update --extensions`. The update runs in [scope], so
- * leaving the screen that started it neither cancels it nor loses its outcome; one runs at a time. Afterwards idle
- * chats reload so they load the new versions, and working chats load them when their agent next starts. They reload
- * after a failed update too, since Pi may have updated some packages before it stopped, and chats that couldn't start
- * during the update start then. Main thread only.
+ * Updates the extension packages the user installed. The update runs in [scope], so leaving the screen that started it
+ * neither cancels it nor loses its outcome; one runs at a time. Afterwards idle chats reload so they load the new
+ * versions, and working chats load them when their agent next starts. They reload after a failed update too, since the
+ * host may have updated some packages before it stopped, and chats that couldn't start during the update start then.
+ * Main thread only.
  */
 internal class PiExtensionUpdate(
   private val hostClient: HostClient,
@@ -38,7 +38,7 @@ internal class PiExtensionUpdate(
 
   val running: StateFlow<Boolean> = runningState.asStateFlow()
 
-  /** The latest line of Pi's output while [running]. */
+  /** The latest line of OOPBoT's output while [running]. */
   val progress: StateFlow<String?> = progressState.asStateFlow()
 
   /** How the last update ended, until [acknowledge]. */

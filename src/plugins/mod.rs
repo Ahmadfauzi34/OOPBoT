@@ -38,7 +38,7 @@ pub struct PluginContext {
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
-    /// ID pengenal unik plugin (misal: "pipkin-todo", "pipkin-web-access").
+    /// ID pengenal unik plugin (misal: "oopbot-todo", "oopbot-web-access").
     fn id(&self) -> &str;
 
     /// Alias ID alternatif untuk pencocokan fleksibel.
@@ -85,7 +85,7 @@ pub trait Plugin: Send + Sync {
         None
     }
 
-    /// Status channel real-time plugin untuk topik `pipkin_channel` (misal `"background": { "active": N }`).
+    /// Status channel real-time plugin untuk topik `oopbot_channel` (misal `"background": { "active": N }`).
     fn channel_status(&self) -> Option<(&'static str, Value)> {
         None
     }
@@ -119,7 +119,7 @@ impl PluginRegistry {
         }
     }
 
-    /// Memuat plugin bawaan yang kompatibel dengan ekstensi Android Pipkin & open-source tools.
+    /// Memuat plugin bawaan yang kompatibel dengan ekstensi Android OOPBoT & open-source tools.
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
         registry.register(Arc::new(TodoPlugin::new()));
@@ -135,7 +135,7 @@ impl PluginRegistry {
     }
 
     /// Mengaktifkan plugin berdasarkan nama ID, alias, atau path ekstensi.
-    /// Contoh: "pipkin-todo", "todo", atau "/path/to/extensions/pipkin-todo/index.js".
+    /// Contoh: "oopbot-todo", "todo", atau "/path/to/extensions/oopbot-todo/index.js".
     pub fn activate(&mut self, identifier: &str) -> bool {
         let clean_id = extract_plugin_id(identifier);
 
@@ -229,7 +229,7 @@ impl PluginRegistry {
 }
 
 /// Mengekstrak nama plugin dari path file atau identifier.
-/// Misal: `/home/.../extensions/pipkin-todo/index.js` -> `pipkin-todo`.
+/// Misal: `/home/.../extensions/oopbot-todo/index.js` -> `oopbot-todo`.
 pub fn extract_plugin_id(identifier: &str) -> String {
     let p = Path::new(identifier);
     if let Some(file_name) = p.file_name().and_then(|s| s.to_str()) {

@@ -146,7 +146,7 @@ internal data class AuthStatus(
   val settingsError: HostText? = null,
   /** `provider/id` of every model `enabledModels` shows; null when every model shows. */
   val scope: Set<String>? = null,
-  /** Names of the npm packages Pi's global settings install, such as `pi install npm:…` adds. */
+  /** Names of the npm packages in OOPBoT's global settings, if any. */
   val npmPackages: Set<String> = emptySet(),
 ) {
   val anyConfigured: Boolean get() = custom.isNotEmpty() || builtin.any { it.configured }

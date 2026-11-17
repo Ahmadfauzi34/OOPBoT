@@ -101,9 +101,9 @@ internal class AccountRepository(
     if (localModelsReload.after { hostClient.localModelsSync(baseUrl, apiKey, models) }) changed()
   }
 
-  /** Installs a Pi package with `pi install`; idle chats restart to load it. Cancelling the caller aborts it. */
+  /** Installs an extension package; idle chats restart to load it. Cancelling the caller aborts it. */
   suspend fun installPackage(source: String, onProgress: (String) -> Unit) {
-    keepAlive.acquire("Pi install").use { hostClient.installPackage(source, onProgress) }
+    keepAlive.acquire("OOPBoT install").use { hostClient.installPackage(source, onProgress) }
     changed()
   }
 

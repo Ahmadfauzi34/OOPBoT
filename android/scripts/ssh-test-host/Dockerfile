@@ -1,4 +1,4 @@
-# An SSH server for testing Pipkin's remote hosts from an emulator: scripts/ssh-test-host.sh builds and runs it.
+# An SSH server for testing OOPBoT's remote hosts from an emulator: scripts/ssh-test-host.sh builds and runs it.
 FROM debian:trixie-slim
 
 RUN apt-get update \
@@ -6,9 +6,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && rm -f /etc/ssh/ssh_host_* \
   && mkdir -p /run/sshd \
-  && useradd --create-home --shell /bin/bash pipkin \
-  && echo 'pipkin:pipkin' | chpasswd \
-  && install -d -m 700 -o pipkin -g pipkin /home/pipkin/.ssh
+  && useradd --create-home --shell /bin/bash oopbot \
+  && echo 'oopbot:oopbot' | chpasswd \
+  && install -d -m 700 -o oopbot -g oopbot /home/oopbot/.ssh
 
 COPY sshd_config /etc/ssh/sshd_config
 COPY entrypoint.sh /entrypoint.sh

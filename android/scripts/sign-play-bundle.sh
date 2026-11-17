@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signs an unsigned release app bundle with Pipkin's Play upload key and checks that the result carries the upload
+# Signs an unsigned release app bundle with OOPBoT's Play upload key and checks that the result carries the upload
 # certificate. Google Play checks the upload signature, then re-signs the app with the release key for users.
 # .github/workflows/release.yml runs it in a job that holds the upload key and nothing else.
 #

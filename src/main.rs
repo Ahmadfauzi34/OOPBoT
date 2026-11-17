@@ -35,7 +35,7 @@ OPSI:
     -m, --model <NAMA>     Model AI (default sesuai provider aktif atau $OOPBOT_MODEL)
     -p, --prompt <TEKS>    Jalankan 1 prompt non-interaktif lalu keluar
         --mode <MODE>      Mode mesin:
-                           - `rpc`         : daemon JSONL untuk aplikasi Android Pipkin
+                           - `rpc`         : daemon JSONL untuk aplikasi Android OOPBoT
                            - `catalog`     : cetak katalog referensi provider & model JSON
                            - `scan-models` : scan daftar model live dari provider & cetak JSON
         --session <PATH>   Path file sesi JSONL (untuk `--mode rpc`)

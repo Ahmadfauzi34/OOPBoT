@@ -1,8 +1,7 @@
-//! Mode RPC (`oopbot --mode rpc`) yang kompatibel 100% dengan protokol JSONL
-//! aplikasi Android Pipkin (`AgentProcess.kt` & `ChatTimeline.kt`).
+//! Mode RPC (`oopbot --mode rpc`) yang berkomunikasi lewat protokol JSONL
+//! dengan aplikasi Android OOPBoT (`AgentProcess.kt` & `ChatTimeline.kt`).
 //!
-//! Menggantikan `@earendil-works/pi-coding-agent` (`pi --mode rpc`) di Termux
-//! dengan binary native Rust `oopbot`.
+//! Menggunakan binary native Rust `oopbot` sebagai engine agent di Termux.
 
 
 mod approver;
@@ -219,7 +218,7 @@ impl RpcServer {
         Ok(Self { runtime })
     }
 
-    /// Kirim pesan dua arah pada Pipkin/OOPBoT channel: `{"type": "pipkin_channel", "topic": ..., "data": ...}`
+    /// Kirim pesan dua arah pada OOPBoT channel: `{"type": "oopbot_channel", "topic": ..., "data": ...}`
     pub fn send_channel(topic: &str, data: Value) {
         RpcRuntime::send_channel(topic, data);
     }

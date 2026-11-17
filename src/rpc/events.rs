@@ -125,7 +125,7 @@ struct RpcEventSinkInternal {
 type EventEmitter = Box<dyn Fn(&Value) + Send + Sync>;
 
 /// Sink event yang menerjemahkan deretan [`AgentEvent`] dari loop agen menjadi
-/// baris-baris JSONL protokol Pipkin (`agent_start`, `message_start`, `message_update`,
+/// baris-baris JSONL protokol OOPBoT (`agent_start`, `message_start`, `message_update`,
 /// `tool_execution_start/end`, `toolResult`, `turn_end`, dll.).
 pub struct RpcEventSink {
     ui_state: Arc<Mutex<RpcUiState>>,

@@ -206,7 +206,7 @@ private fun ExtensionsSection(graph: AppGraph, snackbar: SnackbarStackState) {
 }
 
 /**
- * Runs `pi update --extensions` once confirmed, showing Pi's latest output while it runs and how it ended in a
+ * Runs extension updates once confirmed, showing OOPBoT's latest output while it runs and how it ended in a
  * snackbar, including when it ended while settings were closed.
  */
 @Composable

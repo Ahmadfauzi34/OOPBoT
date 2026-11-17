@@ -85,8 +85,8 @@ sealed interface TimelineItem {
   data class Error(override val key: String, val cause: ErrorCause) : TimelineItem
 
   /**
-   * A message an extension added with `pi.sendMessage` and `display` set: Pi sends its [markdown] and [images] to the
-   * model as user content, and shows them apart from the conversation under the extension's [customType].
+   * A message an extension added with `sendMessage` and `display` set: OOPBoT sends its [markdown] and [images] to
+   * the model as user content, and shows them apart from the conversation under the extension's [customType].
    */
   data class ExtensionMessage(
     override val key: String,

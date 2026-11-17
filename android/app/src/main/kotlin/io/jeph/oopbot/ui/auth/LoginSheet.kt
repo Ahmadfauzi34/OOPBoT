@@ -61,9 +61,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Sign-in to a provider Pi ships: OAuth for a subscription, or Pi asking for the API key. The login
- * runs while the sheet is shown; dismissing it cancels the login, which closes the host channel and
- * aborts Pi's flow. A Claude sign-in then offers pi-anthropic-auth unless Pi already installs it.
+ * Sign-in to a provider OOPBoT ships: OAuth for a subscription, or asking for the API key. The login runs while
+ * the sheet is shown; dismissing it cancels the login, which closes the host channel and aborts the flow. A Claude
+ * sign-in then offers pi-anthropic-auth unless it is already installed.
  */
 @Composable
 internal fun LoginSheet(providerId: String, onDismiss: () -> Unit) {

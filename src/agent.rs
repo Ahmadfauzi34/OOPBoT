@@ -1,5 +1,5 @@
 //! Agent harness: loop "model → tool call → hasil tool → model" dengan:
-//! - Multi-tab (`WorkspaceTabs`) & pemilih model (`ModelCatalog`) ala Pipkin
+//! - Multi-tab (`WorkspaceTabs`) & pemilih model (`ModelCatalog`) ala OOPBoT
 //! - Event stream terstruktur (`EventSink` / `AgentEvent`) yang otomatis dilipat
 //!   ke `TimelineEntry::StepsFold`
 //! - Kebijakan konfirmasi (`Approver`) yang bisa diganti (CLI / Auto / UI Card)
