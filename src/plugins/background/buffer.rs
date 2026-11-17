@@ -102,7 +102,7 @@ impl RingOutputBuffer {
         }
 
         let tail_limit = q.tail_bytes.min(MAX_OUTPUT_BUFFER_BYTES);
-        let (rel_start, cursor_reset) = match q.since_byte {
+        let (rel_start, cursor_reset, since_skipped_bytes) = match q.since_byte {
             Some(since) if since >= self.total_bytes => {
                 return OutputSlice {
                     text: String::new(),
@@ -114,21 +114,21 @@ impl RingOutputBuffer {
             }
             Some(since) if since < window_start => {
                 let len = self.bytes.len();
-                (len.saturating_sub(tail_limit), true)
+                (len.saturating_sub(tail_limit), true, 0)
             }
             Some(since) => {
                 let offset = (since - window_start) as usize;
                 let avail = self.bytes.len().saturating_sub(offset);
-                let start = if avail > tail_limit {
-                    self.bytes.len() - tail_limit
+                if avail > tail_limit {
+                    let start = self.bytes.len() - tail_limit;
+                    (start, false, start.saturating_sub(offset))
                 } else {
-                    offset
-                };
-                (start, false)
+                    (offset, false, 0)
+                }
             }
             None => {
                 let len = self.bytes.len();
-                (len.saturating_sub(tail_limit), false)
+                (len.saturating_sub(tail_limit), false, 0)
             }
         };
 
@@ -168,6 +168,12 @@ impl RingOutputBuffer {
             format!(
                 "...[cursor since_byte telah terlewati ring buffer ({} byte awal terlewat); menampilkan {} byte terbaru]\n{}",
                 omitted, displayed_bytes, rendered
+            )
+        } else if since_skipped_bytes > 0 {
+            let skipped = since_skipped_bytes.saturating_add(utf8_start);
+            format!(
+                "...[{} byte baru dilewati oleh batas tail_bytes; menampilkan {} byte terbaru]\n{}",
+                skipped, displayed_bytes, rendered
             )
         } else {
             rendered

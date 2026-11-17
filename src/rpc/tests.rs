@@ -3613,3 +3613,173 @@ async fn background_completion_queues_followup_when_streaming() {
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
     mock_handle.abort();
 }
+
+#[test]
+fn audit_compaction_cut_point_skips_missing_id_and_preserves_assistant_under_budget() {
+    use crate::rpc::compaction::select_compaction_cut_point;
+
+    // 2b: Under-budget (< 20k tokens) [User, Assistant] harus mempertahankan Assistant terakhir
+    let short_entries = vec![
+        json!({ "type": "message", "id": "u1", "message": { "role": "user", "content": "hi" } }),
+        json!({ "type": "message", "id": "a1", "message": { "role": "assistant", "content": [{ "type": "text", "text": "hello" }] } }),
+    ];
+    let cut_short = select_compaction_cut_point(&short_entries).unwrap();
+    assert_eq!(cut_short.first_kept_entry_id.as_deref(), Some("a1"));
+    assert_eq!(cut_short.to_summarize.len(), 1);
+
+    // 2c: Entry tanpa id non-empty tidak boleh dipilih sebagai cut-point agar kept suffix tidak hilang
+    let missing_id_entries = vec![
+        json!({ "type": "message", "id": "u1", "message": { "role": "user", "content": "old".repeat(30_000) } }),
+        json!({ "type": "message", "message": { "role": "assistant", "content": [{ "type": "text", "text": "no-id-entry" }] } }),
+        json!({ "type": "message", "id": "   ", "message": { "role": "user", "content": "blank-id-entry" } }),
+    ];
+    let cut_missing = select_compaction_cut_point(&missing_id_entries).unwrap();
+    assert_eq!(cut_missing.first_kept_entry_id, None);
+    assert_eq!(
+        cut_missing.to_summarize.len(),
+        missing_id_entries.len(),
+        "retain-none harus merangkum seluruh active_entries ketika tidak ada cut-point ber-id valid"
+    );
+
+    // Entry ber-id valid berikutnya tetap bisa dipilih saat entry sebelumnya tanpa id
+    let partial_id_entries = vec![
+        json!({ "type": "message", "id": "u1", "message": { "role": "user", "content": "first" } }),
+        json!({ "type": "message", "message": { "role": "user", "content": "legacy without id" } }),
+        json!({ "type": "message", "id": "a2", "message": { "role": "assistant", "content": [{ "type": "text", "text": "kept" }] } }),
+    ];
+    let cut_partial = select_compaction_cut_point(&partial_id_entries).unwrap();
+    assert_eq!(cut_partial.first_kept_entry_id.as_deref(), Some("a2"));
+    assert_eq!(cut_partial.to_summarize.len(), 2);
+}
+
+#[tokio::test]
+async fn audit_steer_command_during_compact_resumes_after_compact() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("audit_steer_compact");
+
+    let compact_gate = Arc::new(tokio::sync::Notify::new());
+    let compact_gate_srv = Arc::clone(&compact_gate);
+    let (compact_entered_tx, compact_entered_rx) = tokio::sync::oneshot::channel::<()>();
+    let compact_entered_tx = Arc::new(Mutex::new(Some(compact_entered_tx)));
+
+    let (base_url, reqs, mock_handle) = spawn_mock_llm_server(move |idx, _req| {
+        let compact_gate_srv = Arc::clone(&compact_gate_srv);
+        let compact_entered_tx = Arc::clone(&compact_entered_tx);
+        async move {
+            if idx == 0 {
+                if let Some(tx) = compact_entered_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+                compact_gate_srv.notified().await;
+                (200, gemini_text_resp("## Goal\nRingkasan kompak", 120, 30))
+            } else {
+                (200, gemini_text_resp("Perintah steer dieksekusi pasca compact", 60, 15))
+            }
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-steer-cmp",
+    );
+
+    let session_file = tmp.path().join("steer_cmp.jsonl");
+    let lines = [
+        json!({ "type": "session", "version": 3, "id": "s-steer-cmp", "timestamp": "2026-11-12T00:00:00Z", "cwd": tmp.path() }).to_string(),
+        json!({ "type": "message", "id": "e0", "parentId": null, "timestamp": "2026-11-12T00:00:01Z",
+            "message": { "role": "user", "content": "turn 1", "timestamp": 1 } }).to_string(),
+        json!({ "type": "message", "id": "e1", "parentId": "e0", "timestamp": "2026-11-12T00:00:02Z",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "ans 1" }], "timestamp": 2 } }).to_string(),
+    ];
+    std::fs::write(&session_file, format!("{}\n", lines.join("\n"))).unwrap();
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        Some(session_file.to_string_lossy().to_string()),
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(&cmd_tx, json!({ "id": "cmp1", "type": "compact" }));
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "compaction_start"
+    })
+    .await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), compact_entered_rx)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Kirim command `"steer"` (bukan `"prompt"`) selagi ActiveOp::Compacting
+    send_cmd(&cmd_tx, json!({ "id": "st1", "type": "steer", "message": "lanjutkan steer pasca compact" }));
+    let qu = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "queue_update" && v["steering"] == json!(["lanjutkan steer pasca compact"])
+    })
+    .await;
+    assert_eq!(qu["steering"], json!(["lanjutkan steer pasca compact"]));
+    let st_resp = recv_response(&mut out_rx, "st1", std::time::Duration::from_millis(500)).await;
+    assert_eq!(st_resp["data"]["disposition"], "queued");
+
+    // Lepas compaction -> steer harus otomatis dijalankan tanpa prompt baru
+    compact_gate.notify_one();
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "compaction_end" && v["aborted"] == false
+    })
+    .await;
+    let settled = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+    assert_eq!(settled["aborted"], false);
+
+    let captured = reqs.lock().unwrap().clone();
+    assert!(
+        captured.iter().any(|r| r.body.to_string().contains("lanjutkan steer pasca compact")),
+        "command steer selama compact harus dieksekusi otomatis setelah compact selesai"
+    );
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+}
+
+#[test]
+fn audit_publish_completed_seq_is_monotonic() {
+    let tmp = TempConfigGuard::new("audit_seq_monotonic");
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let rx = server.runtime.completed_seq_tx.subscribe();
+    server.runtime.publish_completed_seq(2);
+    assert_eq!(*rx.borrow(), 2);
+
+    // Out-of-order late publication dari seq lebih kecil tidak boleh menurunkan nilai watch
+    server.runtime.publish_completed_seq(1);
+    assert_eq!(*rx.borrow(), 2);
+
+    server.runtime.publish_completed_seq(3);
+    assert_eq!(*rx.borrow(), 3);
+}

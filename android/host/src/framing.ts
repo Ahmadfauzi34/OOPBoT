@@ -41,6 +41,12 @@ export class LineSplitter {
 
   stop(): void {
     this.stopped = true;
+    if (this.parts.length > 0) {
+      const pending = this.parts.length === 1 ? this.parts[0]! : Buffer.concat(this.parts, this.size);
+      this.rest = this.rest.length > 0 ? Buffer.concat([pending, this.rest]) : pending;
+      this.parts = [];
+      this.size = 0;
+    }
   }
 
   push(chunk: Buffer): void {

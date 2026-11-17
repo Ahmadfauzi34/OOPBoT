@@ -50,4 +50,13 @@ describe("LineSplitter", () => {
     expect(lines).toEqual(['{"first":1}']);
     expect(splitter.leftover.toString()).toBe('{"raw":2}\n');
   });
+
+  it("flushes buffered partial line bytes into leftover when stop() is called mid-line", () => {
+    const { lines, splitter } = collect();
+    splitter.push(Buffer.from('{"partial":'));
+    splitter.stop();
+    splitter.push(Buffer.from("42}\n"));
+    expect(lines).toEqual([]);
+    expect(splitter.leftover.toString()).toBe('{"partial":42}\n');
+  });
 });

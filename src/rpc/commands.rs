@@ -208,7 +208,7 @@ impl RpcRuntime {
                     if matches!(m.active_op, ActiveOp::Streaming { .. }) && m.current_op_seq == seq
                     {
                         m.active_op = ActiveOp::Idle;
-                        let _ = self.completed_seq_tx.send(seq);
+                        self.publish_completed_seq(seq);
                     }
                 }
             }
@@ -1112,13 +1112,15 @@ impl RpcRuntime {
 
         {
             let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
-            m.active_op = ActiveOp::Idle;
-            m.retry_cancel_tx = None;
+            if m.current_op_seq == op_seq {
+                m.active_op = ActiveOp::Idle;
+                m.retry_cancel_tx = None;
+            }
         }
         rt.defer_settled.store(false, Ordering::SeqCst);
         Self::send_line(&json!({ "type": "agent_settled", "aborted": final_aborted }));
         finish_guard.armed = false;
-        let _ = rt.completed_seq_tx.send(op_seq);
+        rt.publish_completed_seq(op_seq);
     }
 
 

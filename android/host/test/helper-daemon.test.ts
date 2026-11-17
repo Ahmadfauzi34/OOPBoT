@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
@@ -362,10 +363,20 @@ describe("helper daemon", () => {
     const alive = (): boolean => {
       try {
         process.kill(Number(pid), 0);
-        return true;
       } catch {
         return false;
       }
+      if (existsSync("/proc/self")) {
+        try {
+          const statLine = readFileSync(`/proc/${pid}/stat`, "utf8");
+          const rparen = statLine.lastIndexOf(")");
+          const state = rparen >= 0 ? statLine.slice(rparen + 2, rparen + 3) : "";
+          return state !== "Z" && state !== "X";
+        } catch {
+          return false;
+        }
+      }
+      return true;
     };
     try {
       wrapper.kill("SIGKILL");

@@ -298,7 +298,7 @@ impl RpcRuntime {
             Err(err_msg) => Self::send_error(&cmd_id, "compact", &err_msg),
         }
         finish_guard.armed = false;
-        let _ = rt.completed_seq_tx.send(op_seq);
+        rt.publish_completed_seq(op_seq);
 
         if let Some((first, next_cancel_rx, seq, rs, rf)) = resumed {
             Self::send_line(&json!({
@@ -311,7 +311,7 @@ impl RpcRuntime {
                 if matches!(m.active_op, ActiveOp::Streaming { .. }) && m.current_op_seq == seq {
                     m.active_op = ActiveOp::Idle;
                 }
-                let _ = rt.completed_seq_tx.send(seq);
+                rt.publish_completed_seq(seq);
             }
         }
     }
@@ -364,7 +364,18 @@ pub(super) fn estimate_entry_tokens(entry: &Value) -> u64 {
     }
 }
 
+fn entry_non_empty_id(entry: &Value) -> Option<String> {
+    entry["id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 pub(super) fn is_valid_compaction_cut_entry(entry: &Value) -> bool {
+    if entry_non_empty_id(entry).is_none() {
+        return false;
+    }
     match entry["type"].as_str().unwrap_or_default() {
         "message" => {
             let role = entry["message"]["role"].as_str().unwrap_or_default();
@@ -409,28 +420,36 @@ pub(super) fn select_compaction_cut_point(active_entries: &[Value]) -> Option<Co
             }
         }
         if let Some(cut_idx) = chosen {
-            let kept_id = active_entries[cut_idx]["id"].as_str().map(str::to_string);
-            return Some(CompactionCut {
-                to_summarize: active_entries[..cut_idx].to_vec(),
-                first_kept_entry_id: kept_id,
-            });
+            if let Some(kept_id) = entry_non_empty_id(&active_entries[cut_idx]) {
+                return Some(CompactionCut {
+                    to_summarize: active_entries[..cut_idx].to_vec(),
+                    first_kept_entry_id: Some(kept_id),
+                });
+            }
         }
     }
 
     let latest_user_cut = (1..active_entries.len()).rev().find(|&idx| {
         let e = &active_entries[idx];
-        e["type"].as_str() == Some("message")
+        entry_non_empty_id(e).is_some()
+            && e["type"].as_str() == Some("message")
             && e["message"]["role"].as_str() == Some("user")
     });
-    if let Some(cut_idx) = latest_user_cut {
-        let kept_id = active_entries[cut_idx]["id"].as_str().map(str::to_string);
-        return Some(CompactionCut {
-            to_summarize: active_entries[..cut_idx].to_vec(),
-            first_kept_entry_id: kept_id,
-        });
+    let under_budget_cut = latest_user_cut.or_else(|| {
+        (1..active_entries.len())
+            .rev()
+            .find(|&idx| is_valid_compaction_cut_entry(&active_entries[idx]))
+    });
+    if let Some(cut_idx) = under_budget_cut {
+        if let Some(kept_id) = entry_non_empty_id(&active_entries[cut_idx]) {
+            return Some(CompactionCut {
+                to_summarize: active_entries[..cut_idx].to_vec(),
+                first_kept_entry_id: Some(kept_id),
+            });
+        }
     }
 
-    // Retain-none fallback ketika sesi hanya memiliki satu giliran awal
+    // Retain-none fallback ketika sesi tidak punya kandidat titik potong valid
     Some(CompactionCut {
         to_summarize: active_entries.to_vec(),
         first_kept_entry_id: None,

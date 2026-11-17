@@ -17,9 +17,8 @@ struct PendingApprovalGuard {
 impl Drop for PendingApprovalGuard {
     fn drop(&mut self) {
         if self.active {
-            if let Ok(mut map) = self.pending.lock() {
-                map.remove(&self.req_id);
-            }
+            let mut map = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            map.remove(&self.req_id);
         }
     }
 }
@@ -75,7 +74,7 @@ impl Approver for RpcApprover {
             active: true,
         };
 
-        let timeout_ms = self.timeout.as_millis() as u64;
+        let timeout_ms = u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX);
         let event = json!({
             "type": "extension_ui_request",
             "id": req_id,
@@ -98,6 +97,36 @@ impl Approver for RpcApprover {
             }
             Ok(Err(_)) | Err(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_approval_guard_cleans_up_when_mutex_poisoned() {
+        let pending: PendingApprovals = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, _rx) = tokio::sync::oneshot::channel::<bool>();
+        pending.lock().unwrap().insert("appr-poison".into(), tx);
+
+        let p_clone = Arc::clone(&pending);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = p_clone.lock().unwrap();
+            panic!("poison test mutex");
+        });
+        assert!(pending.lock().is_err());
+
+        {
+            let _guard = PendingApprovalGuard {
+                pending: Arc::clone(&pending),
+                req_id: "appr-poison".into(),
+                active: true,
+            };
+        }
+
+        let map = pending.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(!map.contains_key("appr-poison"));
     }
 }
 
