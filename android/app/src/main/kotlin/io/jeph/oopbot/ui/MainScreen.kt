@@ -156,8 +156,7 @@ private class PanePanels(
   fun rememberControls(pane: Pane, actions: ShellActions, closesSplit: Boolean, onOpenTabs: () -> Unit) =
     remember(pane, this, actions, closesSplit) { controls(pane, actions, closesSplit, onOpenTabs) }
 
-  fun isCovered(pane: Pane): Boolean =
-    get(pane).let { it.targetValue != Panel.Chat || it.currentValue != Panel.Chat }
+  fun isCovered(pane: Pane): Boolean = get(pane).let { it.targetValue != Panel.Chat || it.currentValue != Panel.Chat }
 
   fun onShownInSplit(pane: Pane, splitAvailable: Boolean): (() -> Unit)? =
     { show(Pane.Secondary, Panel.Chat) }.takeIf { pane == Pane.Primary && splitAvailable }

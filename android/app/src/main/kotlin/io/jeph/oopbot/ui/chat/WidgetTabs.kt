@@ -371,37 +371,37 @@ private val START_FADE_COLORS = listOf(Color.Transparent, Color.Black)
 private val END_FADE_COLORS = listOf(Color.Black, Color.Transparent)
 
 private fun Modifier.fadeScrolledEdges(state: ScrollableState, vertical: Boolean): Modifier = graphicsLayer {
-    compositingStrategy = if (state.canScrollBackward || state.canScrollForward) {
-      CompositingStrategy.Offscreen
-    } else {
-      CompositingStrategy.Auto
+  compositingStrategy = if (state.canScrollBackward || state.canScrollForward) {
+    CompositingStrategy.Offscreen
+  } else {
+    CompositingStrategy.Auto
+  }
+}.drawWithCache {
+  val length = if (vertical) size.height else size.width
+  val fade = SCROLL_FADE.toPx().coerceAtMost(length / 2)
+  val endStart = length - fade
+  val edgeSize = if (vertical) Size(size.width, fade) else Size(fade, size.height)
+  val endTopLeft = if (vertical) Offset(0f, endStart) else Offset(endStart, 0f)
+  val startBrush = if (vertical) {
+    Brush.verticalGradient(START_FADE_COLORS, startY = 0f, endY = fade)
+  } else {
+    Brush.horizontalGradient(START_FADE_COLORS, startX = 0f, endX = fade)
+  }
+  val endBrush = if (vertical) {
+    Brush.verticalGradient(END_FADE_COLORS, startY = endStart, endY = length)
+  } else {
+    Brush.horizontalGradient(END_FADE_COLORS, startX = endStart, endX = length)
+  }
+  onDrawWithContent {
+    drawContent()
+    if (state.canScrollBackward) {
+      drawRect(brush = startBrush, topLeft = Offset.Zero, size = edgeSize, blendMode = BlendMode.DstIn)
     }
-  }.drawWithCache {
-    val length = if (vertical) size.height else size.width
-    val fade = SCROLL_FADE.toPx().coerceAtMost(length / 2)
-    val endStart = length - fade
-    val edgeSize = if (vertical) Size(size.width, fade) else Size(fade, size.height)
-    val endTopLeft = if (vertical) Offset(0f, endStart) else Offset(endStart, 0f)
-    val startBrush = if (vertical) {
-      Brush.verticalGradient(START_FADE_COLORS, startY = 0f, endY = fade)
-    } else {
-      Brush.horizontalGradient(START_FADE_COLORS, startX = 0f, endX = fade)
-    }
-    val endBrush = if (vertical) {
-      Brush.verticalGradient(END_FADE_COLORS, startY = endStart, endY = length)
-    } else {
-      Brush.horizontalGradient(END_FADE_COLORS, startX = endStart, endX = length)
-    }
-    onDrawWithContent {
-      drawContent()
-      if (state.canScrollBackward) {
-        drawRect(brush = startBrush, topLeft = Offset.Zero, size = edgeSize, blendMode = BlendMode.DstIn)
-      }
-      if (state.canScrollForward) {
-        drawRect(brush = endBrush, topLeft = endTopLeft, size = edgeSize, blendMode = BlendMode.DstIn)
-      }
+    if (state.canScrollForward) {
+      drawRect(brush = endBrush, topLeft = endTopLeft, size = edgeSize, blendMode = BlendMode.DstIn)
     }
   }
+}
 
 /**
  * The open tab's widget inside the composer: above the text field for a widget above the editor, under the toolbar for
