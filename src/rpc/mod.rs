@@ -211,7 +211,7 @@ impl Drop for CoordinatorFinishGuard {
                 }
             }
             self.rt.defer_settled.store(false, Ordering::SeqCst);
-            let _ = self.rt.completed_seq_tx.send(self.op_seq);
+            self.rt.publish_completed_seq(self.op_seq);
         }
     }
 }
@@ -639,6 +639,18 @@ impl RpcRuntime {
             }
             Err(_) => Ok(UiDialogAnswer::TimedOut),
         }
+    }
+
+    /// Publikasikan `op_seq` yang selesai secara monoton agar waiter `abort` tidak melewatkan sequence akibat interleaving.
+    pub(super) fn publish_completed_seq(&self, seq: u64) {
+        self.completed_seq_tx.send_if_modified(|cur| {
+            if seq > *cur {
+                *cur = seq;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     /// Akses thread-safe ke map approval yang sedang menunggu konfirmasi UI.
@@ -1540,11 +1552,12 @@ impl RpcRuntime {
                     let message = cmd["message"].as_str().unwrap_or_default().to_string();
                     let images = extract_prompt_images(&cmd["images"]);
                     {
-                        self.mutable
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .steering_queue
+                        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+                        m.steering_queue
                             .push_back(QueuedPrompt::user(message, images));
+                        if matches!(m.active_op, ActiveOp::Compacting { .. }) {
+                            m.resume_queues_after_compact = true;
+                        }
                     }
                     self.emit_queue_update();
                     Self::send_response(&id, "steer", json!({ "disposition": "queued" }));

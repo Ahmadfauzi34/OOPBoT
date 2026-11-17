@@ -586,4 +586,25 @@ async fn completion_notifier_fires_for_autonomous_tasks_and_respects_suppression
     assert!(events.lock().unwrap().is_empty());
 }
 
+#[test]
+fn incremental_since_byte_truncated_by_tail_bytes_emits_skip_banner() {
+    let mut buf = RingOutputBuffer::default();
+    let payload = vec![b'A'; 20_480]; // 20 KiB (< 64 KiB cap, > 10_000 tail_bytes)
+    buf.push_chunk(&payload);
 
+    let slice = buf.query(OutputQuery {
+        since_byte: Some(0),
+        tail_bytes: 10_000,
+        tail_lines: None,
+        filter: None,
+    });
+    assert!(!slice.cursor_reset);
+    assert!(slice.truncated);
+    assert_eq!(slice.next_byte, 20_480);
+    assert!(
+        slice.text.contains("10480 byte baru dilewati oleh batas tail_bytes; menampilkan 10000 byte terbaru"),
+        "unexpected text: {}",
+        &slice.text[..slice.text.len().min(200)]
+    );
+    assert!(slice.text.ends_with(&"A".repeat(10_000)));
+}
