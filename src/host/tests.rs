@@ -813,22 +813,22 @@ fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
 }
 
 #[tokio::test]
-async fn test_pkg_version_058_rejects_057_rpc_and_upgrades_057_binary() {
+async fn test_pkg_version_059_rejects_058_rpc_and_upgrades_058_binary() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(pkg_ver, "0.5.8");
+    assert_eq!(pkg_ver, "0.5.9");
 
-    let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.7").unwrap();
+    let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.8").unwrap();
     assert_eq!(refusal["ok"], false);
     assert_eq!(refusal["code"], "oopbot_version");
 
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temp_dir = std::env::temp_dir().join(format!("oopbot_ensure_058_{}_{}", epoch_ms(), seq));
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_ensure_059_{}_{}", epoch_ms(), seq));
     let primary = temp_dir.join("usr/bin/oopbot");
     let secondary = temp_dir.join("root/bin/oopbot");
     let version_file = temp_dir.join("root/bin/oopbot.version");
-    write_fake_oopbot(&primary, "0.5.7");
-    write_fake_oopbot(&secondary, "0.5.7");
-    std::fs::write(&version_file, "0.5.7\n").unwrap();
+    write_fake_oopbot(&primary, "0.5.8");
+    write_fake_oopbot(&secondary, "0.5.8");
+    std::fs::write(&version_file, "0.5.8\n").unwrap();
 
     let new_script = format!("#!/bin/sh\necho \"oopbot {}\"\n", pkg_ver).into_bytes();
     let (base_url, hits, server) = spawn_mock_release_server(
@@ -837,7 +837,7 @@ async fn test_pkg_version_058_rejects_057_rpc_and_upgrades_057_binary() {
     );
     let urls = vec![format!("{}/v{}/oopbot", base_url, pkg_ver)];
     let res = ensure_oopbot_binary_with(
-        "0.5.7",
+        "0.5.8",
         pkg_ver,
         false,
         &primary,
