@@ -1,5 +1,6 @@
 package io.jeph.oopbot.agent
 
+import androidx.compose.runtime.Immutable
 import org.json.JSONObject
 
 /** Everything the chat screen renders for one Pi process. [model] is Pi's model JSON (`provider`, `id`, `input`). */
@@ -49,6 +50,7 @@ internal const val STREAM_UPDATE_MILLIS = 100L
 sealed interface TimelineItem {
   val key: String
 
+  @Immutable
   data class User(override val key: String, val text: String, val images: List<ImagePart>, val timestamp: Long) :
     TimelineItem
 
@@ -88,6 +90,7 @@ sealed interface TimelineItem {
    * A message an extension added with `sendMessage` and `display` set: OOPBoT sends its [markdown] and [images] to
    * the model as user content, and shows them apart from the conversation under the extension's [customType].
    */
+  @Immutable
   data class ExtensionMessage(
     override val key: String,
     val customType: String,
@@ -127,6 +130,7 @@ sealed interface TimelineItem {
    * Keyed by its first step, so the key holds as steps arrive. [current] is the step the folded line shows while the
    * run [outcome] says is still going.
    */
+  @Immutable
   data class Steps(
     override val key: String,
     val steps: List<TimelineItem>,
@@ -149,18 +153,23 @@ enum class AppNotice {
 }
 
 /** What failed in a [TimelineItem.Error]. The messages are Pi's own words, which OOPBoT shows as they are. */
+@Immutable
 sealed interface ErrorCause {
   /** A request to the model failed; [message] is null when Pi gave no reason. */
+  @Immutable
   data class Request(val message: String?) : ErrorCause
 
   /** Compacting the context failed; [message] is null when Pi gave no reason. */
+  @Immutable
   data class Compaction(val message: String?) : ErrorCause
 
   /** An extension's command threw [error]; [path] is how Pi names the extension. */
+  @Immutable
   data class Extension(val path: String, val error: String) : ErrorCause
 }
 
 /** A base64-encoded image attached to a user message. */
+@Immutable
 data class ImagePart(val data: String, val mimeType: String)
 
 /** An [TimelineItem.ExtensionNotice]'s `notifyType`; Pi's terminal UI shows any other type as [Info]. */
@@ -185,6 +194,7 @@ enum class NoticeLevel {
  * One that came [afterRun], once the run that message ended had finished, follows that run's footer. A notice of
  * OOPBoT's own has its [appNotice] and no [message].
  */
+@Immutable
 data class SavedNotice(
   val level: NoticeLevel,
   val message: String,
@@ -199,6 +209,7 @@ enum class ToolStatus { Pending, Running, Done }
  * A blocking `extension_ui_request` dialog (`select`, `confirm`, `input` or `editor`) awaiting an answer. [expiresAt]
  * is when Pi stops waiting and answers with its default ([System.currentTimeMillis]); null when it waits for good.
  */
+@Immutable
 data class ExtensionUiRequest(
   val id: String,
   val method: String,

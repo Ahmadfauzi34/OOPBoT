@@ -228,7 +228,7 @@ private fun SourceView(lines: List<AnnotatedString>, modifier: Modifier) {
         bottom = OopbotTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
       ),
     ) {
-      itemsIndexed(lines) { index, line ->
+      itemsIndexed(lines, key = { index, _ -> index }, contentType = { _, _ -> "line" }) { index, line ->
         Row(modifier = Modifier.fillMaxWidth()) {
           Text(
             text = (index + 1).toString(),

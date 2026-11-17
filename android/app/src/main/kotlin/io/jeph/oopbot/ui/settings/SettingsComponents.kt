@@ -27,7 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -265,16 +265,22 @@ internal fun DashedActionRow(
       modifier
         .fillMaxWidth()
         .heightIn(min = 52.dp)
-        .drawBehind {
+        .drawWithCache {
           val stroke = 1.5.dp.toPx()
           val dash = 5.dp.toPx()
-          drawRoundRect(
-            color = colors.borderAccent,
-            topLeft = Offset(stroke / 2, stroke / 2),
-            size = Size(size.width - stroke, size.height - stroke),
-            cornerRadius = CornerRadius(radius.toPx()),
-            style = Stroke(width = stroke, pathEffect = PathEffect.dashPathEffect(floatArrayOf(dash, dash))),
-          )
+          val topLeft = Offset(stroke / 2, stroke / 2)
+          val rectSize = Size(size.width - stroke, size.height - stroke)
+          val cornerRadius = CornerRadius(radius.toPx())
+          val dashedStroke = Stroke(width = stroke, pathEffect = PathEffect.dashPathEffect(floatArrayOf(dash, dash)))
+          onDrawBehind {
+            drawRoundRect(
+              color = colors.borderAccent,
+              topLeft = topLeft,
+              size = rectSize,
+              cornerRadius = cornerRadius,
+              style = dashedStroke,
+            )
+          }
         }
         .clip(RoundedCornerShape(radius))
         .clickable(onClick = onClick)

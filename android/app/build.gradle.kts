@@ -509,7 +509,7 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       // LiteRT-LM's AAR ships no consumer rules, and its native code calls back into its Kotlin classes by name.
-      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "litertlm-rules.pro")
+      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro", "litertlm-rules.pro")
     }
   }
 
@@ -519,6 +519,14 @@ android {
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
+  }
+}
+
+composeCompiler {
+  if (providers.gradleProperty("oopbot.composeReports").map(String::toBoolean).getOrElse(false)) {
+    val reportsDir = layout.buildDirectory.dir("compose_compiler")
+    reportsDestination.set(reportsDir)
+    metricsDestination.set(reportsDir)
   }
 }
 

@@ -52,7 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -364,26 +364,35 @@ private fun Modifier.risenBy(rise: Animatable<Float, AnimationVector1D>, fromBor
  * Fades the ends of a tab strip or a panel where it scrolls past them, so a tab or a line cut off at the edge reads as
  * more to scroll to.
  */
+private val START_FADE_COLORS = listOf(Color.Transparent, Color.Black)
+private val END_FADE_COLORS = listOf(Color.Black, Color.Transparent)
+
 private fun Modifier.fadeScrolledEdges(state: ScrollableState, vertical: Boolean): Modifier =
-  graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen).drawWithContent {
-    drawContent()
+  graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen).drawWithCache {
     val length = if (vertical) size.height else size.width
     val fade = SCROLL_FADE.toPx().coerceAtMost(length / 2)
-    val fadeEdge = { start: Float, colors: List<Color> ->
-      val end = start + fade
-      drawRect(
-        brush = if (vertical) {
-          Brush.verticalGradient(colors, startY = start, endY = end)
-        } else {
-          Brush.horizontalGradient(colors, startX = start, endX = end)
-        },
-        topLeft = if (vertical) Offset(0f, start) else Offset(start, 0f),
-        size = if (vertical) Size(size.width, fade) else Size(fade, size.height),
-        blendMode = BlendMode.DstIn,
-      )
+    val endStart = length - fade
+    val edgeSize = if (vertical) Size(size.width, fade) else Size(fade, size.height)
+    val endTopLeft = if (vertical) Offset(0f, endStart) else Offset(endStart, 0f)
+    val startBrush = if (vertical) {
+      Brush.verticalGradient(START_FADE_COLORS, startY = 0f, endY = fade)
+    } else {
+      Brush.horizontalGradient(START_FADE_COLORS, startX = 0f, endX = fade)
     }
-    if (state.canScrollBackward) fadeEdge(0f, listOf(Color.Transparent, Color.Black))
-    if (state.canScrollForward) fadeEdge(length - fade, listOf(Color.Black, Color.Transparent))
+    val endBrush = if (vertical) {
+      Brush.verticalGradient(END_FADE_COLORS, startY = endStart, endY = length)
+    } else {
+      Brush.horizontalGradient(END_FADE_COLORS, startX = endStart, endX = length)
+    }
+    onDrawWithContent {
+      drawContent()
+      if (state.canScrollBackward) {
+        drawRect(brush = startBrush, topLeft = Offset.Zero, size = edgeSize, blendMode = BlendMode.DstIn)
+      }
+      if (state.canScrollForward) {
+        drawRect(brush = endBrush, topLeft = endTopLeft, size = edgeSize, blendMode = BlendMode.DstIn)
+      }
+    }
   }
 
 /**

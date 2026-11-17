@@ -1,5 +1,6 @@
 package io.jeph.oopbot.ui.git
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -14,8 +15,10 @@ import io.jeph.oopbot.ui.theme.OopbotColors
 internal enum class DiffLineKind { Context, Added, Removed }
 
 /** One row of a file's diff body, in the order the document shows them. */
+@Immutable
 internal sealed interface DiffRow {
   /** A hunk's `@@ -a,b +c,d @@` line. */
+  @Immutable
   class HunkHeader(val header: String) : DiffRow
 
   /**
@@ -23,13 +26,16 @@ internal sealed interface DiffRow {
    * for an added or context one, and null for a no-newline marker. [sideLine] is where the line sits in its side's
    * text ([DiffSection.oldSide] for a removed line, [DiffSection.newSide] otherwise), or -1 for a marker.
    */
+  @Immutable
   class Line(val kind: DiffLineKind, val number: Int?, val text: String, val sideLine: Int) : DiffRow
 
   /** In place of the hunks of a binary file or one whose diff is too large to send. */
+  @Immutable
   class Placeholder(val kind: GitFileKind) : DiffRow
 }
 
 /** A side's highlighted lines, coloured for [theme]'s palette. */
+@Immutable
 internal class SideHighlight(
   val theme: OopbotColors,
   val oldLines: List<AnnotatedString>,
@@ -61,6 +67,7 @@ internal class DiffSection(
  * A diff as one scrolling document of file sections in Paseo's tree order (see [treeOrder]); none and [tooLarge] when
  * it couldn't be sent.
  */
+@Immutable
 internal class DiffDocument(val sections: List<DiffSection>, val tooLarge: Boolean) {
   val additions: Int = sections.sumOf { it.file.additions }
   val deletions: Int = sections.sumOf { it.file.deletions }
