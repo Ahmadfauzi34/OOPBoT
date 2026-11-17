@@ -335,7 +335,8 @@ impl GeminiClient {
             "contents": gemini_contents,
         });
         if !function_declarations.is_empty() {
-            body["tools"] = json!([{ "functionDeclarations": function_declarations }]);
+            let sanitized = sanitize_gemini_function_declarations(function_declarations);
+            body["tools"] = json!([{ "functionDeclarations": sanitized }]);
         }
 
         let mut gen_config = serde_json::Map::new();
@@ -1116,6 +1117,137 @@ fn coalesce_gemini_contents(contents: &[Value]) -> Vec<Value> {
     out
 }
 
+/// Bersihkan daftar `functionDeclarations` agar sesuai dengan subset `Schema` protobuf
+/// milik Google Gemini `generateContent` API (menolak keyword seperti `additionalProperties`,
+/// `$schema`, `default`, `oneOf`, dll. dengan HTTP 400).
+pub fn sanitize_gemini_function_declarations(declarations: &[Value]) -> Vec<Value> {
+    declarations
+        .iter()
+        .map(|decl| {
+            let Some(obj) = decl.as_object() else {
+                return decl.clone();
+            };
+            let mut out = obj.clone();
+            if let Some(params) = obj.get("parameters") {
+                out.insert("parameters".to_string(), sanitize_gemini_schema(params));
+            }
+            if let Some(resp) = obj.get("response") {
+                out.insert("response".to_string(), sanitize_gemini_schema(resp));
+            }
+            Value::Object(out)
+        })
+        .collect()
+}
+
+/// Sanitasi rekursif satu node JSON Schema ke subset field yang diterima oleh
+/// `google.ai.generativelanguage.v1beta.Schema`.
+pub fn sanitize_gemini_schema(schema: &Value) -> Value {
+    let Some(obj) = schema.as_object() else {
+        return schema.clone();
+    };
+
+    const ALLOWED_KEYS: &[&str] = &[
+        "format",
+        "title",
+        "description",
+        "nullable",
+        "enum",
+        "maxItems",
+        "minItems",
+        "required",
+        "propertyOrdering",
+    ];
+
+    let mut out = serde_json::Map::new();
+
+    for &key in ALLOWED_KEYS {
+        if let Some(val) = obj.get(key) {
+            out.insert(key.to_string(), val.clone());
+        }
+    }
+
+    if let Some(type_val) = obj.get("type") {
+        match type_val {
+            Value::String(s) => {
+                out.insert("type".to_string(), Value::String(s.clone()));
+            }
+            Value::Array(arr) => {
+                let mut has_null = false;
+                let mut first_type: Option<String> = None;
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        if s == "null" {
+                            has_null = true;
+                        } else if first_type.is_none() {
+                            first_type = Some(s.to_string());
+                        }
+                    }
+                }
+                if let Some(t) = first_type {
+                    out.insert("type".to_string(), Value::String(t));
+                }
+                if has_null && !out.contains_key("nullable") {
+                    out.insert("nullable".to_string(), Value::Bool(true));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Jika schema memakai `anyOf`/`oneOf` tanpa `type` (mis. pola nullable Pydantic/Zod),
+    // ambil varian non-null pertama agar tidak menjadi schema kosong.
+    if !out.contains_key("type") && !out.contains_key("properties") {
+        if let Some(variants) = obj
+            .get("anyOf")
+            .or_else(|| obj.get("oneOf"))
+            .and_then(Value::as_array)
+        {
+            let has_null = variants
+                .iter()
+                .any(|v| v.get("type").and_then(Value::as_str) == Some("null"));
+            if let Some(non_null) = variants
+                .iter()
+                .find(|v| v.get("type").and_then(Value::as_str) != Some("null"))
+            {
+                if let Value::Object(sanitized_variant) = sanitize_gemini_schema(non_null) {
+                    for (k, v) in sanitized_variant {
+                        out.entry(k).or_insert(v);
+                    }
+                }
+            }
+            if has_null && !out.contains_key("nullable") {
+                out.insert("nullable".to_string(), Value::Bool(true));
+            }
+        }
+    }
+
+    // `properties` adalah map `<nama_parameter, Schema>`: pertahankan semua nama parameter
+    // (termasuk bila ada parameter bernama `default`, `const`, dsb.) sambil mensanitasi nilainya.
+    if let Some(Value::Object(props)) = obj.get("properties") {
+        let mut sanitized_props = serde_json::Map::with_capacity(props.len());
+        for (prop_name, prop_schema) in props {
+            sanitized_props.insert(prop_name.clone(), sanitize_gemini_schema(prop_schema));
+        }
+        out.insert("properties".to_string(), Value::Object(sanitized_props));
+    }
+
+    if let Some(items) = obj.get("items") {
+        match items {
+            Value::Object(_) => {
+                out.insert("items".to_string(), sanitize_gemini_schema(items));
+            }
+            Value::Array(arr) => {
+                if let Some(first) = arr.first() {
+                    out.insert("items".to_string(), sanitize_gemini_schema(first));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Value::Object(out)
+}
+
 fn take_pending_fallback_id(
     queue: &mut std::collections::VecDeque<(String, String)>,
     name: &str,
@@ -1841,5 +1973,249 @@ mod tests {
             .unwrap();
         assert_eq!(turn.text, "All good");
     }
+
+    #[test]
+    fn sanitize_gemini_schema_strips_unsupported_keywords_and_preserves_param_names() {
+        let raw_decls = vec![json!({
+            "name": "complex_tool",
+            "description": "Tool dengan schema JSON lengkap",
+            "parameters": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "env": {
+                        "type": "object",
+                        "description": "Env vars",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "default": {
+                        "type": ["string", "null"],
+                        "default": "fallback",
+                        "minLength": 1,
+                        "description": "Parameter bernama default harus tetap dipertahankan"
+                    },
+                    "mode": {
+                        "anyOf": [
+                            { "type": "string", "enum": ["fast", "deep"], "const": "fast" },
+                            { "type": "null" }
+                        ],
+                        "description": "Nullable enum via anyOf"
+                    },
+                    "items_list": {
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": [
+                            { "type": "integer", "minimum": 0, "maximum": 100 }
+                        ]
+                    }
+                },
+                "required": ["env"]
+            }
+        })];
+
+        let sanitized = sanitize_gemini_function_declarations(&raw_decls);
+        assert_eq!(sanitized.len(), 1);
+        let params = &sanitized[0]["parameters"];
+        assert!(params.get("$schema").is_none());
+        assert!(params.get("additionalProperties").is_none());
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["required"], json!(["env"]));
+
+        // `env` bebas dari `additionalProperties`
+        let env = &params["properties"]["env"];
+        assert_eq!(env["type"], "object");
+        assert!(env.get("additionalProperties").is_none());
+
+        // Parameter yang kebetulan bernama `default` tetap ada, namun keyword `default` & `minLength` di dalamnya dihapus
+        let default_param = &params["properties"]["default"];
+        assert_eq!(default_param["type"], "string");
+        assert_eq!(default_param["nullable"], true);
+        assert!(default_param.get("default").is_none());
+        assert!(default_param.get("minLength").is_none());
+
+        // `anyOf` nullable diubah ke schema datar
+        let mode = &params["properties"]["mode"];
+        assert_eq!(mode["type"], "string");
+        assert_eq!(mode["enum"], json!(["fast", "deep"]));
+        assert_eq!(mode["nullable"], true);
+        assert!(mode.get("anyOf").is_none());
+        assert!(mode.get("const").is_none());
+
+        // Tuple `items` menjadi schema tunggal dan `minimum`/`maximum`/`uniqueItems` dibuang
+        let list = &params["properties"]["items_list"];
+        assert_eq!(list["type"], "array");
+        assert!(list.get("uniqueItems").is_none());
+        assert_eq!(list["items"]["type"], "integer");
+        assert!(list["items"].get("minimum").is_none());
+        assert!(list["items"].get("maximum").is_none());
+    }
+
+    #[tokio::test]
+    async fn gemini_generate_sanitizes_tool_schemas_in_request_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..pos]);
+                    let content_len = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= pos + 4 + content_len {
+                        let req_body = &buf[pos + 4..pos + 4 + content_len];
+                        let captured = serde_json::from_slice::<Value>(req_body).unwrap();
+                        let resp_body = json!({
+                            "candidates": [{
+                                "content": {
+                                    "role": "model",
+                                    "parts": [{ "text": "OK" }]
+                                }
+                            }]
+                        })
+                        .to_string();
+                        let http_resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            resp_body.len(),
+                            resp_body
+                        );
+                        stream.write_all(http_resp.as_bytes()).await.unwrap();
+                        return captured;
+                    }
+                }
+            }
+            panic!("Incomplete HTTP request received");
+        });
+
+        let client = GeminiClient::new_with_base_url(
+            "AIza-test".into(),
+            "gemini-2.5-flash".into(),
+            Some(format!("http://{}/v1beta", addr)),
+        )
+        .unwrap();
+
+        let decls = vec![json!({
+            "name": "background",
+            "description": "Manage background jobs",
+            "parameters": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "env": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Env vars"
+                    }
+                }
+            }
+        })];
+
+        let turn = client
+            .generate_with_options(
+                "gemini-2.5-flash",
+                "sys",
+                &[user_text("hi")],
+                &decls,
+                &GenerationOptions {
+                    api: Some("google-generative-ai".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(turn.text, "OK");
+
+        let req_json = server.await.unwrap();
+        let sent_params = &req_json["tools"][0]["functionDeclarations"][0]["parameters"];
+        assert!(sent_params.get("$schema").is_none());
+        assert!(sent_params.get("additionalProperties").is_none());
+        assert!(sent_params["properties"]["env"].get("additionalProperties").is_none());
+        assert_eq!(sent_params["properties"]["env"]["type"], "object");
+    }
+
+    #[test]
+    fn all_default_tool_and_plugin_schemas_are_gemini_compatible() {
+        use crate::plugins::PluginRegistry;
+        use crate::tools::ToolRegistry;
+
+        fn assert_schema_node_clean(tool_name: &str, schema: &Value) {
+            const UNSUPPORTED: &[&str] = &[
+                "additionalProperties",
+                "$schema",
+                "$id",
+                "$defs",
+                "definitions",
+                "default",
+                "examples",
+                "patternProperties",
+                "const",
+                "minLength",
+                "maxLength",
+                "minimum",
+                "maximum",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "multipleOf",
+                "uniqueItems",
+                "oneOf",
+                "anyOf",
+                "allOf",
+                "not",
+            ];
+            let Some(obj) = schema.as_object() else {
+                return;
+            };
+            for key in UNSUPPORTED {
+                assert!(
+                    !obj.contains_key(*key),
+                    "tool `{}` schema contains unsupported Gemini field `{}`: {}",
+                    tool_name,
+                    key,
+                    schema
+                );
+            }
+            if let Some(Value::Object(props)) = obj.get("properties") {
+                for prop_schema in props.values() {
+                    assert_schema_node_clean(tool_name, prop_schema);
+                }
+            }
+            if let Some(items) = obj.get("items") {
+                assert_schema_node_clean(tool_name, items);
+            }
+        }
+
+        let mut tools = ToolRegistry::with_defaults();
+        let mut plugins = PluginRegistry::with_defaults();
+        for id in ["todo", "web-access", "background", "subagents", "interact"] {
+            assert!(plugins.activate(id), "failed to activate plugin {}", id);
+        }
+        plugins.register_active_tools(&mut tools);
+
+        let decls = tools.declarations();
+        assert!(!decls.is_empty());
+        for decl in &decls {
+            let name = decl["name"].as_str().unwrap_or("<unknown>");
+            assert_schema_node_clean(name, &decl["parameters"]);
+        }
+    }
 }
+
 
