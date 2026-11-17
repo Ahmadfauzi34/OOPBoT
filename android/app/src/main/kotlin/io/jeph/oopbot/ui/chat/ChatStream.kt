@@ -250,6 +250,7 @@ private fun StreamList(
     delay(MAX_HOLD_MILLIS)
     gate.stopHolding()
   }
+  val pad = OopbotTokens.Spacing.s16
   val railColor = oopbotColors.border
   LazyColumn(
     state = listState,
@@ -260,39 +261,21 @@ private fun StreamList(
         layout(placeable.width, placeable.height) { placeable.place(0, 0) }
       }.drawWithContent { if (gate.isOpen(items, firstItemIndex, view.markdown)) drawContent() }
       .fillMaxSize(),
-    contentPadding = PaddingValues(
-      start = OopbotTokens.Spacing.s16,
-      end = OopbotTokens.Spacing.s16,
-      bottom = OopbotTokens.Spacing.s16,
-    ),
+    contentPadding = PaddingValues(start = pad, end = pad, bottom = pad),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     if (banner != null) {
       item(key = BANNER_KEY, contentType = BANNER_KEY) {
-        StatusBanner(
-          state = banner,
-          onRetry = onRestart,
-          onOpenOnboarding = onOpenOnboarding,
-          modifier = Modifier.contentWidth().padding(top = OopbotTokens.Spacing.s8),
-        )
+        val bannerModifier = Modifier.contentWidth().padding(top = OopbotTokens.Spacing.s8)
+        StatusBanner(banner, onRestart, onOpenOnboarding, bannerModifier)
       }
     }
     itemsIndexed(items, key = { _, item -> item.key }, contentType = { _, item -> item::class }) { index, item ->
-      val rail = if (rows.isListedStep(item.key)) {
-        Modifier.foldRail(last = rows.isLastListedStep(item.key), color = railColor)
-      } else {
-        Modifier
-      }
-      StreamItem(
-        item = item,
-        markdownCache = view.markdown,
-        turn = if (item.key == lastFooterKey) lastTurn else TurnStatus.None,
-        subagents = subagents,
-        expanded = view.expanded,
-        onOpenTool = onOpenTool,
-        onRestart = onRestart,
-        modifier = Modifier.contentWidth().padding(top = gapBefore(items.getOrNull(index - 1), item)).then(rail),
-      )
+      val rail = Modifier.takeUnless { rows.isListedStep(item.key) }
+        ?: Modifier.foldRail(last = rows.isLastListedStep(item.key), color = railColor)
+      val turnStatus = if (item.key == lastFooterKey) lastTurn else TurnStatus.None
+      val itemMod = Modifier.contentWidth().padding(top = gapBefore(items.getOrNull(index - 1), item)).then(rail)
+      StreamItem(item, view.markdown, turnStatus, subagents, view.expanded, onOpenTool, onRestart, itemMod)
     }
   }
 }
@@ -337,10 +320,7 @@ private class FirstDrawGate(private val listState: LazyListState) {
  * list's height changes, as when the keyboard opens or the composer grows: the keyboard never covers what
  * the user was reading, and the top of the list scrolls up under the header instead.
  */
-private class BottomAnchor(
-  private val listState: LazyListState,
-  private val follow: State<Boolean>,
-) {
+private class BottomAnchor(private val listState: LazyListState, private val follow: State<Boolean>) {
   private var height = UNMEASURED
   private var nextRev = 0
   private var lastRevision = -1

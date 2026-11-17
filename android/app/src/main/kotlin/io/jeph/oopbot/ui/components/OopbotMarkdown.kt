@@ -166,11 +166,14 @@ private fun typography(body: TextStyle): MarkdownTypography {
       lineHeight = OopbotTokens.LineHeight.code,
       fontFeatureSettings = OopbotFonts.FEATURES,
     )
-    MemoizedMarkdownStyles(
+    val headings = HeadingStyles(
       h1 = body.copy(fontSize = OopbotTokens.FontSize.xxl, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
       h2 = body.copy(fontSize = OopbotTokens.FontSize.xl, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
       h3 = body.copy(fontSize = OopbotTokens.FontSize.lg, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
-      headingSmall = body.copy(fontWeight = FontWeight.SemiBold),
+      small = body.copy(fontWeight = FontWeight.SemiBold),
+    )
+    MemoizedMarkdownStyles(
+      headings = headings,
       code = code,
       inlineCode = code.copy(lineHeight = OopbotTokens.LineHeight.markdown),
       quote = body.copy(color = colors.foregroundMuted),
@@ -180,12 +183,12 @@ private fun typography(body: TextStyle): MarkdownTypography {
     )
   }
   return markdownTypography(
-    h1 = styles.h1,
-    h2 = styles.h2,
-    h3 = styles.h3,
-    h4 = styles.headingSmall,
-    h5 = styles.headingSmall,
-    h6 = styles.headingSmall,
+    h1 = styles.headings.h1,
+    h2 = styles.headings.h2,
+    h3 = styles.headings.h3,
+    h4 = styles.headings.small,
+    h5 = styles.headings.small,
+    h6 = styles.headings.small,
     text = body,
     code = styles.code,
     inlineCode = styles.inlineCode,
@@ -196,15 +199,14 @@ private fun typography(body: TextStyle): MarkdownTypography {
     list = body,
     textLink = styles.textLink,
     table = styles.table,
-    alertTitle = styles.headingSmall,
+    alertTitle = styles.headings.small,
   )
 }
 
+private class HeadingStyles(val h1: TextStyle, val h2: TextStyle, val h3: TextStyle, val small: TextStyle)
+
 private class MemoizedMarkdownStyles(
-  val h1: TextStyle,
-  val h2: TextStyle,
-  val h3: TextStyle,
-  val headingSmall: TextStyle,
+  val headings: HeadingStyles,
   val code: TextStyle,
   val inlineCode: TextStyle,
   val quote: TextStyle,

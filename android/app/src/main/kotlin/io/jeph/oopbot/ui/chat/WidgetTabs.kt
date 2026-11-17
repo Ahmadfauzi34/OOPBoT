@@ -370,8 +370,7 @@ private fun Modifier.risenBy(rise: Animatable<Float, AnimationVector1D>, fromBor
 private val START_FADE_COLORS = listOf(Color.Transparent, Color.Black)
 private val END_FADE_COLORS = listOf(Color.Black, Color.Transparent)
 
-private fun Modifier.fadeScrolledEdges(state: ScrollableState, vertical: Boolean): Modifier =
-  graphicsLayer {
+private fun Modifier.fadeScrolledEdges(state: ScrollableState, vertical: Boolean): Modifier = graphicsLayer {
     compositingStrategy = if (state.canScrollBackward || state.canScrollForward) {
       CompositingStrategy.Offscreen
     } else {

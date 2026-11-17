@@ -291,10 +291,11 @@ private fun SourceList(
   LazyColumn(modifier = modifier, contentPadding = contentPadding) {
     itemsIndexed(lines, key = { index, _ -> index }, contentType = { _, _ -> "line" }) { index, line ->
       Row(modifier = Modifier.fillMaxWidth()) {
+        val gutterModifier = Modifier.width(GUTTER_WIDTH).padding(end = OopbotTokens.Spacing.s12)
         if (selectionMode) {
-          DisableSelection { GutterLineNumber(index + 1, gutterStyle) }
+          DisableSelection { Text(text = (index + 1).toString(), modifier = gutterModifier, style = gutterStyle) }
         } else {
-          GutterLineNumber(index + 1, gutterStyle)
+          Text(text = (index + 1).toString(), modifier = gutterModifier, style = gutterStyle)
         }
         Text(
           text = line,
@@ -304,15 +305,6 @@ private fun SourceList(
       }
     }
   }
-}
-
-@Composable
-private fun GutterLineNumber(lineNumber: Int, style: TextStyle) {
-  Text(
-    text = lineNumber.toString(),
-    modifier = Modifier.width(GUTTER_WIDTH).padding(end = OopbotTokens.Spacing.s12),
-    style = style,
-  )
 }
 
 /** The image fitted to the width; a format Android can't decode says so, as a binary file does. */

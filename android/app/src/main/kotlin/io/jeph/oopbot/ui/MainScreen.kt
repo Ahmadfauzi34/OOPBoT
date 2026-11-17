@@ -151,6 +151,16 @@ private class PanePanels(
     onCloseTab = actions::closeTab,
     onCloseSplit = { actions.closeSplit(pane) }.takeIf { closesSplit },
   )
+
+  @Composable
+  fun rememberControls(pane: Pane, actions: ShellActions, closesSplit: Boolean, onOpenTabs: () -> Unit) =
+    remember(pane, this, actions, closesSplit) { controls(pane, actions, closesSplit, onOpenTabs) }
+
+  fun isCovered(pane: Pane): Boolean =
+    get(pane).let { it.targetValue != Panel.Chat || it.currentValue != Panel.Chat }
+
+  fun onShownInSplit(pane: Pane, splitAvailable: Boolean): (() -> Unit)? =
+    { show(Pane.Secondary, Panel.Chat) }.takeIf { pane == Pane.Primary && splitAvailable }
 }
 
 @Composable
@@ -406,12 +416,8 @@ private fun WorkspacePanes(
         // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
         var tabsOpen by rememberSaveable { mutableStateOf(false) }
         val closesSplit = split && pane == endPane
-        val controls = remember(pane, panels, actions, closesSplit) {
-          panels.controls(pane, actions, closesSplit) { tabsOpen = true }
-        }
-        val onShownInSplit = {
-          panels.show(Pane.Secondary, Panel.Chat)
-        }.takeIf { pane == Pane.Primary && splitAvailable }
+        val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
+        val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
         val swapPanes = { panels.swapFrom(pane) }
         BackHandler(enabled = panel != Panel.Chat) { panels.show(pane, Panel.Chat) }
         SidePanelOpenedEffect(panelState)
@@ -420,24 +426,17 @@ private fun WorkspacePanes(
           state = panelState,
           sidebar = {
             // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
-            CompositionLocalProvider(LocalPotsSimmer provides (panel == Panel.Sidebar)) {
-              sidebar(pane, onShownInSplit)
-            }
+            val shimmer = LocalPotsSimmer provides (panel == Panel.Sidebar)
+            CompositionLocalProvider(shimmer) { sidebar(pane, onShownInSplit) }
           },
           workspace = {
             // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
-            val covered = panel != Panel.Chat || panelState.currentValue != Panel.Chat
+            val covered = panels.isCovered(pane)
             WorkspacePane(item, covered, actions, views, controls, onOpenSettings, onOpenProviders, onOpenOnboarding)
           },
           explorer = {
-            PaneExplorer(
-              pane = pane,
-              item = item,
-              open = panelState.settledValue == Panel.Explorer,
-              snackbar = snackbar,
-              onSwapPanes = swapPanes,
-              onClose = { panels.show(pane, Panel.Chat) },
-            )
+            val explorerOpen = panelState.settledValue == Panel.Explorer
+            PaneExplorer(pane, item, explorerOpen, snackbar, swapPanes) { panels.show(pane, Panel.Chat) }
           },
         )
         if (tabsOpen && item != null) {
