@@ -107,6 +107,33 @@ pub(super) fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool)
                 (serde_json::to_string_pretty(val).unwrap_or_default(), false)
             }
         }
+        "notify_user" => {
+            let lvl = val["level"].as_str().unwrap_or("info");
+            let msg = val["message"].as_str().unwrap_or_default();
+            (format!("[{}] {}", lvl, msg), false)
+        }
+        "ask_user" => {
+            let status = val["status"].as_str().unwrap_or("answered");
+            let kind = val["kind"].as_str().unwrap_or("input");
+            let out = match status {
+                "answered" => {
+                    if let Some(confirmed) = val["confirmed"].as_bool() {
+                        format!(
+                            "User menjawab ({}): {}",
+                            kind,
+                            if confirmed { "Ya" } else { "Tidak" }
+                        )
+                    } else {
+                        let ans = val["value"].as_str().unwrap_or_default();
+                        format!("User menjawab ({}): {}", kind, ans)
+                    }
+                }
+                "cancelled" => format!("User membatalkan dialog ({})", kind),
+                "timeout" => format!("Dialog ({}) melewati batas waktu tanpa jawaban", kind),
+                _ => serde_json::to_string_pretty(val).unwrap_or_default(),
+            };
+            (out, false)
+        }
         _ => (val.to_string(), false),
     }
 }

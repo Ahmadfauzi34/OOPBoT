@@ -8,8 +8,14 @@
 //! - Memungkinkan reverse engineering dan integrasi mudah dari ekstensi Pi-Agent
 //!   maupun plugin agen AI open source lainnya (AutoGPT, LangChain, CrewAI).
 
+pub mod background;
+pub mod interact;
 pub mod todo;
 
+pub use background::{BackgroundPlugin, BackgroundTool, BgCompletionEvent, BgTaskInfo};
+pub use interact::{
+    AskCallback, InteractPlugin, NotifyCallback, UiDialogAnswer, UiDialogKind, UiDialogRequest,
+};
 pub use todo::{
     NO_TODOS_MESSAGE, TODO_STATE_ENTRY, TODO_WIDGET_KEY, TaskItem, TaskStatus, TodoDetails,
     TodoPlugin, TodoState, TodoTool,
@@ -18,13 +24,11 @@ pub use todo::{
 use crate::gemini::BoxError;
 use crate::tools::{truncate, Tool, ToolRegistry};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 // ===========================================================================
@@ -126,6 +130,7 @@ impl PluginRegistry {
         registry.register(Arc::new(WebAccessPlugin::new()));
         registry.register(Arc::new(BackgroundPlugin::new()));
         registry.register(Arc::new(SubagentsPlugin::new()));
+        registry.register(Arc::new(InteractPlugin::new()));
         registry
     }
 
@@ -454,311 +459,7 @@ impl Tool for FetchPageTool {
 }
 
 // ===========================================================================
-// 3. BackgroundPlugin (Manajemen Proses Latar Belakang di Termux/Linux)
-// ===========================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BgTaskInfo {
-    pub id: u32,
-    pub command: String,
-    pub status: String,
-    pub output: String,
-}
-
-pub struct BackgroundPlugin {
-    tasks: Arc<Mutex<HashMap<u32, BgTaskInfo>>>,
-    kill_handles: Arc<Mutex<HashMap<u32, tokio::sync::oneshot::Sender<()>>>>,
-    next_id: Arc<AtomicU32>,
-}
-
-impl Default for BackgroundPlugin {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BackgroundPlugin {
-    pub fn new() -> Self {
-        Self {
-            tasks: Arc::new(Mutex::new(HashMap::new())),
-            kill_handles: Arc::new(Mutex::new(HashMap::new())),
-            next_id: Arc::new(AtomicU32::new(1)),
-        }
-    }
-
-    pub fn active_count(&self) -> usize {
-        self.tasks
-            .lock()
-            .map(|map| map.values().filter(|t| t.status == "running").count())
-            .unwrap_or(0)
-    }
-}
-
-#[async_trait]
-impl Plugin for BackgroundPlugin {
-    fn id(&self) -> &str {
-        "oopbot-background"
-    }
-
-    fn aliases(&self) -> Vec<&'static str> {
-        vec!["oopbot_background", "background", "tasks"]
-    }
-
-    fn name(&self) -> &str {
-        "Background Task Runner"
-    }
-
-    fn description(&self) -> &str {
-        "Jalankan perintah shell berdurasi panjang di latar belakang (background) tanpa memblokir sesi chat."
-    }
-
-    fn register_tools(&self, registry: &mut ToolRegistry) {
-        registry.register(Box::new(BackgroundTool {
-            tasks: Arc::clone(&self.tasks),
-            kill_handles: Arc::clone(&self.kill_handles),
-            next_id: Arc::clone(&self.next_id),
-        }));
-    }
-
-    fn system_prompt_append(&self) -> Option<String> {
-        Some(
-            "## Background Tasks Guidelines\n\
-            - Gunakan `background` untuk proses berat/panjang (seperti server lokal, build besar, atau watcher).\n\
-            - Aksi tersedia: `start` (mulai), `list` (lihat semua proses latar belakang), `output` (baca output terkini), `kill` (hentikan proses)."
-                .to_string(),
-        )
-    }
-
-    fn channel_status(&self) -> Option<(&'static str, Value)> {
-        Some(("background", json!({ "active": self.active_count() })))
-    }
-}
-
-pub struct BackgroundTool {
-    tasks: Arc<Mutex<HashMap<u32, BgTaskInfo>>>,
-    kill_handles: Arc<Mutex<HashMap<u32, tokio::sync::oneshot::Sender<()>>>>,
-    next_id: Arc<AtomicU32>,
-}
-
-#[async_trait]
-impl Tool for BackgroundTool {
-    fn name(&self) -> &'static str {
-        "background"
-    }
-
-    fn description(&self) -> &'static str {
-        "Jalankan atau kelola perintah shell di latar belakang. Aksi: start, list, output, kill."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["start", "list", "output", "kill"],
-                    "description": "Operasi yang ingin dijalankan pada task latar belakang"
-                },
-                "command": {
-                    "type": "string",
-                    "description": "Perintah shell yang ingin dijalankan (wajib untuk start)"
-                },
-                "id": {
-                    "type": "number",
-                    "description": "ID task latar belakang (wajib untuk output, kill)"
-                }
-            },
-            "required": ["action"]
-        })
-    }
-
-    fn preview(&self, args: &Value) -> String {
-        let action = args["action"].as_str().unwrap_or("unknown");
-        let cmd = args["command"].as_str().unwrap_or("");
-        let id = args["id"].as_u64();
-        match (action, cmd, id) {
-            ("start", c, _) => format!("background start: {}", c),
-            ("output", _, Some(i)) => format!("background output #{}", i),
-            ("kill", _, Some(i)) => format!("background kill #{}", i),
-            _ => format!("background {}", action),
-        }
-    }
-
-    async fn execute(&self, args: &Value) -> Result<Value, String> {
-        let action = args["action"]
-            .as_str()
-            .ok_or_else(|| "argumen 'action' wajib diisi".to_string())?;
-
-        match action {
-            "start" => {
-                let cmd = args["command"]
-                    .as_str()
-                    .filter(|s| !s.trim().is_empty())
-                    .ok_or_else(|| "argumen 'command' wajib diisi untuk aksi start".to_string())?;
-
-                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                let tasks_clone = Arc::clone(&self.tasks);
-                let kills_clone = Arc::clone(&self.kill_handles);
-                let cmd_str = cmd.to_string();
-
-                let mut child = tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&cmd_str)
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .map_err(|e| format!("Gagal mengeksekusi '{}': {}", cmd_str, e))?;
-
-                let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
-
-                {
-                    let mut lock = self.tasks.lock().map_err(|e| e.to_string())?;
-                    lock.insert(
-                        id,
-                        BgTaskInfo {
-                            id,
-                            command: cmd_str.clone(),
-                            status: "running".to_string(),
-                            output: String::new(),
-                        },
-                    );
-                }
-                if let Ok(mut k_lock) = self.kill_handles.lock() {
-                    k_lock.insert(id, kill_tx);
-                }
-
-                let stdout_pipe = child.stdout.take();
-                let stderr_pipe = child.stderr.take();
-                let out_task = tokio::spawn(async move {
-                    let mut buf = Vec::new();
-                    if let Some(mut s) = stdout_pipe {
-                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
-                    }
-                    buf
-                });
-                let err_task = tokio::spawn(async move {
-                    let mut buf = Vec::new();
-                    if let Some(mut s) = stderr_pipe {
-                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut s, &mut buf).await;
-                    }
-                    buf
-                });
-
-                tokio::spawn(async move {
-                    let was_killed;
-                    let wait_status;
-                    tokio::select! {
-                        res = child.wait() => {
-                            was_killed = false;
-                            wait_status = res;
-                        }
-                        _ = &mut kill_rx => {
-                            was_killed = true;
-                            let _ = child.kill().await;
-                            wait_status = child.wait().await;
-                        }
-                    }
-
-                    if let Ok(mut k_lock) = kills_clone.lock() {
-                        k_lock.remove(&id);
-                    }
-
-                    let stdout_bytes = out_task.await.unwrap_or_default();
-                    let stderr_bytes = err_task.await.unwrap_or_default();
-                    let stdout = String::from_utf8_lossy(&stdout_bytes);
-                    let stderr = String::from_utf8_lossy(&stderr_bytes);
-
-                    let (status, text) = if was_killed {
-                        ("killed".to_string(), format!("Killed:\n{}{}", stdout, stderr))
-                    } else {
-                        match wait_status {
-                            Ok(st) => {
-                                let code = st.code().unwrap_or(-1);
-                                let label = if st.success() { "completed" } else { "failed" };
-                                (
-                                    label.to_string(),
-                                    format!("Exit code {}:\n{}{}", code, stdout, stderr),
-                                )
-                            }
-                            Err(e) => ("error".to_string(), format!("Gagal mengeksekusi: {}", e)),
-                        }
-                    };
-
-                    if let Ok(mut lock) = tasks_clone.lock() {
-                        if let Some(item) = lock.get_mut(&id) {
-                            if item.status != "killed" {
-                                item.status = status;
-                            }
-                            item.output = text;
-                        }
-                    }
-                });
-
-                Ok(json!({
-                    "status": "started",
-                    "id": id,
-                    "command": cmd,
-                    "message": format!("Perintah dijalankan di background dengan ID #{}", id)
-                }))
-            }
-            "list" => {
-                let lock = self.tasks.lock().map_err(|e| e.to_string())?;
-                let list: Vec<BgTaskInfo> = lock.values().cloned().collect();
-                Ok(json!({
-                    "count": list.len(),
-                    "tasks": list
-                }))
-            }
-            "output" => {
-                let id = args["id"]
-                    .as_u64()
-                    .map(|n| n as u32)
-                    .ok_or_else(|| "argumen 'id' wajib diisi untuk aksi output".to_string())?;
-
-                let lock = self.tasks.lock().map_err(|e| e.to_string())?;
-                let item = lock
-                    .get(&id)
-                    .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
-
-                Ok(json!({
-                    "id": id,
-                    "status": item.status,
-                    "output": truncate(&item.output, 10_000)
-                }))
-            }
-            "kill" => {
-                let id = args["id"]
-                    .as_u64()
-                    .map(|n| n as u32)
-                    .ok_or_else(|| "argumen 'id' wajib diisi untuk aksi kill".to_string())?;
-
-                {
-                    let mut lock = self.tasks.lock().map_err(|e| e.to_string())?;
-                    if let Some(item) = lock.get_mut(&id) {
-                        item.status = "killed".to_string();
-                    } else {
-                        return Err(format!("Task background #{} tidak ditemukan", id));
-                    }
-                }
-                if let Ok(mut k_lock) = self.kill_handles.lock() {
-                    if let Some(tx) = k_lock.remove(&id) {
-                        let _ = tx.send(());
-                    }
-                }
-                Ok(json!({
-                    "status": "killed",
-                    "id": id,
-                    "message": format!("Task background #{} dihentikan", id)
-                }))
-            }
-            other => Err(format!("Aksi '{}' tidak dikenal untuk tool background", other)),
-        }
-    }
-}
-
-// ===========================================================================
-// 4. SubagentsPlugin (Fondasi Orkestrasi Multi-Agen)
+// 3. SubagentsPlugin (Fondasi Orkestrasi Multi-Agen)
 // ===========================================================================
 
 pub struct SubagentsPlugin;
@@ -957,63 +658,6 @@ mod tests {
         assert!(tools.get("web_search").is_some());
         assert!(tools.get("fetch_page").is_some());
         assert!(tools.get("background").is_none()); // Tidak diaktifkan
-    }
-
-    #[tokio::test]
-    async fn reg011_background_kill_terminates_os_child_and_preserves_killed_status() {
-        let plugin = BackgroundPlugin::new();
-        let mut reg = ToolRegistry::new();
-        plugin.register_tools(&mut reg);
-        let tool = reg.get("background").expect("tool background harus terdaftar");
-
-        assert_eq!(plugin.active_count(), 0);
-        assert_eq!(
-            plugin.channel_status(),
-            Some(("background", json!({ "active": 0 })))
-        );
-
-        let started = tool
-            .execute(&json!({
-                "action": "start",
-                "command": "sleep 30"
-            }))
-            .await
-            .unwrap();
-        assert_eq!(started["status"], "started");
-        let id = started["id"].as_u64().unwrap();
-        assert_eq!(plugin.active_count(), 1);
-        assert_eq!(
-            plugin.channel_status(),
-            Some(("background", json!({ "active": 1 })))
-        );
-
-        let killed = tool
-            .execute(&json!({
-                "action": "kill",
-                "id": id
-            }))
-            .await
-            .unwrap();
-        assert_eq!(killed["status"], "killed");
-
-        tokio::time::sleep(Duration::from_millis(80)).await;
-
-        let out = tool
-            .execute(&json!({
-                "action": "output",
-                "id": id
-            }))
-            .await
-            .unwrap();
-        assert_eq!(
-            out["status"], "killed",
-            "kill status must not be overwritten after child.kill()"
-        );
-        assert_eq!(plugin.active_count(), 0);
-        assert_eq!(
-            plugin.channel_status(),
-            Some(("background", json!({ "active": 0 })))
-        );
     }
 
     #[test]

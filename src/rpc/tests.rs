@@ -3072,4 +3072,544 @@ fn reg_err_poisoned_mutex_recovers_instead_of_panicking() {
     assert!(state["model"].is_object());
 }
 
+#[tokio::test]
+async fn rpc_background_channel_stop_terminates_active_tasks_and_notifier_emits_updates() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let tmp = TempConfigGuard::new("rpc_bg_channel_stop");
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["oopbot-background".to_string()],
+    )
+    .unwrap();
 
+    let raw = Arc::new(Mutex::new(Vec::new()));
+    struct TestBuf(Arc<Mutex<Vec<u8>>>);
+    impl io::Write for TestBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.lock().unwrap().flush()
+        }
+    }
+    set_output_sink(Some(Arc::new(Mutex::new(
+        Box::new(TestBuf(raw.clone())) as Box<dyn io::Write + Send + Sync>,
+    ))));
+
+    assert!(server.runtime.plugins.is_active("oopbot-background"));
+
+    let bg_plugin = server
+        .runtime
+        .plugins
+        .get_plugin("oopbot-background")
+        .unwrap();
+    let bg = bg_plugin
+        .as_any()
+        .and_then(|a| a.downcast_ref::<BackgroundPlugin>())
+        .unwrap();
+
+    // 1. Jalankan proses singkat yang selesai alami -> notifier harus memancarkan active: 0
+    let mut reg = crate::tools::ToolRegistry::new();
+    bg_plugin.register_tools(&mut reg);
+    let tool = reg.get("background").unwrap();
+
+    let fast = tool
+        .execute(&json!({ "action": "start", "command": "echo ok" }))
+        .await
+        .unwrap();
+    let fast_id = fast["id"].as_u64().unwrap();
+    tool.execute(&json!({ "action": "wait", "id": fast_id, "wait_timeout_secs": 5 }))
+        .await
+        .unwrap();
+
+    let mut notifier_emitted = false;
+    for _ in 0..30 {
+        let s = {
+            let mut guard = raw.lock().unwrap();
+            let txt = String::from_utf8_lossy(&guard).into_owned();
+            guard.clear();
+            txt
+        };
+        if s.contains("\"oopbot_channel\"") && s.contains("\"active\":0") {
+            notifier_emitted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    assert!(
+        notifier_emitted,
+        "Status notifier harus memancarkan active: 0 saat task selesai alami"
+    );
+
+    // 2. Jalankan proses sleep panjang lalu kirim channel command stop dari UI
+    tool.execute(&json!({ "action": "start", "command": "sleep 30" }))
+        .await
+        .unwrap();
+    assert_eq!(bg.active_count(), 1);
+
+    server
+        .runtime
+        .handle_channel_message("background", &json!({ "action": "stop" }));
+    assert_eq!(bg.active_count(), 0);
+
+    let bytes = raw.lock().unwrap().clone();
+    let emitted = String::from_utf8_lossy(&bytes);
+    assert!(emitted.contains("\"topic\":\"background\""));
+    assert!(emitted.contains("\"active\":0"));
+
+    set_output_sink(None);
+}
+
+#[tokio::test]
+async fn interact_notify_and_ask_user_roundtrip_and_abort_over_rpc() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_interact_roundtrip");
+
+    let (base_url, reqs, mock_handle) = spawn_mock_llm_server(move |idx, req| async move {
+        match idx {
+            0 => (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{
+                                "functionCall": {
+                                    "id": "call_notify_1",
+                                    "name": "notify_user",
+                                    "args": {
+                                        "message": "Tahap 1: analisa proyek",
+                                        "level": "info"
+                                    }
+                                }
+                            }]
+                        }
+                    }]
+                }),
+            ),
+            1 => (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{
+                                "functionCall": {
+                                    "id": "call_ask_1",
+                                    "name": "ask_user",
+                                    "args": {
+                                        "title": "Pilih target deploy?",
+                                        "kind": "select",
+                                        "options": ["staging", "prod"]
+                                    }
+                                }
+                            }]
+                        }
+                    }]
+                }),
+            ),
+            2 => {
+                let s = req.body.to_string();
+                let reply = if s.contains("prod") && s.contains("answered") {
+                    "Siap deploy ke prod."
+                } else {
+                    "Jawaban tidak terbaca"
+                };
+                (200, gemini_text_resp(reply, 40, 12))
+            }
+            // Prompt ke-2 memicu ask_user confirm untuk menguji abort membatalkan pending_ui_requests
+            _ => (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{
+                                "functionCall": {
+                                    "id": "call_ask_abort",
+                                    "name": "ask_user",
+                                    "args": {
+                                        "title": "Konfirmasi hapus?",
+                                        "kind": "confirm",
+                                        "message": "Aksi ini permanen"
+                                    }
+                                }
+                            }]
+                        }
+                    }]
+                }),
+            ),
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "test-google-key",
+    );
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+    assert!(server.plugins.is_active("oopbot-interact"));
+    let tool_names = server.agent.tool_names();
+    assert!(tool_names.contains(&"notify_user"));
+    assert!(tool_names.contains(&"ask_user"));
+    let pending_ui = Arc::clone(&server.pending_ui_requests);
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
+    });
+
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p1", "type": "prompt", "message": "bantu deploy" }),
+    );
+    let p1 = recv_response(&mut out_rx, "p1", std::time::Duration::from_millis(500)).await;
+    assert_eq!(p1["data"]["disposition"], "started");
+
+    // 1. Terima notice notify_user
+    let notify_ev = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "extension_ui_request" && v["method"] == "notify"
+    })
+    .await;
+    assert_eq!(notify_ev["notifyType"], "info");
+    assert_eq!(notify_ev["message"], "Tahap 1: analisa proyek");
+
+    // 2. Terima dialog select ask_user & kirim jawaban user via extension_ui_response
+    let select_ev = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "extension_ui_request" && v["method"] == "select"
+    })
+    .await;
+    assert_eq!(select_ev["title"], "Pilih target deploy?");
+    assert_eq!(select_ev["options"], json!(["staging", "prod"]));
+    let req_id = select_ev["id"].as_str().unwrap().to_string();
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "type": "extension_ui_response", "id": req_id, "value": "prod" }),
+    );
+
+    let reply = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "message_end"
+            && v["message"]["role"] == "assistant"
+            && v["message"]["stopReason"] == "stop"
+    })
+    .await;
+    assert_eq!(reply["message"]["content"][0]["text"], "Siap deploy ke prod.");
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+    assert!(pending_ui.lock().unwrap().is_empty());
+    assert!(reqs.lock().unwrap().len() >= 3);
+
+    // 3. Abort saat ask_user confirm sedang menunggu -> guard harus membersihkan pending_ui_requests
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p2", "type": "prompt", "message": "hapus data" }),
+    );
+    let _ = recv_response(&mut out_rx, "p2", std::time::Duration::from_millis(500)).await;
+    let confirm_ev = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "extension_ui_request" && v["method"] == "confirm"
+    })
+    .await;
+    assert_eq!(confirm_ev["title"], "Konfirmasi hapus?");
+    assert!(!pending_ui.lock().unwrap().is_empty());
+
+    send_cmd(&cmd_tx, json!({ "id": "ab_ui", "type": "abort" }));
+    let settled_ab = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == true
+    })
+    .await;
+    assert_eq!(settled_ab["aborted"], true);
+    let _ = recv_response(&mut out_rx, "ab_ui", std::time::Duration::from_secs(2)).await;
+    assert!(pending_ui.lock().unwrap().is_empty());
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+}
+
+#[tokio::test]
+async fn background_completion_auto_wakeup_when_idle() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_bg_wakeup_idle");
+
+    let (base_url, reqs, mock_handle) = spawn_mock_llm_server(move |idx, req| async move {
+        match idx {
+            0 => (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{
+                                "functionCall": {
+                                    "id": "call_bg_start",
+                                    "name": "background",
+                                    "args": {
+                                        "action": "start",
+                                        "label": "quick-job",
+                                        "command": "sleep 0.25 && echo DONE_WAKEUP"
+                                    }
+                                }
+                            }]
+                        }
+                    }]
+                }),
+            ),
+            1 => (
+                200,
+                gemini_text_resp("Tugas background sudah berjalan, aku akan kabari setelah selesai.", 30, 15),
+            ),
+            _ => {
+                let body_s = req.body.to_string();
+                let reply = if body_s.contains("DONE_WAKEUP")
+                    && body_s.contains("Background Task Finished")
+                {
+                    "Laporan otomatis: quick-job selesai dengan DONE_WAKEUP."
+                } else {
+                    "Wakeup tanpa output tail"
+                };
+                (200, gemini_text_resp(reply, 50, 15))
+            }
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "test-google-key",
+    );
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["oopbot-background".to_string()],
+    )
+    .unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
+    });
+
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p1", "type": "prompt", "message": "jalankan quick-job" }),
+    );
+    let _ = recv_response(&mut out_rx, "p1", std::time::Duration::from_millis(500)).await;
+
+    // 1. Tunggu giliran awal selesai & agen kembali Idle
+    let _settled1 = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    // 2. Tanpa mengirim perintah baru, agen harus bangun otomatis dengan pesan role=custom
+    let custom_ev = recv_matching(&mut out_rx, std::time::Duration::from_secs(4), |v| {
+        v["type"] == "message_end" && v["message"]["role"] == "custom"
+    })
+    .await;
+    assert_eq!(custom_ev["message"]["customType"], "oopbot-background-wakeup");
+    assert_eq!(custom_ev["message"]["display"], true);
+    let custom_txt = custom_ev["message"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("");
+    assert!(custom_txt.contains("quick-job"), "got: {}", custom_txt);
+
+    let wakeup_reply = recv_matching(&mut out_rx, std::time::Duration::from_secs(4), |v| {
+        v["type"] == "message_end"
+            && v["message"]["role"] == "assistant"
+            && v["message"]["stopReason"] == "stop"
+            && v["message"]["content"][0]["text"]
+                .as_str()
+                .map(|t| t.contains("Laporan otomatis"))
+                .unwrap_or(false)
+    })
+    .await;
+    assert_eq!(
+        wakeup_reply["message"]["content"][0]["text"],
+        "Laporan otomatis: quick-job selesai dengan DONE_WAKEUP."
+    );
+    let _settled2 = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+    assert!(reqs.lock().unwrap().len() >= 3);
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+}
+
+#[tokio::test]
+async fn background_completion_queues_followup_when_streaming() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_bg_wakeup_streaming");
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gate_srv = Arc::clone(&gate);
+    let (http_blocked_tx, http_blocked_rx) = tokio::sync::oneshot::channel::<()>();
+    let http_blocked_tx = Arc::new(Mutex::new(Some(http_blocked_tx)));
+
+    let (base_url, _reqs, mock_handle) = spawn_mock_llm_server(move |idx, req| {
+        let gate_srv = Arc::clone(&gate_srv);
+        let http_blocked_tx = Arc::clone(&http_blocked_tx);
+        async move {
+            match idx {
+                0 => {
+                    if let Some(tx) = http_blocked_tx.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                    gate_srv.notified().await;
+                    (200, gemini_text_resp("Turn utama selesai.", 25, 10))
+                }
+                _ => {
+                    let s = req.body.to_string();
+                    let reply = if s.contains("QUEUED_WAKEUP_OK") {
+                        "Follow-up background diproses otomatis."
+                    } else {
+                        "Follow-up tidak sesuai"
+                    };
+                    (200, gemini_text_resp(reply, 40, 10))
+                }
+            }
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "test-google-key",
+    );
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["oopbot-background".to_string()],
+    )
+    .unwrap();
+
+    // Ambil background tool langsung agar kita bisa start task saat LLM sedang Streaming
+    let mut reg = crate::tools::ToolRegistry::new();
+    server
+        .runtime
+        .plugins
+        .get_plugin("oopbot-background")
+        .unwrap()
+        .register_tools(&mut reg);
+    let bg_tool = reg.get("background").unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server.run_loop_with_input(io::BufReader::new(reader)).await.unwrap();
+    });
+
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    // 1. Mulai turn streaming yang tertahan di gate mock LLM
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p_busy", "type": "prompt", "message": "tunggu bentar" }),
+    );
+    let _ = recv_response(&mut out_rx, "p_busy", std::time::Duration::from_millis(500)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), http_blocked_rx)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // 2. Jalankan task background cepat sementara agen masih Streaming
+    bg_tool
+        .execute(&json!({
+            "action": "start",
+            "label": "stream-job",
+            "command": "echo QUEUED_WAKEUP_OK"
+        }))
+        .await
+        .unwrap();
+
+    // 3. Tunggu queue_update berisi ringkasan wakeup di followUp
+    let qu = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "queue_update"
+            && v["followUp"]
+                .as_array()
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+    })
+    .await;
+    assert!(qu["followUp"][0].as_str().unwrap_or("").contains("stream-job"));
+
+    // 4. Lepas gate HTTP -> coordinator langsung memproses follow-up wakeup otomatis
+    gate.notify_one();
+
+    let custom_ev = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "message_end" && v["message"]["role"] == "custom"
+    })
+    .await;
+    assert_eq!(custom_ev["message"]["customType"], "oopbot-background-wakeup");
+
+    let followup_reply = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "message_end"
+            && v["message"]["role"] == "assistant"
+            && v["message"]["content"][0]["text"]
+                .as_str()
+                .map(|t| t.contains("Follow-up background diproses otomatis"))
+                .unwrap_or(false)
+    })
+    .await;
+    assert_eq!(
+        followup_reply["message"]["content"][0]["text"],
+        "Follow-up background diproses otomatis."
+    );
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+}
