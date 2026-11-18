@@ -53,10 +53,12 @@ class OopbotDatabaseTest {
 
       db.sessions.saveMessagesSync("/s/a.jsonl", 10L, messagesA.toString(), bodyA)
       db.sessions.saveMessagesSync("/s/b.jsonl", 20L, messagesB.toString(), bodyB)
+      db.sessions.saveMessagesSync("/s/c.jsonl", 30L, "[]", "AND OR NOT NEAR operator words")
 
-      val allPaths = setOf("/s/a.jsonl", "/s/b.jsonl")
+      val allPaths = setOf("/s/a.jsonl", "/s/b.jsonl", "/s/c.jsonl")
       assertEquals(setOf("/s/b.jsonl"), db.sessions.searchMessages("kuber", allPaths))
-      assertEquals(setOf("/s/a.jsonl"), db.sessions.searchMessages("NOT OR (fail) \"token\"", allPaths))
+      assertEquals(setOf("/s/a.jsonl"), db.sessions.searchMessages("(fail) \"token\" *pytest*", allPaths))
+      assertEquals(setOf("/s/c.jsonl"), db.sessions.searchMessages("NOT OR AND NEAR", allPaths))
       assertEquals(setOf("/s/a.jsonl"), db.sessions.searchMessages("c++ stag", allPaths))
       assertEquals(emptySet<String>(), db.sessions.searchMessages("kuber", setOf("/s/a.jsonl")))
       assertEquals(emptySet<String>(), db.sessions.searchMessages("   ", allPaths))

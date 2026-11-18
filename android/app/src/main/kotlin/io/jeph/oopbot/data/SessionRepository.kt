@@ -164,7 +164,7 @@ internal class SessionRepository(
    * host's workspaces; throws like [delete], or [JSONException].
    */
   suspend fun listNow(): List<SessionInfo> {
-    val listed = hostClient.sessions()
+    val listed = hostClient.sessions().sortedWith(SESSION_ORDER)
     sessionsState.value = listed
     listingsFlow.tryEmit(listed)
     loadedState.value = true
@@ -195,5 +195,6 @@ internal class SessionRepository(
   private companion object {
     const val TAG = "OOPBoT"
     const val NOT_FOUND = "not_found"
+    val SESSION_ORDER = compareByDescending<SessionInfo> { it.modified }.thenBy { it.path }
   }
 }

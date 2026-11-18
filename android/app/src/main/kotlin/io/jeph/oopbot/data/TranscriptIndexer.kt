@@ -74,9 +74,7 @@ internal object TranscriptIndexer {
   private fun appendAssistantBlock(sb: StringBuilder, block: JSONObject) {
     when (block.optString("type")) {
       "text" -> appendChunk(sb, block.optString("text"))
-
       "thinking" -> appendChunk(sb, block.optString("thinking"))
-
       "toolCall" -> appendToolCall(sb, block)
     }
   }
