@@ -14,7 +14,7 @@ Gradle multi-component Android workspace building the OOPBoT Jetpack Compose app
 - **Debug vs Release Coexistence:** `debug` builds MUST use `applicationIdSuffix = ".debug"`, `isPseudoLocalesEnabled = true`, and separate `TermuxBuild` folder/port constants (`src/debug/.../TermuxBuild.kt` vs `src/release/.../TermuxBuild.kt`) so OOPBoT Dev never collides with a release install inside Termux.
 - **R8 Full Mode & Reflection Keep Rules:** Release builds run `isMinifyEnabled = true`, `isShrinkResources = true`, and `android.enableR8.fullMode=true`. `proguard-rules.pro` strips `Log.v`/`Log.d` calls in release (`-assumenosideeffects`), and `litertlm-rules.pro` MUST remain intact because LiteRT-LM invokes Kotlin callbacks from native JNI by class/method name.
 - **Detekt Completeness Gate:** `detektDebug` MUST compile cleanly with zero `"compiler errors found during analysis"` (classpath explicitly includes `compileDebugKotlin` and `compileDebugJavaWithJavac` for AIDL types).
-- **Static & Unit Gate Parity:** CI (`.github/workflows/android-test.yml`) requires `ktlintCheck`, `detektDebug`, `detektDebugUnitTest`, `testDebugUnitTest` (with `-Poopbot.composeReports=true` verified by `android/scripts/check-compose-reports.py`), and `pnpm run check` in `android/host` to pass.
+- **Static & Unit Gate Parity:** CI (`.github/workflows/android-test.yml`) requires `ktlintCheck`, `detektDebug`, `detektDebugUnitTest`, `testDebugUnitTest`, `:app:compileDebugKotlin` with `-Poopbot.composeReports=true` (verified by `android/scripts/check-compose-reports.py`), and `pnpm run check` in `android/host` to pass.
 
 ## Work Guidance
 - Use `gradle -Poopbot.composeReports=true :app:compileReleaseKotlin` locally when diagnosing Compose stability or skippability regressions.
@@ -22,8 +22,8 @@ Gradle multi-component Android workspace building the OOPBoT Jetpack Compose app
 - Keep `pnpm-lock.yaml` and pinned SHA-256 source archives reproducible; never remove SHA-256 verification in `PinnedSources`.
 
 ## Verification
-- `cd android && gradle -Poopbot.composeReports=true :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue`
-- Compose stability check: `python3 android/scripts/check-compose-reports.py android/app/build/compose_compiler`
+- `cd android && gradle :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue`
+- Compose stability check: `cd android && gradle -Poopbot.composeReports=true :app:compileDebugKotlin --no-daemon --stacktrace && python3 scripts/check-compose-reports.py app/build/compose_compiler`
 - Host TS gate: `cd android/host && pnpm run check`
 
 ## Child graph Index

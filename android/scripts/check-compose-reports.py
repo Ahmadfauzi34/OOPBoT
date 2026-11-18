@@ -51,15 +51,22 @@ def parse_classes(text: str) -> dict[str, str]:
     return classes
 
 
-def parse_composables(text: str) -> dict[str, list[str]]:
-    composables: dict[str, list[str]] = {}
+def parse_composables(text: str) -> dict[str, list[tuple[str, str]]]:
+    composables: dict[str, list[tuple[str, str]]] = {}
     pattern = re.compile(r"^(.*?)\bfun\s+([^\s(]+)\(")
-    for line in text.splitlines():
-        stripped = line.strip()
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
         match = pattern.match(stripped)
         if match:
             modifiers, name = match.groups()
-            composables.setdefault(name, []).append(modifiers)
+            block = [lines[i]]
+            while i + 1 < len(lines) and not lines[i].strip().endswith(")"):
+                i += 1
+                block.append(lines[i])
+            composables.setdefault(name, []).append((modifiers, "\n".join(block)))
+        i += 1
     return composables
 
 
@@ -79,17 +86,19 @@ def main() -> int:
     for path in class_files:
         classes.update(parse_classes(path.read_text(encoding="utf-8")))
 
-    composables: dict[str, list[str]] = {}
+    composables: dict[str, list[tuple[str, str]]] = {}
     for path in composable_files:
-        for name, mods in parse_composables(path.read_text(encoding="utf-8")).items():
-            composables.setdefault(name, []).extend(mods)
+        for name, entries in parse_composables(path.read_text(encoding="utf-8")).items():
+            composables.setdefault(name, []).extend(entries)
 
     errors: list[str] = []
     for name in REQUIRED_STABLE_CLASSES:
         status = classes.get(name)
         if status is None:
-            # Some Kotlin versions qualify nested classes or omit package names differently; fallback suffix match.
-            suffix_matches = [v for k, v in classes.items() if k.endswith(f".{name}")]
+            dollar_name = name.replace(".", "$")
+            suffix_matches = [
+                v for k, v in classes.items() if k.endswith(f".{name}") or k.endswith(f".{dollar_name}")
+            ]
             status = suffix_matches[0] if suffix_matches else None
         if status is None:
             errors.append(f"Class '{name}' missing from Compose class stability report")
@@ -97,11 +106,12 @@ def main() -> int:
             errors.append(f"Class '{name}' regressed to 'unstable' in Compose class report")
 
     for name in REQUIRED_SKIPPABLE_COMPOSABLES:
-        sigs = composables.get(name)
-        if not sigs:
+        entries = composables.get(name)
+        if not entries:
             errors.append(f"Composable '{name}' missing from Compose composables report")
-        elif not all("skippable" in sig for sig in sigs):
-            errors.append(f"Composable '{name}' is not skippable: {sigs}")
+        elif not all("skippable" in mods for mods, _ in entries):
+            details = "\n".join(block for mods, block in entries if "skippable" not in mods)
+            errors.append(f"Composable '{name}' is not skippable:\n{details}")
 
     unstable = sorted(k for k, v in classes.items() if v == "unstable")
     print(f"Compose report summary: {len(classes)} classes ({len(unstable)} unstable), {len(composables)} composables")

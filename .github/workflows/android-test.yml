@@ -72,14 +72,18 @@ jobs:
         with:
           gradle-version: '9.8.2'
 
-      - name: Run Android ktlint, detekt, Compose reports & JVM unit tests
+      - name: Run Android ktlint, detekt & JVM unit tests
         working-directory: android
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gradle -Poopbot.composeReports=true :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue
+        run: gradle :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue
 
-      - name: Verify Compose stability and skippability gates
-        run: python3 android/scripts/check-compose-reports.py android/app/build/compose_compiler
+      - name: Generate and verify Compose stability reports
+        working-directory: android
+        run: |
+          rm -rf app/build/compose_compiler
+          gradle -Poopbot.composeReports=true :app:compileDebugKotlin --no-daemon --stacktrace
+          python3 scripts/check-compose-reports.py app/build/compose_compiler
 
       - name: Upload Android unit test, lint & Compose reports
         if: always()
