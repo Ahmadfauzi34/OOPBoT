@@ -6,14 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Changed (Pending in [PR #37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37))
-- Replace fixed `tween(220)` panel and stack transitions with `PanelFlingSpring` (`DampingRatioNoBouncy`, `StiffnessMediumLow`) in `MainScreen` and `StackTransition`.
-- Eliminate mid-drag recompositions in `MainScreen`, `WorkspacePane`, and `FileExplorer` using `snapshotFlow`, `derivedStateOf`, and lambda state readers (`isCovered`, `isOpen`), plus offscreen `alpha` culling in `MobilePanels`.
-- Isolate `StreamList` (`ChatStream`) from background `markdown.version` and `ChatImages.decodeVersion` updates while scrolled up (`follow == false`), and hoist static `OopbotMarkdown` lambdas.
+### Changed
+- Replace fixed `tween(220)` panel and stack transitions with `PanelFlingSpring` (`DampingRatioNoBouncy`, `StiffnessMediumLow`) in `MainScreen` and `StackTransition` ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
+- Eliminate mid-drag recompositions in `MainScreen`, `WorkspacePane`, and `FileExplorer` using `snapshotFlow`, `derivedStateOf`, and lambda state readers (`isCovered`, `isOpen`), plus offscreen `alpha` culling in `MobilePanels` ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
+- Isolate `StreamList` (`ChatStream`) from background `markdown.version` and `ChatImages.decodeVersion` updates while scrolled up (`follow == false`), and hoist static `OopbotMarkdown` lambdas ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
 
-### Added (Pending in [PR #37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37))
-- Automated Compose compiler stability and skippability verification in CI (`android/scripts/check-compose-reports.py` over `:app:compileDebugKotlin -Poopbot.composeReports=true`).
-- Direct Android framework `SQLiteOpenHelper` verification (`AndroidSqlDbTest`) via Robolectric 4.16.1 across API 29 (`minSdk`) and API 35.
+### Added
+- Automated Compose compiler stability and skippability verification in CI (`android/scripts/check-compose-reports.py` over `:app:compileDebugKotlin -Poopbot.composeReports=true`) ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
+- Direct Android framework `SQLiteOpenHelper` verification (`AndroidSqlDbTest`) via Robolectric 4.16.1 across API 29 (`minSdk`) and API 35 ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
 
 ## [0.5.11] - 2026-11-18
 
