@@ -1,12 +1,20 @@
 package io.jeph.oopbot.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.jeph.oopbot.agent.AgentProcess
@@ -14,6 +22,7 @@ import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.chat.ChatScreen
 import io.jeph.oopbot.ui.chat.ChatViews
 import io.jeph.oopbot.ui.chat.rememberPaneChats
+import io.jeph.oopbot.ui.components.LocalPotsSimmer
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.files.ExplorerPanel
 import io.jeph.oopbot.ui.workspace.PaneControls
@@ -149,4 +158,68 @@ internal fun PaneExplorer(
     onOpenFile = { path -> cwd?.let { closeOrSwap(graph.files.open(pane, it, path)) } },
     onOpenCommit = { commit -> cwd?.let { closeOrSwap(graph.commits.open(pane, it, commit)) } },
   )
+}
+
+@Suppress("LongParameterList")
+@Composable
+internal fun WorkspacePaneSlot(
+  pane: Pane,
+  item: PaneItem<AgentProcess>?,
+  panels: PanePanels,
+  splitAvailable: Boolean,
+  closesSplit: Boolean,
+  actions: ShellActions,
+  snackbar: SnackbarStackState,
+  onOpenSettings: () -> Unit,
+  onOpenProviders: () -> Unit,
+  onOpenOnboarding: () -> Unit,
+  sidebar: @Composable (pane: Pane, onShownInSplit: (() -> Unit)?) -> Unit,
+) {
+  val views = LocalContext.current.appGraph.chatViews
+  val panelState = panels[pane]
+  val hasOpenPanel by remember(panelState) { derivedStateOf { panelState.targetValue != Panel.Chat } }
+  // The session sheet belongs to the pane rather than either of its screens, so it stays open when archiving from
+  // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
+  var tabsOpen by rememberSaveable { mutableStateOf(false) }
+  val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
+  val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
+  val swapPanes = { panels.swapFrom(pane) }
+  BackHandler(enabled = hasOpenPanel) { panels.show(pane, Panel.Chat) }
+  SidePanelOpenedEffect(panelState)
+  MobilePanels(
+    modifier = Modifier.onTouch { panels.active = pane },
+    state = panelState,
+    sidebar = {
+      // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
+      val shimmer by remember(panelState) { derivedStateOf { panelState.targetValue == Panel.Sidebar } }
+      CompositionLocalProvider(LocalPotsSimmer provides shimmer) { sidebar(pane, onShownInSplit) }
+    },
+    workspace = {
+      // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
+      WorkspacePane(
+        item = item,
+        isCovered = { panels.isCovered(pane) },
+        actions = actions,
+        views = views,
+        controls = controls,
+        onOpenSettings = onOpenSettings,
+        onOpenProviders = onOpenProviders,
+        onOpenOnboarding = onOpenOnboarding,
+      )
+    },
+    explorer = {
+      PaneExplorer(
+        pane = pane,
+        item = item,
+        isOpen = { panelState.settledValue == Panel.Explorer },
+        snackbar = snackbar,
+        onSwapPanes = swapPanes,
+      ) { panels.show(pane, Panel.Chat) }
+    },
+  )
+  if (tabsOpen && item != null) {
+    WorkspaceTabsSheet(pane, item.cwd, actions, snackbar, controls.shownTab, onShownInSplit, swapPanes) {
+      tabsOpen = false
+    }
+  }
 }

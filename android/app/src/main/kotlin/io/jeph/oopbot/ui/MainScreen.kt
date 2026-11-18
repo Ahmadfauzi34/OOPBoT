@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -54,7 +53,6 @@ import io.jeph.oopbot.agent.ChatLocation
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.terminal.TerminalSession
 import io.jeph.oopbot.ui.chat.ChatScreen
-import io.jeph.oopbot.ui.components.LocalPotsSimmer
 import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.files.ExplorerPanel
@@ -66,7 +64,6 @@ import io.jeph.oopbot.ui.terminal.TerminalScreen
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
 import io.jeph.oopbot.ui.workspace.PaneControls
-import io.jeph.oopbot.ui.workspace.WorkspaceTabsSheet
 import io.jeph.oopbot.ui.workspace.rememberPaneItems
 import io.jeph.oopbot.ui.workspace.splitScreenAvailable
 import io.jeph.oopbot.workspace.Pane
@@ -297,7 +294,7 @@ private fun ShellNotices(actions: ShellActions, snackbar: SnackbarStackState) {
  * and remote hosts waits until the sidebar slide settles to avoid frame drops mid-transition.
  */
 @Composable
-private fun SidePanelOpenedEffect(state: AnchoredDraggableState<Panel>) {
+internal fun SidePanelOpenedEffect(state: AnchoredDraggableState<Panel>) {
   val keyboard = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
   val graph = LocalContext.current.appGraph
@@ -456,70 +453,6 @@ private fun WorkspacePanes(
   }
 }
 
-@Suppress("LongParameterList")
-@Composable
-private fun WorkspacePaneSlot(
-  pane: Pane,
-  item: PaneItem<AgentProcess>?,
-  panels: PanePanels,
-  splitAvailable: Boolean,
-  closesSplit: Boolean,
-  actions: ShellActions,
-  snackbar: SnackbarStackState,
-  onOpenSettings: () -> Unit,
-  onOpenProviders: () -> Unit,
-  onOpenOnboarding: () -> Unit,
-  sidebar: @Composable (pane: Pane, onShownInSplit: (() -> Unit)?) -> Unit,
-) {
-  val views = LocalContext.current.appGraph.chatViews
-  val panelState = panels[pane]
-  val hasOpenPanel by remember(panelState) { derivedStateOf { panelState.targetValue != Panel.Chat } }
-  // The session sheet belongs to the pane rather than either of its screens, so it stays open when archiving from
-  // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
-  var tabsOpen by rememberSaveable { mutableStateOf(false) }
-  val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
-  val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
-  val swapPanes = { panels.swapFrom(pane) }
-  BackHandler(enabled = hasOpenPanel) { panels.show(pane, Panel.Chat) }
-  SidePanelOpenedEffect(panelState)
-  MobilePanels(
-    modifier = Modifier.onTouch { panels.active = pane },
-    state = panelState,
-    sidebar = {
-      // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
-      val shimmer by remember(panelState) { derivedStateOf { panelState.targetValue == Panel.Sidebar } }
-      CompositionLocalProvider(LocalPotsSimmer provides shimmer) { sidebar(pane, onShownInSplit) }
-    },
-    workspace = {
-      // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
-      WorkspacePane(
-        item = item,
-        isCovered = { panels.isCovered(pane) },
-        actions = actions,
-        views = views,
-        controls = controls,
-        onOpenSettings = onOpenSettings,
-        onOpenProviders = onOpenProviders,
-        onOpenOnboarding = onOpenOnboarding,
-      )
-    },
-    explorer = {
-      PaneExplorer(
-        pane = pane,
-        item = item,
-        isOpen = { panelState.settledValue == Panel.Explorer },
-        snackbar = snackbar,
-        onSwapPanes = swapPanes,
-      ) { panels.show(pane, Panel.Chat) }
-    },
-  )
-  if (tabsOpen && item != null) {
-    WorkspaceTabsSheet(pane, item.cwd, actions, snackbar, controls.shownTab, onShownInSplit, swapPanes) {
-      tabsOpen = false
-    }
-  }
-}
-
 /**
  * Back in the panes: shows what the pane last touched showed before, else what the other showed; composed before the
  * panes, so their side panels, sheets and dialogs take Back first.
@@ -535,7 +468,7 @@ private fun PaneHistoryBack(panels: PanePanels, shownPanes: List<Pane>) {
 }
 
 /** Runs [action] as a touch starts anywhere within, before the children see it and without taking it from them. */
-private fun Modifier.onTouch(action: () -> Unit): Modifier = pointerInput(Unit) {
+internal fun Modifier.onTouch(action: () -> Unit): Modifier = pointerInput(Unit) {
   awaitEachGesture {
     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
     action()

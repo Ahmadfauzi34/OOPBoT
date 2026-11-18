@@ -26,12 +26,10 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -57,7 +55,6 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.git.ChangesContent
-import io.jeph.oopbot.ui.git.ChangesPane
 import io.jeph.oopbot.ui.git.ExplorerTab
 import io.jeph.oopbot.ui.git.GitLoss
 import io.jeph.oopbot.ui.git.GitWorkspace
@@ -70,9 +67,6 @@ import io.jeph.oopbot.ui.sidebar.rememberFolderNames
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 /**
@@ -146,51 +140,6 @@ internal fun ExplorerPanel(
       else -> ExplorerChangesPane(repository, isOpen, snackbar, detect, onOpenCommit, content)
     }
   }
-}
-
-@Composable
-private fun ExplorerOpenEffects(
-  state: FileExplorerState?,
-  repository: GitWorkspace?,
-  filesShown: Boolean,
-  isOpen: () -> Boolean,
-  scope: CoroutineScope,
-  detect: suspend () -> Unit,
-) {
-  // Launched in the panel's scope, so switching back to Changes mid-listing doesn't abort it.
-  LaunchedEffect(state, filesShown) {
-    if (!filesShown) return@LaunchedEffect
-    snapshotFlow(isOpen)
-      .distinctUntilChanged()
-      .filter { it }
-      .collect { scope.launch { state?.refresh() } }
-  }
-  LaunchedEffect(repository) {
-    snapshotFlow(isOpen)
-      .distinctUntilChanged()
-      .filter { it }
-      .collect { detect() }
-  }
-}
-
-@Composable
-private fun ExplorerChangesPane(
-  workspace: GitWorkspace,
-  isOpen: () -> Boolean,
-  snackbar: SnackbarStackState,
-  onDetect: suspend () -> Unit,
-  onOpenCommit: (GitCommit) -> Unit,
-  modifier: Modifier,
-) {
-  val open by remember { derivedStateOf(isOpen) }
-  ChangesPane(
-    workspace = workspace,
-    open = open,
-    snackbar = snackbar,
-    onDetect = onDetect,
-    onOpenCommit = onOpenCommit,
-    modifier = modifier,
-  )
 }
 
 /**

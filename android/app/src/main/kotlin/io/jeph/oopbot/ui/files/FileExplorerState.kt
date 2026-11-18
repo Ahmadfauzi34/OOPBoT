@@ -1,19 +1,33 @@
 package io.jeph.oopbot.ui.files
 
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Modifier
 import io.jeph.oopbot.host.FileEntry
 import io.jeph.oopbot.host.FileError
+import io.jeph.oopbot.host.GitCommit
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.WorkspaceFolders
+import io.jeph.oopbot.ui.components.SnackbarStackState
+import io.jeph.oopbot.ui.git.ChangesPane
+import io.jeph.oopbot.ui.git.GitWorkspace
 import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 
 /** The workspace's top folder, as the `files` host spells it. */
 internal const val ROOT_FOLDER = "."
@@ -304,4 +318,49 @@ internal class FileExplorerState(
 
   /** Why a request failed, and the connection failure's code for a remote workspace's host. */
   private class Failure(val message: String, val code: String?)
+}
+
+@Composable
+internal fun ExplorerOpenEffects(
+  state: FileExplorerState?,
+  repository: GitWorkspace?,
+  filesShown: Boolean,
+  isOpen: () -> Boolean,
+  scope: CoroutineScope,
+  detect: suspend () -> Unit,
+) {
+  // Launched in the panel's scope, so switching back to Changes mid-listing doesn't abort it.
+  LaunchedEffect(state, filesShown) {
+    if (!filesShown) return@LaunchedEffect
+    snapshotFlow(isOpen)
+      .distinctUntilChanged()
+      .filter { it }
+      .collect { scope.launch { state?.refresh() } }
+  }
+  LaunchedEffect(repository) {
+    snapshotFlow(isOpen)
+      .distinctUntilChanged()
+      .filter { it }
+      .collect { detect() }
+  }
+}
+
+@Composable
+internal fun ExplorerChangesPane(
+  workspace: GitWorkspace,
+  isOpen: () -> Boolean,
+  snackbar: SnackbarStackState,
+  onDetect: suspend () -> Unit,
+  onOpenCommit: (GitCommit) -> Unit,
+  modifier: Modifier,
+) {
+  val open by remember { derivedStateOf(isOpen) }
+  ChangesPane(
+    workspace = workspace,
+    open = open,
+    snackbar = snackbar,
+    onDetect = onDetect,
+    onOpenCommit = onOpenCommit,
+    modifier = modifier,
+  )
 }
