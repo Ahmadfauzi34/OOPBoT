@@ -35,6 +35,7 @@ import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownPadding
 import com.mikepenz.markdown.utils.resolveImageAlt
+import io.jeph.oopbot.ui.theme.OopbotColors
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
@@ -64,37 +65,46 @@ fun OopbotMarkdown(
     )
   }
   val state = rememberParsedMarkdown(markdown, cache)
-  val render: @Composable (Modifier) -> Unit = { contentModifier ->
-    Markdown(
-      state = state,
-      modifier = contentModifier,
-      colors =
-        markdownColor(
-          text = colors.foreground,
-          codeBackground = colors.surface2,
-          inlineCodeBackground = colors.surface2,
-          dividerColor = colors.border,
-        ),
-      typography = typography(body),
-      padding = markdownPadding(block = OopbotTokens.Spacing.s6, codeBlock = CODE_BLOCK_PADDING),
-      dimens = markdownDimens(codeBackgroundCornerSize = OopbotTokens.Radius.base),
-      components =
-        markdownComponents(
-          codeFence = { MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
-          codeBlock = { MarkdownCodeBlock(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
-          table = { MarkdownTable(it.content, it.node, it.typography.table) },
-        ),
-      // The library animates each text block's size by default, which relayouts every frame a streamed
-      // block grows and leaves the chat's end moving after the text has landed.
-      animations = markdownAnimations(animateTextSize = { this }),
-      annotator = imageAltAnnotator(),
-    )
-  }
   if (selectable) {
-    SelectionContainer(modifier = modifier) { render(Modifier.fillMaxWidth()) }
+    SelectionContainer(modifier = modifier) {
+      OopbotMarkdownContent(state = state, colors = colors, body = body, modifier = Modifier.fillMaxWidth())
+    }
   } else {
-    render(modifier.fillMaxWidth())
+    OopbotMarkdownContent(state = state, colors = colors, body = body, modifier = modifier.fillMaxWidth())
   }
+}
+
+@Composable
+private fun OopbotMarkdownContent(
+  state: State,
+  colors: OopbotColors,
+  body: TextStyle,
+  modifier: Modifier,
+) {
+  Markdown(
+    state = state,
+    modifier = modifier,
+    colors =
+      markdownColor(
+        text = colors.foreground,
+        codeBackground = colors.surface2,
+        inlineCodeBackground = colors.surface2,
+        dividerColor = colors.border,
+      ),
+    typography = typography(body),
+    padding = markdownPadding(block = OopbotTokens.Spacing.s6, codeBlock = CODE_BLOCK_PADDING),
+    dimens = markdownDimens(codeBackgroundCornerSize = OopbotTokens.Radius.base),
+    components =
+      markdownComponents(
+        codeFence = { MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
+        codeBlock = { MarkdownCodeBlock(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
+        table = { MarkdownTable(it.content, it.node, it.typography.table) },
+      ),
+    // The library animates each text block's size by default, which relayouts every frame a streamed
+    // block grows and leaves the chat's end moving after the text has landed.
+    animations = markdownAnimations(animateTextSize = { this }),
+    annotator = imageAltAnnotator(),
+  )
 }
 
 private val CODE_BLOCK_PADDING = PaddingValues(0.dp)
@@ -116,18 +126,18 @@ private val OopbotCodeBlock: @Composable (String, String?, TextStyle) -> Unit = 
 private fun rememberParsedMarkdown(markdown: String, cache: MarkdownCache?): State {
   val cached = remember(markdown, cache) { cache?.get(markdown) }
   var parsed by remember { mutableStateOf<State>(cached ?: State.Loading()) }
-  val latest by rememberUpdatedState(markdown to cache)
-  LaunchedEffect(cached != null) {
+  val latestMarkdown by rememberUpdatedState(markdown)
+  LaunchedEffect(cache, cached != null) {
     if (cached != null) return@LaunchedEffect
     // Conflated, so text that changes faster than it parses skips to the latest instead of queueing every delta.
-    snapshotFlow { latest }.conflate().collect { (text, latestCache) ->
+    snapshotFlow { latestMarkdown }.conflate().collect { text ->
       val shown = parsed
       val next = when {
         shown is State.Success && shown.content == text -> shown
-        else -> latestCache?.get(text) ?: parseOffMain(text)
+        else -> cache?.get(text) ?: parseOffMain(text)
       }
       parsed = next
-      latestCache?.put(text, next)
+      cache?.put(text, next)
     }
   }
   return cached ?: parsed

@@ -12,8 +12,10 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -153,11 +155,14 @@ internal fun modelSubtitle(config: ModelConfig): String? {
 /** 272000 → "272K", 1050000 → "1.05M", with the app language's digits and unit. */
 @Composable
 internal fun formatTokens(count: Long): String {
-  val numbers = NumberFormat.getNumberInstance().apply {
-    // A compact count reads as one short figure: 1000K, not 1,000K.
-    isGroupingUsed = false
-    maximumFractionDigits = 2
-    roundingMode = RoundingMode.HALF_UP
+  val locale = LocalConfiguration.current.locales[0]
+  val numbers = remember(locale) {
+    NumberFormat.getNumberInstance(locale).apply {
+      // A compact count reads as one short figure: 1000K, not 1,000K.
+      isGroupingUsed = false
+      maximumFractionDigits = 2
+      roundingMode = RoundingMode.HALF_UP
+    }
   }
   return when {
     count >= MILLION -> stringResource(R.string.model_tokens_millions, numbers.format(BigDecimal.valueOf(count, 6)))

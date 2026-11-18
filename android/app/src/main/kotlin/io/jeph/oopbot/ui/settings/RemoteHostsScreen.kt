@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -16,10 +18,12 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.data.OpenSshInstall
 import io.jeph.oopbot.data.RemoteHosts
+import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
+import kotlinx.coroutines.flow.first
 
 /**
  * Settings' row into the remote hosts, counting them. Like the providers row, it shows what the last refresh found
@@ -52,7 +56,11 @@ internal fun RemoteHostsScreen(onBack: () -> Unit, onAdd: () -> Unit, onOpenHost
   val remotes by remoteHosts.state.collectAsStateWithLifecycle()
   val connected by remoteHosts.connected.collectAsStateWithLifecycle()
   val refreshError by remoteHosts.refreshError.collectAsStateWithLifecycle()
-  LaunchedEffect(Unit) { remoteHosts.refresh() }
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
+  LaunchedEffect(Unit) {
+    snapshotFlow { settled }.first { it }
+    remoteHosts.refresh()
+  }
   SettingsPage(title = stringResource(R.string.remote_hosts_title), onBack = onBack) {
     if (remotes.hosts.isEmpty()) {
       SettingsCaption(text = stringResource(R.string.remote_hosts_empty))

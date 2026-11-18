@@ -13,7 +13,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -28,6 +30,7 @@ import io.jeph.oopbot.host.BackupInfo
 import io.jeph.oopbot.host.Backups
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.TermuxBuild
+import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.chat.ConfirmDialog
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SimmeringPot
@@ -36,6 +39,7 @@ import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** The backups list in Termux, as loaded, or why it could not be. */
@@ -65,8 +69,12 @@ internal fun BackupsScreen(onBack: () -> Unit) {
   var deleting by remember { mutableStateOf<BackupInfo?>(null) }
   val failed = stringResource(R.string.provider_failed)
   val idle = task == null
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
   LaunchedEffect(idle, reloads) {
-    if (idle) list = loadBackups(backups)
+    if (!idle) return@LaunchedEffect
+    val loaded = loadBackups(backups)
+    snapshotFlow { settled }.first { it }
+    list = loaded
   }
   SettingsPage(title = stringResource(R.string.backups_title), onBack = onBack, snackbar = snackbar) {
     TaskSection(task, list, onCreate = backups::create)

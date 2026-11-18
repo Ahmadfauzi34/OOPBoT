@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -18,7 +19,16 @@ import io.jeph.oopbot.ui.components.SimmeringPot
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Termux version lookup state so Settings doesn't block composition on PackageManager IPC. */
+private sealed interface TermuxVersion {
+  data object Loading : TermuxVersion
+
+  data class Loaded(val version: String?) : TermuxVersion
+}
 
 /** Outcome of the last "Reinstall Pi runtime" run on this screen. */
 private sealed interface ReinstallOutcome {
@@ -35,15 +45,21 @@ private sealed interface ReinstallOutcome {
 internal fun AgentSection(graph: AppGraph, onOpenRunningAgents: () -> Unit, onOpenPermissions: () -> Unit) {
   val context = LocalContext.current
   val hostClient = graph.hostClient
-  val termuxVersion = remember(context) { TermuxInstall.version(context) }
+  val termuxVersion by produceState<TermuxVersion>(TermuxVersion.Loading, context) {
+    value = TermuxVersion.Loaded(withContext(Dispatchers.IO) { TermuxInstall.version(context) })
+  }
   val hello by hostClient.lastHello.collectAsStateWithLifecycle()
   val installing by hostClient.installing.collectAsStateWithLifecycle()
   var progressLine by remember { mutableStateOf<String?>(null) }
   var outcome by remember { mutableStateOf<ReinstallOutcome?>(null) }
   val failed = stringResource(R.string.provider_failed)
+  val notInstalled = stringResource(R.string.settings_termux_not_installed)
   val status =
     listOfNotNull(
-      termuxVersion ?: stringResource(R.string.settings_termux_not_installed),
+      when (val current = termuxVersion) {
+        TermuxVersion.Loading -> null
+        is TermuxVersion.Loaded -> current.version ?: notInstalled
+      },
       hello?.let { current ->
         current.oopbotVersion?.let { stringResource(R.string.settings_oopbot_version, it) }
           ?: stringResource(R.string.settings_pi_missing)

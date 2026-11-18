@@ -3,6 +3,7 @@ package io.jeph.oopbot.ui.chat
 import android.icu.text.NumberFormat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -32,7 +33,14 @@ internal fun localModelActivity(process: AgentProcess, model: JSONObject?): Stri
 @Composable
 private fun activityText(activity: SessionActivity): String {
   val locale = LocalConfiguration.current.locales[0]
-  val count = NumberFormat.getIntegerInstance(locale)
+  val count = remember(locale) { NumberFormat.getIntegerInstance(locale) }
+  val percent = remember(locale) { NumberFormat.getPercentInstance(locale) }
+  val rate = remember(locale) {
+    NumberFormat.getInstance(locale).apply {
+      minimumFractionDigits = 1
+      maximumFractionDigits = 1
+    }
+  }
   return when (activity) {
     is SessionActivity.Queued -> {
       val waitingFor = activity.waitingFor
@@ -50,7 +58,7 @@ private fun activityText(activity: SessionActivity): String {
       stringResource(
         R.string.chat_local_loading,
         LocalModelCatalog.name(activity.modelId),
-        NumberFormat.getPercentInstance(locale).format(it),
+        percent.format(it),
       )
     } ?: stringResource(R.string.chat_local_loading_unknown, LocalModelCatalog.name(activity.modelId))
 
@@ -72,12 +80,6 @@ private fun activityText(activity: SessionActivity): String {
       )
     }
 
-    is SessionActivity.Writing -> {
-      val rate = NumberFormat.getInstance(locale).apply {
-        minimumFractionDigits = 1
-        maximumFractionDigits = 1
-      }
-      stringResource(R.string.chat_local_writing, rate.format(activity.tokensPerSecond))
-    }
+    is SessionActivity.Writing -> stringResource(R.string.chat_local_writing, rate.format(activity.tokensPerSecond))
   }
 }

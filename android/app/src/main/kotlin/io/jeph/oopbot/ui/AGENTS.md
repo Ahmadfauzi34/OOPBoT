@@ -21,6 +21,9 @@ Place every UI file strictly in its matching feature folder:
   - Prefer `Modifier.drawWithCache` over `drawBehind` / `drawWithContent` whenever creating `Brush`, gradient shaders, `Path`, or `Paint` objects per frame.
   - Reuse `Path` buffers via `Path.rewind()` instead of `reset()` on animated shapes (`SimmeringPot.kt`).
   - Cache `Stroke`, `TextStyle`, `NumberFormat`, and style allocations across recompositions with `remember(...)`; keep UI parse/highlight/split/thumbnail caches (`MarkdownCache`, `HighlightCache`, `SourceLinesCache`, `ThumbnailCache`) bounded by entry and memory/char budgets.
+  - Avoid subcomposition (`BoxWithConstraints`) inside scrolling Markdown items (`MarkdownTable.kt` uses `Modifier.layout` + `TableWidthsCache`).
+  - Keep swipe-to-remove row chrome (`SwipeAway.kt`) pre-composed for swipeable rows so drag frames run in layer/draw phases without per-frame or pixel-1 recomposition.
+  - Wrap `stackTransition` destinations in `TransitionFrame` (`StackTransition.kt`) and defer non-critical refreshes and heavy stream/asset mounts until `LocalTransitionSettled.current` settles; keep `PackageManager` and `AssetManager` reads off the main thread.
   - Keep `SelectionContainer` opt-in on large virtualized code lists (`FileScreen.kt`) and disabled while an assistant message is actively streaming (`OopbotMarkdown.kt`).
   - Provide stable `key` and `contentType` lambdas on `LazyColumn` / `LazyRow` item lists (`FileScreen.kt`, timelines, diffs, logs).
   - Annotate immutable UI state/model classes wrapping lists or sealed trees with `@Immutable` (`DiffDocument.kt`, `TimelineModels.kt`).

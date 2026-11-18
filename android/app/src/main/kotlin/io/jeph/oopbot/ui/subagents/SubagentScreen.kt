@@ -47,6 +47,7 @@ import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.data.SessionRepository
 import io.jeph.oopbot.host.HostClient
 import io.jeph.oopbot.host.HostRejected
+import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.chat.ChatStack
 import io.jeph.oopbot.ui.chat.ChatStream
 import io.jeph.oopbot.ui.chat.ChatView
@@ -67,6 +68,7 @@ import java.text.NumberFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONException
@@ -138,6 +140,7 @@ internal fun rememberSubagentTranscript(
   val currentMessages by rememberUpdatedState(messages)
   val attempt = remember { mutableIntStateOf(0) }
   val retry = remember(attempt) { { attempt.intValue += 1 } }
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
   return produceState<SubagentTranscript>(SubagentTranscript.Loading, source, attempt.intValue) {
     value = SubagentTranscript.Loading
     if (source == null) return@produceState
@@ -148,18 +151,23 @@ internal fun rememberSubagentTranscript(
     val path = try {
       transcriptPath(graph.hostClient, source)
     } catch (error: HostRejected) {
+      snapshotFlow { settled }.first { it }
       value = SubagentTranscript.Failed(error.error, retry)
       return@produceState
     } catch (error: IOException) {
+      snapshotFlow { settled }.first { it }
       value = SubagentTranscript.Failed(error.message ?: failed, retry)
       return@produceState
     }
     if (path == null) {
+      snapshotFlow { settled }.first { it }
       value = SubagentTranscript.CutOff
       return@produceState
     }
     snapshotFlow { currentMessages }.conflate().collect {
-      value = readTranscript(graph.sessionRepository, path, currentLive, value, failed, retry)
+      val next = readTranscript(graph.sessionRepository, path, currentLive, value, failed, retry)
+      if (value is SubagentTranscript.Loading) snapshotFlow { settled }.first { it }
+      value = next
       delay(RELOAD_MILLIS)
     }
   }

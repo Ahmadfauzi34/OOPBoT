@@ -63,19 +63,21 @@ internal fun WorkspacePane(
   ) { shown ->
     val leavingControls = remember(controls) { controls.forLeavingScreen() }
     val screenControls = if (transition.targetState == EnterExitState.Visible) controls else leavingControls
-    when (val shownItem = shown.item) {
-      is PaneItem.Tab -> WorkspaceTabScreen(shownItem.tab, screenControls)
+    TransitionFrame {
+      when (val shownItem = shown.item) {
+        is PaneItem.Tab -> WorkspaceTabScreen(shownItem.tab, screenControls)
 
-      is PaneItem.Chat, null -> ChatScreen(
-        shownItem?.process,
-        paneChats,
-        actions,
-        views,
-        screenControls,
-        onOpenSettings,
-        onOpenProviders,
-        onOpenOnboarding,
-      )
+        is PaneItem.Chat, null -> ChatScreen(
+          shownItem?.process,
+          paneChats,
+          actions,
+          views,
+          screenControls,
+          onOpenSettings,
+          onOpenProviders,
+          onOpenOnboarding,
+        )
+      }
     }
   }
 }

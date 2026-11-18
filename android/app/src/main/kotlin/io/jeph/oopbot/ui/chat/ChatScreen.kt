@@ -39,6 +39,7 @@ import io.jeph.oopbot.agent.TimelineState
 import io.jeph.oopbot.agent.askingSubagent
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.ShellActions
+import io.jeph.oopbot.ui.TransitionFrame
 import io.jeph.oopbot.ui.components.HeaderBar
 import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
@@ -103,24 +104,26 @@ internal fun ChatScreen(
       transitionSpec = { stackTransition(from = initialState.depth, to = targetState.depth) },
       label = "subagent",
     ) { shownSubagent ->
-      if (shownSubagent != null) {
-        ChatSubagentScreen(
-          controller = controller,
-          toolCallId = shownSubagent,
-          chatTitle = chatTitle(process),
-          controls = controls,
-          onBack = { subagent = null },
-        )
-      } else {
-        ChatContent(
-          controller,
-          snackbar,
-          controls,
-          onOpenProviders,
-          onOpenOnboarding,
-          onSheet = { sheet = it },
-          onOpenSubagent = { subagent = it },
-        )
+      TransitionFrame {
+        if (shownSubagent != null) {
+          ChatSubagentScreen(
+            controller = controller,
+            toolCallId = shownSubagent,
+            chatTitle = chatTitle(process),
+            controls = controls,
+            onBack = { subagent = null },
+          )
+        } else {
+          ChatContent(
+            controller,
+            snackbar,
+            controls,
+            onOpenProviders,
+            onOpenOnboarding,
+            onSheet = { sheet = it },
+            onOpenSubagent = { subagent = it },
+          )
+        }
       }
     }
     PublishChatActions(
