@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-11-18
+
+### Added
+- Automatic Google Search Grounding (`google_search`) via isolated Gemini `:generateContent` sub-calls in `WebAccessPlugin` when a Google Gemini provider is connected, with dynamic **Google Search** / **OOPBoT web access** switch branding in Settings (`ExtensionsSection`).
+- Multi-engine `WebAccessPlugin` fallback chain (`tavily`, `brave`, `serper`, `searxng`, DuckDuckGo HTML challenge detection, and zero-key public JSON endpoints: `ddg_instant`, `wikipedia` `en`/`id`, `github`, `hn`) with cleaned HTML page fetching.
+- GNU Bash command runner (`resolve_command_shell`) preferring `$PREFIX/bin/bash`, `/data/data/com.termux/files/usr/bin/bash`, or `/bin/bash` with `-c` (falling back to `sh -c`) across `run_shell` and `background` tasks so bash builtins (`time`, `history`, `[[ ... ]]`, `pipefail`, arrays, brace expansion) work reliably.
+
+### Fixed
+- Deferred fresh-install onboarding `AutoInstall` (`RunCommandService`) until returning from Termux after copying the setup command, preventing Termux's premature `Error Code: 2 (allow-external-apps)` notification.
+
 ## [0.5.12] - 2026-11-18
 
 ### Changed
