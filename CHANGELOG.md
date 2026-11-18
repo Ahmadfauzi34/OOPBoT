@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-11-18
+
 ### Changed
+- Build and sign R8-minified, resource-shrunk, 16 KB page-aligned release APKs (`:app:assembleRelease` + `sign-release-apk.sh`) in `.github/workflows/build-termux.yml`, and guard C/C++ JNI entrypoints (`TreeSitter`, `OpenClProbe`, `LlamaServer`) under R8 full mode.
 - Replace fixed `tween(220)` panel and stack transitions with `PanelFlingSpring` (`DampingRatioNoBouncy`, `StiffnessMediumLow`) in `MainScreen` and `StackTransition` ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
 - Eliminate mid-drag recompositions in `MainScreen`, `WorkspacePane`, and `FileExplorer` using `snapshotFlow`, `derivedStateOf`, and lambda state readers (`isCovered`, `isOpen`), plus offscreen `alpha` culling in `MobilePanels` ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
 - Isolate `StreamList` (`ChatStream`) from background `markdown.version` and `ChatImages.decodeVersion` updates while scrolled up (`follow == false`), and hoist static `OopbotMarkdown` lambdas ([#37](https://github.com/Ahmadfauzi34/OOPBoT/pull/37)).
@@ -138,7 +141,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - Initial clean release of the OOPBoT Termux Rust agent harness.
 
-[Unreleased]: https://github.com/Ahmadfauzi34/OOPBoT/compare/v0.5.11...HEAD
+[Unreleased]: https://github.com/Ahmadfauzi34/OOPBoT/compare/v0.5.12...HEAD
+[0.5.12]: https://github.com/Ahmadfauzi34/OOPBoT/compare/v0.5.11...v0.5.12
 [0.5.11]: https://github.com/Ahmadfauzi34/OOPBoT/compare/v0.5.10...v0.5.11
 [0.5.10]: https://github.com/Ahmadfauzi34/OOPBoT/compare/v0.5.9...v0.5.10
 [0.5.9]: https://github.com/Ahmadfauzi34/OOPBoT/compare/v0.5.8...v0.5.9

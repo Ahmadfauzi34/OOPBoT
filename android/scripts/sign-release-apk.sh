@@ -30,8 +30,9 @@ trap 'rm -rf "$work"' EXIT
 keystore="$work/release.p12"
 (
   umask 077
-  printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode >"$keystore"
+  printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode >"$keystore"
 )
+key_alias=$(printf '%s' "$RELEASE_KEY_ALIAS" | tr -d '[:space:]')
 
 # 16 KB page alignment keeps the APK installable on devices with 16 KB memory pages.
 "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$unsigned" "$work/aligned.apk"
@@ -40,7 +41,7 @@ keystore="$work/release.p12"
   --ks "$keystore" \
   --ks-type PKCS12 \
   --ks-pass env:RELEASE_KEYSTORE_PASSWORD \
-  --ks-key-alias "$RELEASE_KEY_ALIAS" \
+  --ks-key-alias "$key_alias" \
   --v4-signing-enabled false \
   --out "$signed" \
   "$work/aligned.apk"
@@ -48,7 +49,7 @@ keystore="$work/release.p12"
 certificates=$("$BUILD_TOOLS/apksigner" verify --print-certs "$signed")
 # apksigner prints one digest per signature scheme; they must all name the one release certificate.
 actual=$(sed -n 's/^.*certificate SHA-256 digest: //p' <<<"$certificates" | sort -u)
-expected=$(printf '%s' "$RELEASE_CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')
+expected=$(printf '%s' "$RELEASE_CERT_SHA256" | sed 's/^[[:space:]]*SHA256:[[:space:]]*//I' | tr -d ':[:space:]' | tr 'A-F' 'a-f')
 if [ "$actual" != "$expected" ]; then
   echo "$signed is signed by $actual, not the release certificate $expected" >&2
   exit 1

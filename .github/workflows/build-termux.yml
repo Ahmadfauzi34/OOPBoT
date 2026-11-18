@@ -130,17 +130,31 @@ jobs:
         with:
           gradle-version: '9.8.2'
 
-      - name: Build Debug APK (installable out-of-the-box)
+      - name: Build and sign R8 Release APK
         working-directory: android
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_CERT_SHA256: ${{ secrets.RELEASE_CERT_SHA256 }}
+          BUILD_TOOLS: ${{ env.ANDROID_HOME }}/build-tools/${{ env.BUILD_TOOLS_VERSION }}
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          gradle :app:assembleDebug -Poopbot.versionName="$VER" -Poopbot.versionCode=1
+          if [[ "$VER" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            VER_CODE=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))
+          else
+            VER_CODE=1
+          fi
+          gradle :app:assembleRelease -Poopbot.versionName="$VER" -Poopbot.versionCode="$VER_CODE" --no-daemon --stacktrace
           mkdir -p ../apk-dist
-          APK_FILE=$(find app/build -name "*.apk" | head -n 1)
-          echo "Found built APK: $APK_FILE"
-          test -n "$APK_FILE" && cp "$APK_FILE" "../apk-dist/oopbot-${GITHUB_REF_NAME}-arm64.apk"
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*-unsigned.apk" -o -name "*.apk" | head -n 1)
+          echo "Found unsigned release APK: $UNSIGNED_APK"
+          test -n "$UNSIGNED_APK"
+          ./scripts/sign-release-apk.sh "$UNSIGNED_APK" "../apk-dist/oopbot-${GITHUB_REF_NAME}-arm64.apk"
+          if [ -f app/build/outputs/mapping/release/mapping.txt ]; then
+            cp app/build/outputs/mapping/release/mapping.txt "../apk-dist/oopbot-${GITHUB_REF_NAME}-mapping.txt"
+          fi
           cd ../apk-dist
           sha256sum "oopbot-${GITHUB_REF_NAME}-arm64.apk" > "oopbot-${GITHUB_REF_NAME}-arm64.apk.sha256"
           ls -lh
