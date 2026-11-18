@@ -12,8 +12,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,7 +35,8 @@ private const val SHEET_MAX_HEIGHT = 0.8f
 /** `/session`: the session's name, file and id, message counts, tokens, context use and cost, as in Pi's terminal UI. */
 @Composable
 internal fun SessionInfoSheet(stats: JSONObject, name: String?, home: String?, onDismiss: () -> Unit) {
-  val numbers = NumberFormat.getIntegerInstance()
+  val locale = LocalConfiguration.current.locales[0]
+  val numbers = remember(locale) { NumberFormat.getIntegerInstance(locale) }
   val count = { key: String -> numbers.format(stats.optLong(key)) }
   OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = SHEET_MAX_HEIGHT) {
     Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {

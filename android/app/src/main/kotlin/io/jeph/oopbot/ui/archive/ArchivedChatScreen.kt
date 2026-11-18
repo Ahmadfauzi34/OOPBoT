@@ -22,7 +22,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +40,7 @@ import io.jeph.oopbot.agent.TimelineState
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.SessionInfo
+import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.ShellActions
 import io.jeph.oopbot.ui.chat.ChatStream
 import io.jeph.oopbot.ui.chat.ChatView
@@ -59,6 +62,7 @@ import io.jeph.oopbot.ui.workspace.sessionTitle
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONException
@@ -146,9 +150,10 @@ internal fun ArchivedChatScreen(
 private fun rememberTranscript(path: String, attempt: Int): State<Transcript> {
   val repository = LocalContext.current.appGraph.sessionRepository
   val failedToLoad = stringResource(R.string.archive_transcript_failed)
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
   return produceState<Transcript>(Transcript.Loading, path, attempt) {
     value = Transcript.Loading
-    value = try {
+    val loaded = try {
       val timeline = ChatTimeline()
       val messages = repository.messages(path)
       val saved = withContext(Dispatchers.IO) { repository.notices.load(path) }
@@ -166,6 +171,8 @@ private fun rememberTranscript(path: String, attempt: Int): State<Transcript> {
     } catch (_: JSONException) {
       Transcript.Failed(failedToLoad)
     }
+    snapshotFlow { settled }.first { it }
+    value = loaded
   }
 }
 

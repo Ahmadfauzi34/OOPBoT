@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -51,7 +52,9 @@ import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Settings: models, chats, appearance, extensions, agent, remote hosts, configuration and about cards under a header.
@@ -142,13 +145,14 @@ private fun SettingsContent(
 private fun ModelsSection(accounts: AccountRepository, onOpenProviders: () -> Unit) {
   val status by accounts.status.collectAsStateWithLifecycle()
   val locale = LocalConfiguration.current.locales[0]
+  val listFormatter = remember(locale) { ListFormatter.getInstance(locale) }
   val added = status?.let { current ->
     subscriptions.filter { current.isSignedIn(it.id) }.map { stringResource(it.title) } + current.custom.map { it.id }
   }
   val summary = when {
     added == null -> null
     added.isEmpty() -> stringResource(R.string.settings_providers_none)
-    else -> ListFormatter.getInstance(locale).format(added)
+    else -> listFormatter.format(added)
   }
   SettingsSection(title = stringResource(R.string.settings_section_models)) {
     SettingsRow(
@@ -307,8 +311,10 @@ private fun ConfigurationSection(graph: AppGraph, snackbar: SnackbarStackState, 
 @Composable
 private fun AboutSection(onOpenLicenses: () -> Unit) {
   val context = LocalContext.current
-  val version = remember(context) {
-    context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+  val version by produceState("", context) {
+    value = withContext(Dispatchers.IO) {
+      context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+    }
   }
   SettingsSection(title = stringResource(R.string.settings_section_about)) {
     SettingsRow(title = stringResource(R.string.settings_version)) { SettingsValue(version) }

@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +51,7 @@ import io.jeph.oopbot.agent.LiveSubagents
 import io.jeph.oopbot.agent.SubagentRun
 import io.jeph.oopbot.agent.SubagentStatus
 import io.jeph.oopbot.agent.TimelineItem
+import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.chat.ChatController
 import io.jeph.oopbot.ui.chat.PendingDialogCard
 import io.jeph.oopbot.ui.chat.SteerButton
@@ -64,6 +66,7 @@ import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.TabsButton
 import io.jeph.oopbot.ui.workspace.rememberWorkspaceTabs
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private val TRAY_SHAPE = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -152,8 +155,9 @@ internal fun ChatSubagentScreen(
  * the extension doesn't list the run, until it sent the log so far, and while the log holds no rows yet.
  */
 @Composable
-private fun rememberLiveTranscript(subagents: LiveSubagents, runId: String?): State<SubagentTranscript.Live?> =
-  produceState<SubagentTranscript.Live?>(null, subagents, runId) {
+private fun rememberLiveTranscript(subagents: LiveSubagents, runId: String?): State<SubagentTranscript.Live?> {
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
+  return produceState<SubagentTranscript.Live?>(null, subagents, runId) {
     value = null
     if (runId == null) return@produceState
     try {
@@ -161,16 +165,19 @@ private fun rememberLiveTranscript(subagents: LiveSubagents, runId: String?): St
       subagents.of(runId).collectLatest { live ->
         value = null
         live?.screenStates?.collect { state ->
-          value = state.takeIf { it.items.isNotEmpty() }?.let {
+          val next = state.takeIf { it.items.isNotEmpty() }?.let {
             val task = it.items.firstOrNull { item -> item is TimelineItem.User }
             SubagentTranscript.Live(it, task?.key, live.timeline::streamingArguments)
           }
+          if (value == null && next != null) snapshotFlow { settled }.first { it }
+          value = next
         }
       }
     } finally {
       subagents.unfollow(runId)
     }
   }
+}
 
 /**
  * The steers [run] hasn't read yet, one per line, while there are any. Edit takes them back into the steer box when

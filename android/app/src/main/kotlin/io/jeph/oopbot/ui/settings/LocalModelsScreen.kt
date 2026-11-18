@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -150,18 +151,20 @@ private fun statusTitle(state: RuntimeState): String = when (state) {
 @Composable
 private fun statusSummary(state: RuntimeState): String {
   val locale = LocalConfiguration.current.locales[0]
+  val percent = remember(locale) { NumberFormat.getPercentInstance(locale) }
+  val integer = remember(locale) { NumberFormat.getIntegerInstance(locale) }
   return when (state) {
     RuntimeState.Stopped -> stringResource(R.string.local_models_stopped_summary)
 
     is RuntimeState.Loading -> state.progress?.let {
-      stringResource(R.string.local_models_loading_summary, NumberFormat.getPercentInstance(locale).format(it))
+      stringResource(R.string.local_models_loading_summary, percent.format(it))
     } ?: stringResource(R.string.local_models_loading_summary_unknown)
 
     is RuntimeState.Ready -> stringResource(
       R.string.local_models_ready_summary,
       stringResource(state.engine.label),
       stringResource(state.backend.label),
-      NumberFormat.getIntegerInstance(locale).format(state.contextSize),
+      integer.format(state.contextSize),
     )
 
     is RuntimeState.Failed -> state.message

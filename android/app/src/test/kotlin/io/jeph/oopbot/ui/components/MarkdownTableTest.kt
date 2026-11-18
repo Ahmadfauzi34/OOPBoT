@@ -1,7 +1,9 @@
 package io.jeph.oopbot.ui.components
 
+import androidx.compose.ui.unit.Constraints
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,6 +43,33 @@ class MarkdownTableTest {
   fun aLongUnbreakableWordHoldsItsColumnOpenOnlyToTheCap() {
     val widths = columnWidths(intArrayOf(1000, 50), intArrayOf(1000, 600), available = 300, FLOOR, CAP)
     assertArrayEquals(intArrayOf(CAP, FLOOR), widths)
+  }
+
+  @Test
+  fun widthsCacheReusesWidthsAndAvoidsRemeasuringIntrinsicsOnResize() {
+    val cache = TableWidthsCache(columns = 3)
+    var intrinsicPasses = 0
+    val measure: (IntArray, IntArray) -> Unit = { minimums, naturals ->
+      intrinsicPasses += 1
+      minimums[0] = 60
+      minimums[1] = 30
+      minimums[2] = 70
+      naturals[0] = 100
+      naturals[1] = 40
+      naturals[2] = 900
+    }
+
+    val first = cache.widths(available = 400, FLOOR, CAP, measure)
+    val repeat = cache.widths(available = 400, FLOOR, CAP, measure)
+    val probe = cache.widths(available = Constraints.Infinity, FLOOR, CAP, measure)
+    val afterProbe = cache.widths(available = 400, FLOOR, CAP, measure)
+    val resized = cache.widths(available = 500, FLOOR, CAP, measure)
+
+    assertSame(first, repeat)
+    assertSame(first, afterProbe)
+    assertArrayEquals(intArrayOf(100, 40, 900), probe)
+    assertArrayEquals(intArrayOf(100, 40, 360), resized)
+    assertEquals(1, intrinsicPasses)
   }
 
   private companion object {

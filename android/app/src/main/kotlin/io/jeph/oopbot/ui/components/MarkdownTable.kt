@@ -1,20 +1,23 @@
 package io.jeph.oopbot.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.MultiContentMeasurePolicy
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CollectionInfo
 import androidx.compose.ui.semantics.CollectionItemInfo
 import androidx.compose.ui.semantics.collectionInfo
@@ -59,34 +62,89 @@ internal fun MarkdownTable(content: String, node: ASTNode, style: TextStyle) {
   }
   val rows = remember(table) { listOf(table.header) + table.body }
   val scrollState = rememberScrollState()
-  BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-    val available = constraints.maxWidth
-    val measurePolicy = remember(rows.size, table.columns, available) {
-      gridMeasurePolicy(rows.size, table.columns, available)
-    }
-    Layout(
-      contents = listOf(
-        {
-          rows.forEachIndexed { rowIndex, cells ->
-            val rowStyles = if (rowIndex == 0) cellStyles.header else cellStyles.body
-            cells.forEachIndexed { columnIndex, cell ->
-              TableCell(content, cell, rowStyles[columnIndex], annotator, rowIndex, columnIndex)
-            }
-          }
-        },
-        { repeat(rows.size - 1) { Box(Modifier.background(colors.surface2)) } },
-      ),
-      modifier = Modifier
-        .horizontalScroll(scrollState)
-        .clip(TABLE_SHAPE)
-        .background(colors.surface1)
-        .semantics { collectionInfo = CollectionInfo(rows.size, table.columns) },
-      measurePolicy = measurePolicy,
-    )
+  val viewport = remember { TableViewportWidth() }
+  val density = LocalDensity.current
+  val layoutDirection = LocalLayoutDirection.current
+  val widthsCache = remember(table, cellStyles, annotator, density, layoutDirection) {
+    TableWidthsCache(table.columns)
   }
+  val measurePolicy = remember(rows.size, table.columns, viewport, widthsCache) {
+    gridMeasurePolicy(rows.size, table.columns, viewport, widthsCache)
+  }
+  Layout(
+    contents = listOf(
+      {
+        rows.forEachIndexed { rowIndex, cells ->
+          val rowStyles = if (rowIndex == 0) cellStyles.header else cellStyles.body
+          cells.forEachIndexed { columnIndex, cell ->
+            TableCell(content, cell, rowStyles[columnIndex], annotator, rowIndex, columnIndex)
+          }
+        }
+      },
+      { repeat(rows.size - 1) { Box(Modifier.background(colors.surface2)) } },
+    ),
+    modifier = Modifier
+      .fillMaxWidth()
+      .wrapContentWidth(Alignment.Start)
+      .layout { measurable, constraints ->
+        viewport.available = constraints.maxWidth
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+      }
+      .horizontalScroll(scrollState)
+      .clip(TABLE_SHAPE)
+      .background(colors.surface1)
+      .semantics { collectionInfo = CollectionInfo(rows.size, table.columns) },
+    measurePolicy = measurePolicy,
+  )
 }
 
 private class TableStyles(val header: List<TextStyle>, val body: List<TextStyle>)
+
+/** Holds the outer finite viewport width measured just before [horizontalScroll] widens maxWidth to Infinity. */
+private class TableViewportWidth(var available: Int = 0)
+
+/**
+ * Caches measured cell intrinsic widths and the latest finite-width [columnWidths] result across repeated layout
+ * passes, avoiding redundant intrinsic measurements on scroll or vertical relayouts.
+ */
+internal class TableWidthsCache(private val columns: Int) {
+  private var minimums: IntArray? = null
+  private var naturals: IntArray? = null
+  private var lastAvailable = -1
+  private var lastFloor = -1
+  private var lastWordCap = -1
+  private var lastWidths: IntArray? = null
+
+  fun widths(
+    available: Int,
+    floor: Int,
+    wordCap: Int,
+    measureIntrinsics: (minimums: IntArray, naturals: IntArray) -> Unit,
+  ): IntArray {
+    val cachedWidths = lastWidths
+    if (cachedWidths != null && available == lastAvailable && floor == lastFloor && wordCap == lastWordCap) {
+      return cachedWidths
+    }
+    var mins = minimums
+    var nats = naturals
+    if (mins == null || nats == null) {
+      mins = IntArray(columns)
+      nats = IntArray(columns)
+      measureIntrinsics(mins, nats)
+      minimums = mins
+      naturals = nats
+    }
+    val computed = columnWidths(mins, nats, available, floor, wordCap)
+    if (available != Constraints.Infinity) {
+      lastAvailable = available
+      lastFloor = floor
+      lastWordCap = wordCap
+      lastWidths = computed
+    }
+    return computed
+  }
+}
 
 private val TABLE_SHAPE = RoundedCornerShape(16.dp)
 
@@ -122,19 +180,22 @@ private fun TableCell(
 }
 
 /**
- * Lays out the cells row by row in columns sized by [columnWidths] for [available], each row as tall as its tallest
- * cell, then the lines between rows.
+ * Lays out the cells row by row in columns sized by [columnWidths] for the captured viewport width, each row as tall
+ * as its tallest cell, then the lines between rows.
  */
-private fun gridMeasurePolicy(rows: Int, columns: Int, available: Int) =
+private fun gridMeasurePolicy(rows: Int, columns: Int, viewport: TableViewportWidth, widthsCache: TableWidthsCache) =
   MultiContentMeasurePolicy { (cells, lines), _ ->
-    val minimums = IntArray(columns)
-    val naturals = IntArray(columns)
-    cells.forEachIndexed { index, cell ->
-      val column = index % columns
-      minimums[column] = maxOf(minimums[column], cell.minIntrinsicWidth(Constraints.Infinity))
-      naturals[column] = maxOf(naturals[column], cell.maxIntrinsicWidth(Constraints.Infinity))
+    val widths = widthsCache.widths(
+      available = viewport.available,
+      floor = COLUMN_FLOOR.roundToPx(),
+      wordCap = WORD_CAP.roundToPx(),
+    ) { minimums, naturals ->
+      cells.forEachIndexed { index, cell ->
+        val column = index % columns
+        minimums[column] = maxOf(minimums[column], cell.minIntrinsicWidth(Constraints.Infinity))
+        naturals[column] = maxOf(naturals[column], cell.maxIntrinsicWidth(Constraints.Infinity))
+      }
     }
-    val widths = columnWidths(minimums, naturals, available, COLUMN_FLOOR.roundToPx(), WORD_CAP.roundToPx())
     val placed = cells.mapIndexed { index, cell -> cell.measure(Constraints.fixedWidth(widths[index % columns])) }
     val heights = IntArray(rows) { row -> (0 until columns).maxOf { placed[row * columns + it].height } }
     val lefts = widths.runningFold(0, Int::plus)

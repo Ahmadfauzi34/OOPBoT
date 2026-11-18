@@ -1,6 +1,8 @@
 package io.jeph.oopbot.ui
 
+import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -8,6 +10,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 
 /**
@@ -27,6 +36,28 @@ internal fun stackTransition(from: Int, to: Int): ContentTransform {
     else -> fadeIn(fade) togetherWith fadeOut(fade)
   }
   return transform.apply { targetContentZIndex = to.toFloat() }
+}
+
+/**
+ * Whether every enclosing [stackTransition] has settled on screen in [EnterExitState.Visible]. Expensive refreshes or
+ * full-screen stream mounts wait for this so the 220ms slide animation stays frame-steady.
+ */
+internal val LocalTransitionSettled = compositionLocalOf { true }
+
+/**
+ * Gives an animated stack destination a persistent hardware display-list layer for horizontal slides and publishes
+ * transition settlement via [LocalTransitionSettled].
+ */
+@Composable
+internal fun AnimatedVisibilityScope.TransitionFrame(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+  val settled = LocalTransitionSettled.current &&
+    transition.currentState == transition.targetState &&
+    transition.targetState == EnterExitState.Visible
+  CompositionLocalProvider(LocalTransitionSettled provides settled) {
+    Box(modifier = modifier.fillMaxSize().graphicsLayer()) {
+      content()
+    }
+  }
 }
 
 private const val SCREEN_SLIDE_MILLIS = 220

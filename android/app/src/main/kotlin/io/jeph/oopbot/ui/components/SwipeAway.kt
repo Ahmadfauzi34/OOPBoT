@@ -8,7 +8,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -93,8 +93,10 @@ internal fun SwipeAway(
       swipe.springBack()
     }
   }
-  val active by remember { derivedStateOf { swipe.offset.value > 0f } }
-  val armed by remember { derivedStateOf { isLeaving || swipe.offset.value >= width * RELEASE_THRESHOLD } }
+  val active = remember { derivedStateOf { swipe.offset.value > 0f } }
+  val armed = remember {
+    derivedStateOf { isLeaving || (width > 0 && swipe.offset.value >= width * RELEASE_THRESHOLD) }
+  }
   val haptics = LocalHapticFeedback.current
   val scope = rememberCoroutineScope()
   val flingVelocity = with(LocalDensity.current) { FLING_VELOCITY.toPx() }
@@ -105,7 +107,15 @@ internal fun SwipeAway(
         if (swipeEnabled && !leaving) swipeDrag(swipe, scope, haptics, flingVelocity) { latestOnSwiped() }
       },
   ) {
-    if (active) SwipeMark(mark, armed = armed, Modifier.matchParentSize())
+    // Keep the mark composed for swipeable rows so the first drag pixel runs purely in layer and draw phases.
+    if (swipeEnabled || leaving || active.value) {
+      SwipeMark(
+        icon = mark,
+        armed = armed,
+        visible = { swipe.offset.value > 0f },
+        modifier = Modifier.matchParentSize(),
+      )
+    }
     Box(
       modifier = Modifier
         .graphicsLayer { translationX = swipe.offset.value }
@@ -122,7 +132,9 @@ private class SwipeOffset {
   var dragging by mutableStateOf(false)
 
   suspend fun springBack() {
-    offset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+    if (offset.value != 0f || offset.isRunning) {
+      offset.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+    }
   }
 }
 
@@ -192,26 +204,31 @@ private suspend fun PointerInputScope.swipeDrag(
 
 /** The [icon] the swipe uncovers; it lights up and grows once letting go would remove the row. */
 @Composable
-private fun SwipeMark(@DrawableRes icon: Int, armed: Boolean, modifier: Modifier) {
+private fun SwipeMark(@DrawableRes icon: Int, armed: State<Boolean>, visible: () -> Boolean, modifier: Modifier) {
   val colors = oopbotColors
-  val background by animateColorAsState(if (armed) colors.accent else colors.surface3, label = "swipeMark")
-  val scale by animateFloatAsState(
-    targetValue = if (armed) 1.2f else 0.9f,
+  val isArmed = armed.value
+  val background = animateColorAsState(if (isArmed) colors.accent else colors.surface3, label = "swipeMark")
+  val scale = animateFloatAsState(
+    targetValue = if (isArmed) 1.2f else 0.9f,
     animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
     label = "swipeMarkScale",
   )
   Box(
-    modifier = modifier.background(background).padding(start = OopbotTokens.Spacing.s24),
+    modifier = modifier
+      .graphicsLayer { alpha = if (visible()) 1f else 0f }
+      .drawBehind { if (visible()) drawRect(background.value) }
+      .padding(start = OopbotTokens.Spacing.s24),
     contentAlignment = Alignment.CenterStart,
   ) {
     LucideIcon(
       icon = icon,
       contentDescription = null,
       modifier = Modifier.graphicsLayer {
-        scaleX = scale
-        scaleY = scale
+        val currentScale = scale.value
+        scaleX = currentScale
+        scaleY = currentScale
       },
-      tint = if (armed) colors.accentForeground else colors.foregroundMuted,
+      tint = if (isArmed) colors.accentForeground else colors.foregroundMuted,
     )
   }
 }

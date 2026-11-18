@@ -25,8 +25,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -36,6 +38,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.host.AuthStatus
 import io.jeph.oopbot.host.HostRejected
+import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.auth.LoginSheet
 import io.jeph.oopbot.ui.auth.ProviderLogo
 import io.jeph.oopbot.ui.components.HeaderBar
@@ -49,6 +52,7 @@ import io.jeph.oopbot.ui.components.scrollFades
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
 import java.io.IOException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -67,7 +71,11 @@ internal fun ProvidersScreen(
   val accounts = graph.accountRepository
   val status by accounts.status.collectAsStateWithLifecycle()
   val refreshError by accounts.refreshError.collectAsStateWithLifecycle()
-  LaunchedEffect(Unit) { accounts.refresh() }
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
+  LaunchedEffect(Unit) {
+    if (accounts.status.value != null) snapshotFlow { settled }.first { it }
+    accounts.refresh()
+  }
   SettingsPage(title = stringResource(R.string.providers_title), onBack = onBack) {
     val current = status
     val signedIn = subscriptions.filter { current?.isSignedIn(it.id) == true }

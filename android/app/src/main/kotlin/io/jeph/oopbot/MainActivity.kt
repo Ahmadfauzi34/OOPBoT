@@ -40,6 +40,7 @@ import io.jeph.oopbot.ui.ChatInboxOverlay
 import io.jeph.oopbot.ui.Destination
 import io.jeph.oopbot.ui.MainScreen
 import io.jeph.oopbot.ui.ShellActions
+import io.jeph.oopbot.ui.TransitionFrame
 import io.jeph.oopbot.ui.archive.ArchiveScreen
 import io.jeph.oopbot.ui.archive.ArchivedChatScreen
 import io.jeph.oopbot.ui.components.LoadingPill
@@ -155,9 +156,11 @@ private fun OopbotApp(graph: AppGraph, requestedChat: MutableStateFlow<ChatLocat
       contentKey = { AppNavigator.key(it.last()) },
       label = "navigation",
     ) { shown ->
-      val top = shown.last()
-      holder.SaveableStateProvider(AppNavigator.key(top)) {
-        Screen(shown, navigator, actions, drafts, requestedChat, onSidePanelOpen = { sidePanelOpen = it })
+      TransitionFrame {
+        val top = shown.last()
+        holder.SaveableStateProvider(AppNavigator.key(top)) {
+          Screen(shown, navigator, actions, drafts, requestedChat, onSidePanelOpen = { sidePanelOpen = it })
+        }
       }
     }
     // The waking pill sits above the inbox's, so both show when both are up.

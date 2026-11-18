@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -138,9 +140,11 @@ private fun StatText(text: String, color: Color) {
 /** [value] as a compact count, `1.2k`, with the app language's digits and unit. */
 @Composable
 private fun compactCount(value: Int): String {
+  val locale = LocalConfiguration.current.locales[0]
+  val formatter = remember(locale) { NumberFormat.getNumberInstance(locale).apply { isGroupingUsed = false } }
   val (scaled, unit) = compactScale(value)
   // A compact count reads as one short figure: 2147.5m, not 2,147.5m.
-  val number = NumberFormat.getNumberInstance().apply { isGroupingUsed = false }.format(scaled)
+  val number = formatter.format(scaled)
   return when (unit) {
     CountUnit.One -> number
     CountUnit.Thousand -> stringResource(R.string.git_count_thousands, number)

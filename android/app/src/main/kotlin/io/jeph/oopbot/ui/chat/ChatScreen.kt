@@ -39,6 +39,7 @@ import io.jeph.oopbot.agent.TimelineState
 import io.jeph.oopbot.agent.askingSubagent
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.ShellActions
+import io.jeph.oopbot.ui.TransitionFrame
 import io.jeph.oopbot.ui.components.HeaderBar
 import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
@@ -94,35 +95,17 @@ internal fun ChatScreen(
     }
     LaunchedEffect(controller) { controller.collectEffects() }
     LaunchedEffect(controller) { controller.steering.collectQueue() }
-    // The pane's own: a subagent shows in place of its chat and never in the other pane or as a tab of its own.
     var subagent by rememberSaveable { mutableStateOf<String?>(null) }
-    // Not while the chat slides out of the pane: Back then belongs to the screen taking its place.
-    BackHandler(enabled = subagent != null && !controls.leaving) { subagent = null }
-    AnimatedContent(
-      targetState = subagent,
-      transitionSpec = { stackTransition(from = initialState.depth, to = targetState.depth) },
-      label = "subagent",
-    ) { shownSubagent ->
-      if (shownSubagent != null) {
-        ChatSubagentScreen(
-          controller = controller,
-          toolCallId = shownSubagent,
-          chatTitle = chatTitle(process),
-          controls = controls,
-          onBack = { subagent = null },
-        )
-      } else {
-        ChatContent(
-          controller,
-          snackbar,
-          controls,
-          onOpenProviders,
-          onOpenOnboarding,
-          onSheet = { sheet = it },
-          onOpenSubagent = { subagent = it },
-        )
-      }
-    }
+    ChatPaneContent(
+      controller = controller,
+      subagent = subagent,
+      onSubagent = { subagent = it },
+      snackbar = snackbar,
+      controls = controls,
+      onOpenProviders = onOpenProviders,
+      onOpenOnboarding = onOpenOnboarding,
+      onSheet = { sheet = it },
+    )
     PublishChatActions(
       controller,
       controls.shownTab,
@@ -133,6 +116,48 @@ internal fun ChatScreen(
     )
     ChatSheets(controller, sheet, onSheet = { sheet = it }, onOpenSubagent = { subagent = it })
     ChatDialogs(controller, sheet, onSheet = { sheet = it }, onArchive = actions::archive)
+  }
+}
+
+@Composable
+private fun ChatPaneContent(
+  controller: ChatController,
+  subagent: String?,
+  onSubagent: (String?) -> Unit,
+  snackbar: SnackbarStackState,
+  controls: PaneControls,
+  onOpenProviders: () -> Unit,
+  onOpenOnboarding: () -> Unit,
+  onSheet: (ChatSheet) -> Unit,
+) {
+  // Not while the chat slides out of the pane: Back then belongs to the screen taking its place.
+  BackHandler(enabled = subagent != null && !controls.leaving) { onSubagent(null) }
+  AnimatedContent(
+    targetState = subagent,
+    transitionSpec = { stackTransition(from = initialState.depth, to = targetState.depth) },
+    label = "subagent",
+  ) { shownSubagent ->
+    TransitionFrame {
+      if (shownSubagent != null) {
+        ChatSubagentScreen(
+          controller = controller,
+          toolCallId = shownSubagent,
+          chatTitle = chatTitle(controller.process),
+          controls = controls,
+          onBack = { onSubagent(null) },
+        )
+      } else {
+        ChatContent(
+          controller,
+          snackbar,
+          controls,
+          onOpenProviders,
+          onOpenOnboarding,
+          onSheet = onSheet,
+          onOpenSubagent = { onSubagent(it) },
+        )
+      }
+    }
   }
 }
 
