@@ -76,6 +76,10 @@ fun OopbotMarkdown(
 
 @Composable
 private fun OopbotMarkdownContent(state: State, colors: OopbotColors, body: TextStyle, modifier: Modifier) {
+  val noTextAnimation = remember { NO_TEXT_ANIMATION }
+  val codeFence = remember { CODE_FENCE_COMPONENT }
+  val codeBlock = remember { CODE_BLOCK_COMPONENT }
+  val table = remember { TABLE_COMPONENT }
   Markdown(
     state = state,
     modifier = modifier,
@@ -91,18 +95,19 @@ private fun OopbotMarkdownContent(state: State, colors: OopbotColors, body: Text
     dimens = markdownDimens(codeBackgroundCornerSize = OopbotTokens.Radius.base),
     components =
       markdownComponents(
-        codeFence = { MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
-        codeBlock = { MarkdownCodeBlock(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
-        table = { MarkdownTable(it.content, it.node, it.typography.table) },
+        codeFence = codeFence,
+        codeBlock = codeBlock,
+        table = table,
       ),
     // The library animates each text block's size by default, which relayouts every frame a streamed
     // block grows and leaves the chat's end moving after the text has landed.
-    animations = markdownAnimations(animateTextSize = { this }),
+    animations = markdownAnimations(animateTextSize = noTextAnimation),
     annotator = imageAltAnnotator(),
   )
 }
 
 private val CODE_BLOCK_PADDING = PaddingValues(0.dp)
+private val NO_TEXT_ANIMATION: Modifier.() -> Modifier = { this }
 
 // CodeText is OOPBoT's one code style, so the library's code typography is ignored here.
 private val OopbotCodeBlock: @Composable (String, String?, TextStyle) -> Unit = { text, language, _ ->
@@ -110,6 +115,18 @@ private val OopbotCodeBlock: @Composable (String, String?, TextStyle) -> Unit = 
     modifier = Modifier.padding(vertical = OopbotTokens.Spacing.s6),
     label = language?.takeIf { it.isNotBlank() },
   ) { CodeText(text, language) }
+}
+
+private val CODE_FENCE_COMPONENT: com.mikepenz.markdown.compose.components.MarkdownComponent = {
+  MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock)
+}
+
+private val CODE_BLOCK_COMPONENT: com.mikepenz.markdown.compose.components.MarkdownComponent = {
+  MarkdownCodeBlock(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock)
+}
+
+private val TABLE_COMPONENT: com.mikepenz.markdown.compose.components.MarkdownComponent = {
+  MarkdownTable(it.content, it.node, it.typography.table)
 }
 
 /**

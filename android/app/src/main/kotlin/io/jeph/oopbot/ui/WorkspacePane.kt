@@ -6,9 +6,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.jeph.oopbot.agent.AgentProcess
@@ -35,7 +33,7 @@ import io.jeph.oopbot.workspace.sameAs
 @Composable
 internal fun WorkspacePane(
   item: PaneItem<AgentProcess>?,
-  covered: Boolean,
+  isCovered: () -> Boolean,
   actions: ShellActions,
   views: ChatViews,
   controls: PaneControls,
@@ -47,12 +45,11 @@ internal fun WorkspacePane(
   val stack = remember(panes, controls.pane) { PaneStack(panes, controls.pane, item) }
   val screen = stack.screenFor(item)
   val paneChats = rememberPaneChats()
-  val latestCovered by rememberUpdatedState(covered)
   AnimatedContent(
     targetState = screen,
     transitionSpec = {
       val (from, to) = initialState.depth to targetState.depth
-      if (latestCovered || from == to) {
+      if (isCovered() || from == to) {
         (EnterTransition.None togetherWith ExitTransition.None).apply { targetContentZIndex = to.toFloat() }
       } else {
         stackTransition(from, to)
@@ -131,7 +128,7 @@ internal fun ChatsOnScreen(chats: Set<AgentProcess>) {
 internal fun PaneExplorer(
   pane: Pane,
   item: PaneItem<AgentProcess>?,
-  open: Boolean,
+  isOpen: () -> Boolean,
   snackbar: SnackbarStackState,
   onSwapPanes: () -> Unit,
   onClose: () -> Unit,
@@ -145,7 +142,7 @@ internal fun PaneExplorer(
   }
   ExplorerPanel(
     cwd = cwd,
-    open = open,
+    isOpen = isOpen,
     selectedPath = shownFile?.path,
     snackbar = snackbar,
     onClose = onClose,

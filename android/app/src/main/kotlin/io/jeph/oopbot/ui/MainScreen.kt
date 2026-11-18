@@ -1,10 +1,8 @@
 package io.jeph.oopbot.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.compose.foundation.gestures.DraggableAnchors
@@ -26,13 +24,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -73,15 +74,14 @@ import io.jeph.oopbot.workspace.PaneItem
 import io.jeph.oopbot.workspace.WorkspaceTab
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
 private enum class Panel { Sidebar, Chat, Explorer }
 
-/** Paseo's programmatic panel slide: 220ms, standard easing. */
-private val PanelAnimation = tween<Float>(durationMillis = 220, easing = FastOutSlowInEasing)
-
-/** Gesture fling spring for side panels, carrying swipe momentum cleanly to rest. */
+/** Gesture fling and programmatic slide spring for side panels, carrying swipe momentum cleanly to rest. */
 private val PanelFlingSpring = spring<Float>(
   dampingRatio = Spring.DampingRatioNoBouncy,
   stiffness = Spring.StiffnessMediumLow,
@@ -123,7 +123,7 @@ private class PanePanels(
 
   fun show(pane: Pane, panel: Panel) {
     val state = get(pane)
-    if (state.targetValue != panel) scope.launch { state.animateTo(panel, PanelAnimation) }
+    if (state.targetValue != panel) scope.launch { state.animateTo(panel, PanelFlingSpring) }
   }
 
   /** Shows [panel] in [pane], or the pane's screen when [panel] already shows. */
@@ -204,8 +204,12 @@ internal fun MainScreen(
     for (pane in Pane.entries) panels.show(pane, Panel.Chat)
   })
   val shownPanes = if (splitAvailable && secondaryShown) Pane.entries else listOf(Pane.Primary)
-  val sidePanelOpen = shownPanes.any { panels[it].targetValue != Panel.Chat }
-  LaunchedEffect(sidePanelOpen) { onSidePanelOpen(sidePanelOpen) }
+  val currentShownPanes by rememberUpdatedState(shownPanes)
+  LaunchedEffect(panels) {
+    snapshotFlow { currentShownPanes.any { panels[it].targetValue != Panel.Chat } }
+      .distinctUntilChanged()
+      .collect(onSidePanelOpen)
+  }
 
   Box(modifier = Modifier.fillMaxSize()) {
     WorkspacePanes(
@@ -297,18 +301,24 @@ private fun SidePanelOpenedEffect(state: AnchoredDraggableState<Panel>) {
   val keyboard = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
   val graph = LocalContext.current.appGraph
-  val target = state.targetValue
-  val settled = state.settledValue
-  LaunchedEffect(target) {
-    if (target == Panel.Chat) return@LaunchedEffect
-    keyboard?.hide()
-    focusManager.clearFocus(force = true)
+  LaunchedEffect(state) {
+    snapshotFlow { state.targetValue }
+      .distinctUntilChanged()
+      .filter { it != Panel.Chat }
+      .collect {
+        keyboard?.hide()
+        focusManager.clearFocus(force = true)
+      }
   }
-  LaunchedEffect(settled) {
-    if (settled != Panel.Sidebar) return@LaunchedEffect
-    graph.sessionRepository.refresh()
-    // Hosts added, renamed or connected elsewhere label their workspaces as the sidebar opens.
-    graph.remoteHosts.refresh()
+  LaunchedEffect(state) {
+    snapshotFlow { state.settledValue }
+      .distinctUntilChanged()
+      .filter { it == Panel.Sidebar }
+      .collect {
+        graph.sessionRepository.refresh()
+        // Hosts added, renamed or connected elsewhere label their workspaces as the sidebar opens.
+        graph.remoteHosts.refresh()
+      }
   }
 }
 
@@ -344,15 +354,29 @@ private fun MobilePanels(
       // Dragging right (towards the sidebar) lowers the offset.
       .anchoredDraggable(state, reverseDirection = true, orientation = Orientation.Horizontal, flingBehavior = fling),
   ) {
-    Box(modifier = Modifier.fillMaxSize().graphicsLayer { translationX = -state.offsetOr(size.width) }) {
+    Box(
+      modifier = Modifier.fillMaxSize().graphicsLayer {
+        val x = -state.offsetOr(size.width)
+        translationX = x
+        alpha = if (x <= -size.width || x >= size.width) 0f else 1f
+      },
+    ) {
       sidebar()
     }
-    Box(modifier = Modifier.fillMaxSize().graphicsLayer { translationX = size.width - state.offsetOr(size.width) }) {
+    Box(
+      modifier = Modifier.fillMaxSize().graphicsLayer {
+        val x = size.width - state.offsetOr(size.width)
+        translationX = x
+        alpha = if (x <= -size.width || x >= size.width) 0f else 1f
+      },
+    ) {
       workspace()
     }
     Box(
       modifier = Modifier.fillMaxSize().graphicsLayer {
-        translationX = size.width * 2 - state.offsetOr(size.width)
+        val x = size.width * 2 - state.offsetOr(size.width)
+        translationX = x
+        alpha = if (x <= -size.width || x >= size.width) 0f else 1f
       },
     ) {
       explorer()
@@ -401,8 +425,14 @@ private fun WorkspacePanes(
     shownPanes.mapNotNullTo(HashSet()) { ((items[it] as? PaneItem.Tab)?.tab as? WorkspaceTab.Terminal)?.session },
   )
   PaneHistoryBack(panels, shownPanes)
-  val uncovered = shownPanes.filter { panels[it].targetValue == Panel.Chat }
-  ChatsOnScreen(uncovered.mapNotNullTo(HashSet()) { (items[it] as? PaneItem.Chat)?.process })
+  val visibleChats by remember(shownPanes, items, panels) {
+    derivedStateOf {
+      shownPanes
+        .filter { panels[it].targetValue == Panel.Chat }
+        .mapNotNullTo(HashSet()) { (items[it] as? PaneItem.Chat)?.process }
+    }
+  }
+  ChatsOnScreen(visibleChats)
   PaneRow(panels.swapped) {
     for (pane in shownPanes) {
       if (pane == Pane.Secondary) VerticalDivider(thickness = 1.dp, color = oopbotColors.border)
@@ -410,7 +440,7 @@ private fun WorkspacePanes(
       key(pane) {
         val item = items[pane]
         val panelState = panels[pane]
-        val panel = panelState.targetValue
+        val hasOpenPanel by remember(panelState) { derivedStateOf { panelState.targetValue != Panel.Chat } }
         // The session sheet belongs to the pane rather than either of its screens, so it stays open when archiving from
         // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
         var tabsOpen by rememberSaveable { mutableStateOf(false) }
@@ -418,24 +448,37 @@ private fun WorkspacePanes(
         val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
         val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
         val swapPanes = { panels.swapFrom(pane) }
-        BackHandler(enabled = panel != Panel.Chat) { panels.show(pane, Panel.Chat) }
+        BackHandler(enabled = hasOpenPanel) { panels.show(pane, Panel.Chat) }
         SidePanelOpenedEffect(panelState)
         MobilePanels(
           modifier = Modifier.onTouch { panels.active = pane },
           state = panelState,
           sidebar = {
             // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
-            val shimmer = LocalPotsSimmer provides (panel == Panel.Sidebar)
-            CompositionLocalProvider(shimmer) { sidebar(pane, onShownInSplit) }
+            val shimmer by remember(panelState) { derivedStateOf { panelState.targetValue == Panel.Sidebar } }
+            CompositionLocalProvider(LocalPotsSimmer provides shimmer) { sidebar(pane, onShownInSplit) }
           },
           workspace = {
             // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
-            val covered = panels.isCovered(pane)
-            WorkspacePane(item, covered, actions, views, controls, onOpenSettings, onOpenProviders, onOpenOnboarding)
+            WorkspacePane(
+              item = item,
+              isCovered = { panels.isCovered(pane) },
+              actions = actions,
+              views = views,
+              controls = controls,
+              onOpenSettings = onOpenSettings,
+              onOpenProviders = onOpenProviders,
+              onOpenOnboarding = onOpenOnboarding,
+            )
           },
           explorer = {
-            val explorerOpen = panelState.settledValue == Panel.Explorer
-            PaneExplorer(pane, item, explorerOpen, snackbar, swapPanes) { panels.show(pane, Panel.Chat) }
+            PaneExplorer(
+              pane = pane,
+              item = item,
+              isOpen = { panelState.settledValue == Panel.Explorer },
+              snackbar = snackbar,
+              onSwapPanes = swapPanes,
+            ) { panels.show(pane, Panel.Chat) }
           },
         )
         if (tabsOpen && item != null) {

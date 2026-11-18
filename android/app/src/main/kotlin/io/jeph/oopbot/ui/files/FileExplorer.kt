@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -68,6 +69,8 @@ import io.jeph.oopbot.ui.sidebar.rememberFolderNames
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
 /**
@@ -87,7 +90,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun ExplorerPanel(
   cwd: String?,
-  open: Boolean,
+  isOpen: () -> Boolean,
   selectedPath: String?,
   snackbar: SnackbarStackState,
   onClose: () -> Unit,
@@ -109,8 +112,19 @@ internal fun ExplorerPanel(
   val detect = rememberDetection(repository, trusted, snackbar)
   val filesShown = repository == null || shownTab == ExplorerTab.Files
   // Launched in the panel's scope, so switching back to Changes mid-listing doesn't abort it.
-  LaunchedEffect(state, open, filesShown) { if (open && filesShown) scope.launch { state?.refresh() } }
-  LaunchedEffect(repository, open) { if (open) detect() }
+  LaunchedEffect(state, filesShown) {
+    if (!filesShown) return@LaunchedEffect
+    snapshotFlow(isOpen)
+      .distinctUntilChanged()
+      .filter { it }
+      .collect { scope.launch { state?.refresh() } }
+  }
+  LaunchedEffect(repository) {
+    snapshotFlow(isOpen)
+      .distinctUntilChanged()
+      .filter { it }
+      .collect { detect() }
+  }
   Column(
     modifier = modifier
       .fillMaxSize()
