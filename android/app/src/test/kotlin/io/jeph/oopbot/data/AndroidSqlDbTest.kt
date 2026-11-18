@@ -89,7 +89,7 @@ class AndroidSqlDbTest {
         archived = mapOf("/s/archived.jsonl" to 111L),
         touched = mapOf("/s/touched.jsonl" to 222L),
         explorerTabs = mapOf("/w/one" to ExplorerTab.Files),
-        diffModes = mapOf("/w/one" to GitDiffMode.Unified),
+        diffModes = mapOf("/w/one" to GitDiffMode.Uncommitted),
         trustedRepositories = setOf("/w/one"),
         remoteHostsCache = null,
       ),
