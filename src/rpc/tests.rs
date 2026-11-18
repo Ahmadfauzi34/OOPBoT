@@ -34,6 +34,7 @@ fn formats_web_search_with_engine_note_and_source() {
         "engine": "fallback_public_apis",
         "count": 1,
         "note": "DuckDuckGo diblokir; menggunakan API publik.",
+        "summary": "Ringkasan hasil pencarian.",
         "results": [
             {
                 "title": "Tokio",
@@ -47,6 +48,7 @@ fn formats_web_search_with_engine_note_and_source() {
     assert!(!is_err);
     assert!(text.contains("(fallback_public_apis)"));
     assert!(text.contains("Catatan: DuckDuckGo diblokir"));
+    assert!(text.contains("Ringkasan: Ringkasan hasil pencarian."));
     assert!(text.contains("[Tokio](https://tokio.rs/) [github]"));
 }
 

@@ -184,10 +184,11 @@ private fun AppearanceSection(preferences: Preferences) {
 @Composable
 private fun ExtensionsSection(graph: AppGraph, snackbar: SnackbarStackState) {
   val disabled by graph.preferences.disabledExtensions.collectAsStateWithLifecycle()
+  val authStatus by graph.accountRepository.status.collectAsStateWithLifecycle()
   Column(verticalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s12)) {
     SettingsSection(title = stringResource(R.string.settings_section_extensions)) {
       BundledExtension.entries.forEach { extension ->
-        val switch = extension.switch ?: return@forEach
+        val (titleRes, summaryRes) = extensionDisplayCopy(extension, authStatus) ?: return@forEach
         val enabled = extension.id !in disabled
         val toggle = { on: Boolean ->
           graph.preferences.setExtensionEnabled(extension, on)
@@ -195,8 +196,8 @@ private fun ExtensionsSection(graph: AppGraph, snackbar: SnackbarStackState) {
           graph.registry.reloadIdle()
         }
         SettingsRow(
-          title = stringResource(switch.title),
-          subtitle = stringResource(switch.summary),
+          title = stringResource(titleRes),
+          subtitle = stringResource(summaryRes),
           modifier = Modifier.toggleable(value = enabled, role = Role.Switch, onValueChange = toggle),
         ) {
           SettingsSwitch(checked = enabled)

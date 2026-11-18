@@ -195,7 +195,10 @@ fn parse_ddg_results_handles_multiclass_and_uddg_redirect() {
 #[test]
 fn search_engine_parse_aliases_and_errors() {
     assert_eq!(SearchEngine::parse("").unwrap(), SearchEngine::Auto);
-    assert_eq!(SearchEngine::parse("google").unwrap(), SearchEngine::Serper);
+    assert_eq!(SearchEngine::parse("google_search").unwrap(), SearchEngine::GeminiSearch);
+    assert_eq!(SearchEngine::parse("google").unwrap(), SearchEngine::GeminiSearch);
+    assert_eq!(SearchEngine::parse("gemini").unwrap(), SearchEngine::GeminiSearch);
+    assert_eq!(SearchEngine::parse("serper").unwrap(), SearchEngine::Serper);
     assert_eq!(SearchEngine::parse("searx").unwrap(), SearchEngine::Searxng);
     assert_eq!(SearchEngine::parse("wiki").unwrap(), SearchEngine::Wikipedia);
     assert_eq!(SearchEngine::parse("gh").unwrap(), SearchEngine::Github);
@@ -534,3 +537,217 @@ async fn fetch_page_cleans_html_preserves_json_and_handles_403() {
 
     handle.abort();
 }
+
+#[test]
+fn config_load_from_dir_detects_gemini_auth_and_flash_model() {
+    let dir = std::env::temp_dir().join(format!("oopbot_ws_cfg_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    std::fs::write(
+        dir.join("auth.json"),
+        serde_json::to_string_pretty(&json!({
+            "google": { "type": "api_key", "key": "AIza-test-secret" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("models.json"),
+        serde_json::to_string_pretty(&json!({
+            "providers": {
+                "google": {
+                    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/",
+                    "models": [
+                        { "id": "gemini-3.5-pro" },
+                        { "id": "gemini-2.5-flash-lite" }
+                    ]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaultProvider": "google",
+            "defaultModel": "gemini-3.5-pro"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let cfg = WebSearchConfig::load_from_dir(&dir);
+    assert_eq!(cfg.gemini_api_key.as_deref(), Some("AIza-test-secret"));
+    assert_eq!(
+        cfg.gemini_base_url.as_deref(),
+        Some("https://generativelanguage.googleapis.com/v1beta")
+    );
+    // Pro model on chat should prefer scanned flash model for fast grounding search
+    assert_eq!(cfg.gemini_model.as_deref(), Some("gemini-2.5-flash-lite"));
+
+    // Opt-out flag disables Gemini grounding cleanly
+    std::fs::write(
+        dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({
+            "webSearch": { "googleSearchGrounding": false }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let disabled_cfg = WebSearchConfig::load_from_dir(&dir);
+    assert!(disabled_cfg.gemini_api_key.is_none());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn auto_mode_uses_gemini_google_search_when_connected() {
+    let (base, handle) = spawn_mock_http(|method, target, body| {
+        if method == "POST" && target == "/gemini/models/gemini-2.5-flash:generateContent" {
+            let parsed: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+            assert_eq!(parsed["tools"], json!([{ "google_search": {} }]));
+            return (
+                200,
+                "application/json",
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "parts": [{ "text": "Rust 1.85 memperkenalkan edisi 2024 secara stabil." }]
+                        },
+                        "groundingMetadata": {
+                            "webSearchQueries": ["rust 1.85 release"],
+                            "groundingChunks": [
+                                {
+                                    "web": {
+                                        "uri": "https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html",
+                                        "title": "blog.rust-lang.org"
+                                    }
+                                },
+                                {
+                                    "web": {
+                                        "uri": "https://releases.rs/docs/1.85.0/",
+                                        "title": "releases.rs"
+                                    }
+                                }
+                            ],
+                            "groundingSupports": [
+                                {
+                                    "segment": { "text": "Rust 1.85 menstabilkan Rust Edition 2024." },
+                                    "groundingChunkIndices": [0]
+                                }
+                            ]
+                        }
+                    }]
+                })
+                .to_string(),
+            );
+        }
+        (404, "text/plain", "unexpected route".to_string())
+    })
+    .await;
+
+    let ep = WebSearchEndpoints {
+        gemini_base_url: format!("{}/gemini", base),
+        ..WebSearchEndpoints::default()
+    };
+    let cfg = WebSearchConfig {
+        gemini_api_key: Some("AIza-connected".to_string()),
+        ..Default::default()
+    };
+
+    let tool = WebSearchTool::with_config_and_endpoints(reqwest::Client::new(), cfg, ep);
+    let res = tool.execute(&json!({ "query": "rust 1.85 edition 2024" })).await.unwrap();
+
+    assert_eq!(res["engine"], "google_search");
+    assert_eq!(res["count"], 2);
+    assert_eq!(
+        res["summary"],
+        "Rust 1.85 memperkenalkan edisi 2024 secara stabil."
+    );
+    assert_eq!(
+        res["results"][0]["url"],
+        "https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html"
+    );
+    assert_eq!(
+        res["results"][0]["snippet"],
+        "Rust 1.85 menstabilkan Rust Edition 2024."
+    );
+    assert_eq!(res["results"][0]["source"], "google_search");
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn auto_mode_falls_back_when_gemini_google_search_rate_limited() {
+    let (base, handle) = spawn_mock_http(|_method, target, _body| {
+        if target.starts_with("/gemini/") {
+            return (
+                429,
+                "application/json",
+                json!({ "error": { "message": "Quota exceeded" } }).to_string(),
+            );
+        }
+        if target.starts_with("/ddg-html") {
+            return (
+                202,
+                "text/html",
+                r#"<div class="anomaly-modal">Verify</div>"#.to_string(),
+            );
+        }
+        if target.starts_with("/wiki-en") {
+            return (
+                200,
+                "application/json",
+                json!({
+                    "query": {
+                        "search": [{ "title": "Rust", "snippet": "Systems language" }]
+                    }
+                })
+                .to_string(),
+            );
+        }
+        if target.starts_with("/wiki-id") {
+            return (200, "application/json", json!({ "query": { "search": [] } }).to_string());
+        }
+        if target.starts_with("/ddg-instant") {
+            return (200, "application/json", json!({}).to_string());
+        }
+        if target.starts_with("/github") {
+            return (200, "application/json", json!({ "items": [] }).to_string());
+        }
+        if target.starts_with("/hn") {
+            return (200, "application/json", json!({ "hits": [] }).to_string());
+        }
+        (404, "text/plain", "not found".to_string())
+    })
+    .await;
+
+    let ep = WebSearchEndpoints {
+        gemini_base_url: format!("{}/gemini", base),
+        ddg_html_url: format!("{}/ddg-html", base),
+        ddg_instant_url: format!("{}/ddg-instant", base),
+        wikipedia_en_url: format!("{}/wiki-en", base),
+        wikipedia_id_url: format!("{}/wiki-id", base),
+        github_url: format!("{}/github", base),
+        hn_url: format!("{}/hn", base),
+        ..WebSearchEndpoints::default()
+    };
+    let cfg = WebSearchConfig {
+        gemini_api_key: Some("AIza-rate-limited".to_string()),
+        ..Default::default()
+    };
+
+    let tool = WebSearchTool::with_config_and_endpoints(reqwest::Client::new(), cfg, ep);
+    let res = tool.execute(&json!({ "query": "rust" })).await.unwrap();
+
+    assert_eq!(res["engine"], "fallback_public_apis");
+    assert_eq!(res["fallback_used"], true);
+    assert_eq!(res["blocked_engines"], json!(["google_search", "duckduckgo"]));
+    assert_eq!(res["count"], 1);
+    assert_eq!(res["results"][0]["source"], "wikipedia");
+
+    handle.abort();
+}
+

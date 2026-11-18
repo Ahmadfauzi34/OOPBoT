@@ -1,12 +1,17 @@
 use super::html::{is_ddg_challenge, parse_ddg_results, strip_html_tags, urlencoding};
+use crate::models::extract_auth_credentials;
 use crate::util::read_json_file;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_GEMINI_SEARCH_MODEL: &str = "gemini-2.5-flash";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchEngine {
     Auto,
+    GeminiSearch,
     Tavily,
     Brave,
     Serper,
@@ -22,9 +27,11 @@ impl SearchEngine {
     pub fn parse(raw: &str) -> Result<Self, String> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "" | "auto" => Ok(Self::Auto),
+            "google_search" | "google-search" | "gemini_search" | "gemini-search" | "gemini"
+            | "google" => Ok(Self::GeminiSearch),
             "tavily" => Ok(Self::Tavily),
             "brave" => Ok(Self::Brave),
-            "serper" | "google" => Ok(Self::Serper),
+            "serper" => Ok(Self::Serper),
             "searxng" | "searx" => Ok(Self::Searxng),
             "wikipedia" | "wiki" => Ok(Self::Wikipedia),
             "github" | "gh" => Ok(Self::Github),
@@ -32,7 +39,7 @@ impl SearchEngine {
             "ddg_instant" | "ddg-instant" | "instant" => Ok(Self::DdgInstant),
             "ddg" | "duckduckgo" => Ok(Self::DuckDuckGo),
             other => Err(format!(
-                "Engine '{}' tidak dikenal. Pilihan valid: auto, tavily, brave, serper, searxng, wikipedia, github, hn, ddg_instant, ddg",
+                "Engine '{}' tidak dikenal. Pilihan valid: auto, google_search, tavily, brave, serper, searxng, wikipedia, github, hn, ddg_instant, ddg",
                 other
             )),
         }
@@ -41,6 +48,7 @@ impl SearchEngine {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
+            Self::GeminiSearch => "google_search",
             Self::Tavily => "tavily",
             Self::Brave => "brave",
             Self::Serper => "serper",
@@ -56,6 +64,9 @@ impl SearchEngine {
 
 #[derive(Debug, Clone, Default)]
 pub struct WebSearchConfig {
+    pub gemini_api_key: Option<String>,
+    pub gemini_base_url: Option<String>,
+    pub gemini_model: Option<String>,
     pub tavily_api_key: Option<String>,
     pub brave_api_key: Option<String>,
     pub serper_api_key: Option<String>,
@@ -65,7 +76,10 @@ pub struct WebSearchConfig {
 
 impl WebSearchConfig {
     pub fn load_runtime() -> Self {
-        let config_dir = resolve_config_dir();
+        Self::load_from_dir(&resolve_config_dir())
+    }
+
+    pub fn load_from_dir(config_dir: &Path) -> Self {
         let settings = read_json_file(&config_dir.join("settings.json"));
         let ws = settings.get("webSearch").unwrap_or(&Value::Null);
 
@@ -88,7 +102,28 @@ impl WebSearchConfig {
         let default_engine = env_or_setting(&["OOPBOT_WEB_SEARCH_ENGINE"], "defaultEngine")
             .and_then(|raw| SearchEngine::parse(&raw).ok());
 
+        let gemini_grounding_enabled = std::env::var("OOPBOT_GEMINI_SEARCH")
+            .ok()
+            .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"))
+            .unwrap_or_else(|| {
+                ws.get("googleSearchGrounding")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true)
+            });
+
+        let auth_json = read_json_file(&config_dir.join("auth.json"));
+        let models_json = read_json_file(&config_dir.join("models.json"));
+
+        let (gemini_api_key, gemini_base_url, gemini_model) = if gemini_grounding_enabled {
+            resolve_gemini_grounding_config(&auth_json, &models_json, &settings, ws)
+        } else {
+            (None, None, None)
+        };
+
         Self {
+            gemini_api_key,
+            gemini_base_url,
+            gemini_model,
             tavily_api_key: env_or_setting(&["TAVILY_API_KEY"], "tavilyApiKey"),
             brave_api_key: env_or_setting(&["BRAVE_API_KEY"], "braveApiKey"),
             serper_api_key: env_or_setting(&["SERPER_API_KEY"], "serperApiKey"),
@@ -97,6 +132,88 @@ impl WebSearchConfig {
             default_engine,
         }
     }
+}
+
+fn resolve_gemini_grounding_config(
+    auth_json: &Value,
+    models_json: &Value,
+    settings: &Value,
+    ws: &Value,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let mut api_key = ["google", "gemini"]
+        .into_iter()
+        .find_map(|id| extract_auth_credentials(auth_json, id).map(|(k, _)| k));
+
+    if api_key.is_none() {
+        api_key = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+            .into_iter()
+            .find_map(|k| {
+                std::env::var(k)
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+    }
+
+    let providers_obj = models_json.get("providers").and_then(|v| v.as_object());
+    let google_provider = providers_obj.and_then(|p| {
+        p.get("google").or_else(|| p.get("gemini")).or_else(|| {
+            p.values().find(|pv| {
+                pv.get("api").and_then(|a| a.as_str()) == Some("google-generative-ai")
+            })
+        })
+    });
+
+    if api_key.is_none() {
+        api_key = google_provider
+            .and_then(|pv| pv.get("apiKey").and_then(|v| v.as_str()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "no-api-key")
+            .map(str::to_string);
+    }
+
+    let base_url = google_provider
+        .and_then(|pv| pv.get("baseUrl").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+        .map(|s| s.trim_end_matches('/').to_string());
+
+    let explicit_model = std::env::var("OOPBOT_GEMINI_SEARCH_MODEL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            ws.get("geminiModel")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        });
+
+    let default_gemini_flash = settings
+        .get("defaultProvider")
+        .and_then(|v| v.as_str())
+        .filter(|p| *p == "google" || *p == "gemini")
+        .and_then(|_| settings.get("defaultModel").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|m| m.starts_with("gemini-") && m.contains("flash"))
+        .map(str::to_string);
+
+    let scanned_flash = google_provider
+        .and_then(|pv| pv.get("models").and_then(|v| v.as_array()))
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                .find(|id| id.starts_with("gemini-") && id.contains("flash"))
+                .map(str::to_string)
+        });
+
+    let model = explicit_model
+        .or(default_gemini_flash)
+        .or(scanned_flash)
+        .unwrap_or_else(|| DEFAULT_GEMINI_SEARCH_MODEL.to_string());
+
+    (api_key, base_url, Some(model))
 }
 
 fn resolve_config_dir() -> PathBuf {
@@ -112,6 +229,7 @@ fn resolve_config_dir() -> PathBuf {
 
 #[derive(Debug, Clone)]
 pub struct WebSearchEndpoints {
+    pub gemini_base_url: String,
     pub tavily_url: String,
     pub brave_url: String,
     pub serper_url: String,
@@ -126,6 +244,7 @@ pub struct WebSearchEndpoints {
 impl Default for WebSearchEndpoints {
     fn default() -> Self {
         Self {
+            gemini_base_url: DEFAULT_GEMINI_BASE_URL.to_string(),
             tavily_url: "https://api.tavily.com/search".to_string(),
             brave_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
             serper_url: "https://google.serper.dev/search".to_string(),
@@ -139,8 +258,22 @@ impl Default for WebSearchEndpoints {
     }
 }
 
+struct SearchOutcome {
+    results: Vec<Value>,
+    summary: Option<String>,
+}
+
+impl SearchOutcome {
+    fn plain(results: Vec<Value>) -> Self {
+        Self {
+            results,
+            summary: None,
+        }
+    }
+}
+
 enum EngineAttempt {
-    Results(Vec<Value>),
+    Results(SearchOutcome),
     Blocked(String),
     Error(String),
 }
@@ -166,22 +299,29 @@ pub(crate) async fn execute_search(
     let mut warnings: Vec<String> = Vec::new();
     let mut blocked: Vec<String> = Vec::new();
 
-    // 1. Prioritaskan API pencarian web umum resmi/self-hosted jika pengguna mengonfigurasinya.
+    // 1. Prioritaskan API pencarian web terkonfigurasi:
+    //    - Provider dedicated (Tavily/Brave/Serper/SearXNG) jika diatur eksplisit
+    //    - Google Search Grounding (via API Gemini) otomatis bila akun Gemini terhubung
     let configured = [
         cfg.tavily_api_key.as_ref().map(|_| SearchEngine::Tavily),
         cfg.brave_api_key.as_ref().map(|_| SearchEngine::Brave),
         cfg.serper_api_key.as_ref().map(|_| SearchEngine::Serper),
         cfg.searxng_url.as_ref().map(|_| SearchEngine::Searxng),
+        cfg.gemini_api_key.as_ref().map(|_| SearchEngine::GeminiSearch),
     ];
     for candidate in configured.into_iter().flatten() {
         match run_engine_attempt(client, query, candidate, limit, cfg, ep).await {
-            EngineAttempt::Results(results) if !results.is_empty() => {
-                return Ok(json!({
+            EngineAttempt::Results(outcome) if !outcome.results.is_empty() => {
+                let mut resp = json!({
                     "query": query,
                     "engine": candidate.as_str(),
-                    "count": results.len(),
-                    "results": results,
-                }));
+                    "count": outcome.results.len(),
+                    "results": outcome.results,
+                });
+                if let Some(summary) = outcome.summary.filter(|s| !s.is_empty()) {
+                    resp["summary"] = json!(summary);
+                }
+                return Ok(resp);
             }
             EngineAttempt::Results(_) => {
                 warnings.push(format!("{}: 0 hasil", candidate.as_str()));
@@ -199,12 +339,12 @@ pub(crate) async fn execute_search(
     // 2. Zero-config mode: coba DuckDuckGo HTML sekali; jika diblokir/challenge/kosong,
     // langsung fallback otomatis ke API JSON publik gratis (DDG Instant, Wikipedia, GitHub, HN).
     match search_ddg_html(client, query, limit, ep).await {
-        EngineAttempt::Results(results) if !results.is_empty() => {
+        EngineAttempt::Results(outcome) if !outcome.results.is_empty() => {
             return Ok(json!({
                 "query": query,
                 "engine": SearchEngine::DuckDuckGo.as_str(),
-                "count": results.len(),
-                "results": results,
+                "count": outcome.results.len(),
+                "results": outcome.results,
             }));
         }
         EngineAttempt::Results(_) => {
@@ -235,7 +375,9 @@ pub(crate) async fn execute_search(
         ("hn", hn),
     ] {
         match attempt {
-            EngineAttempt::Results(items) if !items.is_empty() => per_source.push((name, items)),
+            EngineAttempt::Results(outcome) if !outcome.results.is_empty() => {
+                per_source.push((name, outcome.results));
+            }
             EngineAttempt::Blocked(msg) => {
                 blocked.push(name.to_string());
                 warnings.push(format!("{}: diblokir ({})", name, msg));
@@ -250,12 +392,12 @@ pub(crate) async fn execute_search(
 
     let note = if merged.is_empty() {
         format!(
-            "Tidak ada hasil ditemukan ({}). Untuk pencarian web penuh tanpa blokir, atur TAVILY_API_KEY, BRAVE_API_KEY, SERPER_API_KEY, atau OOPBOT_SEARXNG_URL.",
+            "Tidak ada hasil ditemukan ({}). Hubungkan provider Google Gemini (untuk Google Search otomatis) atau atur TAVILY_API_KEY, BRAVE_API_KEY, SERPER_API_KEY, maupun OOPBOT_SEARXNG_URL.",
             warnings.join("; ")
         )
     } else if !blocked.is_empty() {
         format!(
-            "Mesin [{}] memblokir akses; hasil diambil lewat fallback API publik [{}]. Untuk pencarian web umum penuh, atur TAVILY_API_KEY, BRAVE_API_KEY, SERPER_API_KEY, atau OOPBOT_SEARXNG_URL.",
+            "Mesin [{}] memblokir/membatasi akses; hasil diambil lewat fallback API publik [{}]. Hubungkan Google Gemini atau atur TAVILY_API_KEY / BRAVE_API_KEY / SERPER_API_KEY / OOPBOT_SEARXNG_URL untuk pencarian web penuh.",
             blocked.join(", "),
             sources.join(", ")
         )
@@ -285,20 +427,23 @@ async fn run_explicit_engine(
     ep: &WebSearchEndpoints,
 ) -> Result<Value, String> {
     match run_engine_attempt(client, query, engine, limit, cfg, ep).await {
-        EngineAttempt::Results(results) => {
+        EngineAttempt::Results(outcome) => {
             let mut resp = json!({
                 "query": query,
                 "engine": engine.as_str(),
-                "count": results.len(),
-                "results": results,
+                "count": outcome.results.len(),
+                "results": outcome.results,
             });
-            if results.is_empty() {
+            if let Some(summary) = outcome.summary.filter(|s| !s.is_empty()) {
+                resp["summary"] = json!(summary);
+            }
+            if resp["count"].as_u64() == Some(0) {
                 resp["note"] = json!(format!("Tidak ada hasil ditemukan dari {}.", engine.as_str()));
             }
             Ok(resp)
         }
         EngineAttempt::Blocked(msg) => Err(format!(
-            "Engine '{}' memblokir permintaan ({}). Coba engine lain (auto, wikipedia, github, hn, tavily, brave, serper, searxng).",
+            "Engine '{}' memblokir permintaan ({}). Coba engine lain (auto, google_search, wikipedia, github, hn, tavily, brave, serper, searxng).",
             engine.as_str(),
             msg
         )),
@@ -316,6 +461,23 @@ async fn run_engine_attempt(
 ) -> EngineAttempt {
     match engine {
         SearchEngine::Auto => EngineAttempt::Error("internal: auto".to_string()),
+        SearchEngine::GeminiSearch => match cfg.gemini_api_key.as_deref() {
+            Some(key) => {
+                let base = cfg
+                    .gemini_base_url
+                    .as_deref()
+                    .unwrap_or(&ep.gemini_base_url);
+                let model = cfg
+                    .gemini_model
+                    .as_deref()
+                    .unwrap_or(DEFAULT_GEMINI_SEARCH_MODEL);
+                search_gemini_grounding(client, query, limit, key, base, model).await
+            }
+            None => EngineAttempt::Error(
+                "API key Google Gemini belum terhubung (hubungkan Gemini di Settings -> Providers atau atur GEMINI_API_KEY)"
+                    .to_string(),
+            ),
+        },
         SearchEngine::Tavily => match cfg.tavily_api_key.as_deref() {
             Some(key) => search_tavily(client, query, limit, key, ep).await,
             None => EngineAttempt::Error("TAVILY_API_KEY / webSearch.tavilyApiKey belum diatur".to_string()),
@@ -368,6 +530,162 @@ fn merge_round_robin(sources: Vec<(&'static str, Vec<Value>)>, limit: usize) -> 
     out
 }
 
+async fn search_gemini_grounding(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+) -> EngineAttempt {
+    let clean_model = model.strip_prefix("models/").unwrap_or(model);
+    let url = format!(
+        "{}/models/{}:generateContent",
+        base_url.trim_end_matches('/'),
+        clean_model
+    );
+    let payload = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{
+                "text": format!(
+                    "Perform a Google Search for current, accurate information about: \"{}\"\n\
+                     Provide a concise factual summary grounded strictly in the search results.",
+                    query
+                )
+            }]
+        }],
+        "tools": [{ "google_search": {} }],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 1024
+        }
+    });
+
+    let res = match client
+        .post(&url)
+        .header("x-goog-api-key", api_key)
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return EngineAttempt::Error(e.to_string()),
+    };
+
+    let status = res.status();
+    if matches!(status.as_u16(), 401 | 403 | 429) {
+        return EngineAttempt::Blocked(format!("HTTP {}", status));
+    }
+
+    let body: Value = match res.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            if !status.is_success() {
+                return EngineAttempt::Error(format!("HTTP {}", status));
+            }
+            return EngineAttempt::Error(e.to_string());
+        }
+    };
+
+    if !status.is_success() {
+        let msg = body["error"]["message"]
+            .as_str()
+            .unwrap_or("request rejected");
+        return EngineAttempt::Error(format!("HTTP {}: {}", status, msg));
+    }
+
+    let candidate = &body["candidates"][0];
+    let summary: String = candidate["content"]["parts"]
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter(|p| p["thought"].as_bool() != Some(true))
+                .filter_map(|p| p["text"].as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+
+    let grounding = &candidate["groundingMetadata"];
+    let mut chunk_snippets: HashMap<usize, Vec<String>> = HashMap::new();
+    if let Some(supports) = grounding["groundingSupports"].as_array() {
+        for sup in supports {
+            let text = sup["segment"]["text"].as_str().unwrap_or("").trim();
+            if text.is_empty() {
+                continue;
+            }
+            if let Some(indices) = sup["groundingChunkIndices"].as_array() {
+                for idx in indices.iter().filter_map(|v| v.as_u64()) {
+                    chunk_snippets
+                        .entry(idx as usize)
+                        .or_default()
+                        .push(text.to_string());
+                }
+            }
+        }
+    }
+
+    let mut seen_urls = HashSet::new();
+    let mut results = Vec::new();
+    if let Some(chunks) = grounding["groundingChunks"].as_array() {
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let web = &chunk["web"];
+            let uri = web["uri"].as_str().unwrap_or("").trim();
+            if uri.is_empty() || !seen_urls.insert(uri.to_string()) {
+                continue;
+            }
+            let title = web["title"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(uri);
+
+            let snippet = chunk_snippets
+                .get(&idx)
+                .map(|parts| parts.join(" · "))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    if summary.is_empty() {
+                        format!("Google Search result ({})", title)
+                    } else {
+                        clip_chars(&summary, 280)
+                    }
+                });
+
+            results.push(json!({
+                "title": title,
+                "url": uri,
+                "snippet": clip_chars(&snippet, 400),
+                "source": "google_search"
+            }));
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    EngineAttempt::Results(SearchOutcome {
+        results,
+        summary: if summary.is_empty() {
+            None
+        } else {
+            Some(summary)
+        },
+    })
+}
+
+fn clip_chars(s: &str, max_chars: usize) -> String {
+    let mut out: String = s.chars().take(max_chars).collect();
+    if s.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
+}
+
 async fn search_tavily(
     client: &reqwest::Client,
     query: &str,
@@ -416,7 +734,7 @@ async fn search_tavily(
                 .collect()
         })
         .unwrap_or_default();
-    EngineAttempt::Results(results)
+    EngineAttempt::Results(SearchOutcome::plain(results))
 }
 
 async fn search_brave(
@@ -468,7 +786,7 @@ async fn search_brave(
                 .collect()
         })
         .unwrap_or_default();
-    EngineAttempt::Results(results)
+    EngineAttempt::Results(SearchOutcome::plain(results))
 }
 
 async fn search_serper(
@@ -523,7 +841,7 @@ async fn search_serper(
                 .collect()
         })
         .unwrap_or_default();
-    EngineAttempt::Results(results)
+    EngineAttempt::Results(SearchOutcome::plain(results))
 }
 
 async fn search_searxng(
@@ -574,7 +892,7 @@ async fn search_searxng(
                 .collect()
         })
         .unwrap_or_default();
-    EngineAttempt::Results(results)
+    EngineAttempt::Results(SearchOutcome::plain(results))
 }
 
 async fn search_wikipedia_multi(
@@ -601,7 +919,7 @@ async fn search_wikipedia_multi(
         return EngineAttempt::Error(errors.join("; "));
     }
     combined.truncate(limit);
-    EngineAttempt::Results(combined)
+    EngineAttempt::Results(SearchOutcome::plain(combined))
 }
 
 async fn search_wikipedia_lang(
@@ -715,7 +1033,7 @@ async fn search_github(
                 .collect()
         })
         .unwrap_or_default();
-    EngineAttempt::Results(results)
+    EngineAttempt::Results(SearchOutcome::plain(results))
 }
 
 async fn search_hackernews(
@@ -776,7 +1094,7 @@ async fn search_hackernews(
                 .collect()
         })
         .unwrap_or_default();
-    EngineAttempt::Results(results)
+    EngineAttempt::Results(SearchOutcome::plain(results))
 }
 
 async fn search_ddg_instant(
@@ -828,7 +1146,7 @@ async fn search_ddg_instant(
         collect_ddg_topics(topics, limit, &mut out);
     }
     out.truncate(limit);
-    EngineAttempt::Results(out)
+    EngineAttempt::Results(SearchOutcome::plain(out))
 }
 
 fn collect_ddg_topics(topics: &[Value], limit: usize, out: &mut Vec<Value>) {
@@ -889,5 +1207,5 @@ async fn search_ddg_html(
         return EngineAttempt::Error(format!("HTTP {}", status));
     }
 
-    EngineAttempt::Results(parse_ddg_results(&body, limit))
+    EngineAttempt::Results(SearchOutcome::plain(parse_ddg_results(&body, limit)))
 }

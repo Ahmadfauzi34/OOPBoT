@@ -92,6 +92,9 @@ pub(super) fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool)
             if let Some(note) = val["note"].as_str().filter(|s| !s.is_empty()) {
                 out.push_str(&format!("Catatan: {}\n", note));
             }
+            if let Some(summary) = val["summary"].as_str().filter(|s| !s.is_empty()) {
+                out.push_str(&format!("Ringkasan: {}\n", summary));
+            }
             if let Some(results) = val["results"].as_array() {
                 for (idx, r) in results.iter().enumerate() {
                     let title = r["title"].as_str().unwrap_or("");

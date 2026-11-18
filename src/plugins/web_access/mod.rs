@@ -52,7 +52,7 @@ impl Plugin for WebAccessPlugin {
     }
 
     fn description(&self) -> &str {
-        "Kemampuan pencarian internet multi-provider (auto fallback API publik / Tavily / Brave / Serper / SearXNG / DDG) dan pembacaan halaman web."
+        "Kemampuan pencarian internet multi-provider (otomatis Google Search saat Gemini terhubung, fallback API publik / Tavily / Brave / Serper / SearXNG / DDG) dan pembacaan halaman web."
     }
 
     fn register_tools(&self, registry: &mut ToolRegistry) {
@@ -64,7 +64,7 @@ impl Plugin for WebAccessPlugin {
         Some(
             "## Web Access Guidelines\n\
             - Gunakan `web_search` untuk mencari informasi terbaru, dokumentasi library, isu teknis, atau referensi di internet.\n\
-            - `web_search` otomatis memilih provider terkonfigurasi (Tavily/Brave/Serper/SearXNG) atau mencoba DuckDuckGo dengan fallback otomatis ke API publik (Wikipedia, GitHub, Hacker News, DDG Instant) bila diblokir. Parameter `engine` opsional dapat diisi: `auto`, `tavily`, `brave`, `serper`, `searxng`, `wikipedia`, `github`, `hn`, `ddg_instant`, atau `ddg`.\n\
+            - `web_search` otomatis memakai Google Search (grounding API Gemini) saat akun Gemini terhubung, atau provider terkonfigurasi lain (Tavily/Brave/Serper/SearXNG), dan fallback otomatis ke API publik (Wikipedia, GitHub, Hacker News, DDG Instant) bila DuckDuckGo memblokir. Parameter `engine` opsional: `auto`, `google_search`, `tavily`, `brave`, `serper`, `searxng`, `wikipedia`, `github`, `hn`, `ddg_instant`, `ddg`.\n\
             - Gunakan `fetch_page` untuk membaca isi teks lengkap dari sebuah URL hasil pencarian."
                 .to_string(),
         )
@@ -107,7 +107,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &'static str {
-        "Cari informasi di internet dengan fallback otomatis multi-engine (Tavily, Brave, Serper, SearXNG, DuckDuckGo + API publik Wikipedia/GitHub/HN/DDG Instant)."
+        "Cari informasi di internet dengan fallback otomatis multi-engine (Google Search via Gemini saat terhubung, Tavily, Brave, Serper, SearXNG, DuckDuckGo + API publik Wikipedia/GitHub/HN/DDG Instant)."
     }
 
     fn parameters(&self) -> Value {
@@ -120,7 +120,7 @@ impl Tool for WebSearchTool {
                 },
                 "engine": {
                     "type": "string",
-                    "description": "Mesin pencari opsional: auto (default), tavily, brave, serper, searxng, wikipedia, github, hn, ddg_instant, ddg"
+                    "description": "Mesin pencari opsional: auto (default), google_search, tavily, brave, serper, searxng, wikipedia, github, hn, ddg_instant, ddg"
                 },
                 "limit": {
                     "type": "integer",

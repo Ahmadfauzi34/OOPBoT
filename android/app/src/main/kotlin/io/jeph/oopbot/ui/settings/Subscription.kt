@@ -2,6 +2,7 @@ package io.jeph.oopbot.ui.settings
 
 import androidx.annotation.StringRes
 import io.jeph.oopbot.R
+import io.jeph.oopbot.data.BundledExtension
 import io.jeph.oopbot.host.AuthStatus
 
 /**
@@ -71,3 +72,33 @@ internal fun AuthStatus.isSignedIn(id: String): Boolean = builtin.any { it.id ==
 
 /** True for a provider OOPBoT connects with an API key, whose models the user picks after adding it. */
 internal fun usesApiKey(providerId: String): Boolean = subscriptions.any { it.id == providerId && it.usesApiKey }
+
+/**
+ * True when the user has a Google Gemini credential configured (via the built-in `google`
+ * provider or a custom `google-generative-ai` / Gemini provider with a key), matching the Rust
+ * `WebAccessPlugin` auto-detection for Google Search Grounding.
+ */
+internal fun AuthStatus?.hasGeminiProvider(): Boolean {
+  if (this == null) return false
+  if (isSignedIn("google") || isSignedIn("gemini")) return true
+  return custom.any { provider ->
+    val key = provider.apiKey.trim()
+    val isGemini = provider.api == "google-generative-ai" ||
+      provider.id.equals("google", ignoreCase = true) ||
+      provider.id.equals("gemini", ignoreCase = true)
+    isGemini && key.isNotEmpty() && key != "no-api-key"
+  }
+}
+
+/**
+ * Resolves the Settings row title and summary string resources for a bundled [extension].
+ * When [BundledExtension.WebAccess] is shown while a Gemini provider is connected, it switches
+ * to Google Search copy to reflect automatic Gemini Grounding.
+ */
+internal fun extensionDisplayCopy(extension: BundledExtension, authStatus: AuthStatus?): Pair<Int, Int>? {
+  val switch = extension.switch ?: return null
+  if (extension == BundledExtension.WebAccess && authStatus.hasGeminiProvider()) {
+    return R.string.settings_extension_google_search to R.string.settings_extension_google_search_summary
+  }
+  return switch.title to switch.summary
+}
