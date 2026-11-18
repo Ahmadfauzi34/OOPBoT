@@ -5,11 +5,14 @@ import io.jeph.oopbot.host.SessionInfo
 import java.io.IOException
 import java.util.concurrent.Executor
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -61,8 +64,9 @@ class SessionRepositoryTest {
 
         host.sessionList = listOf(session("/s/b.jsonl", modified = 300L), session("/s/c.jsonl", modified = 400L))
         runBlocking {
+          val emission = async(start = CoroutineStart.UNDISPATCHED) { repo.listings.first() }
           repo.listNow()
-          val emitted = repo.listings.first()
+          val emitted = withTimeout(5_000L) { emission.await() }
           assertEquals(listOf("/s/c.jsonl", "/s/b.jsonl"), emitted.map { it.path })
         }
         assertTrue(repo.loaded.value)
