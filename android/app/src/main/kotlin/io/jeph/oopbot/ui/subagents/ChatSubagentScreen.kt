@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -53,6 +54,7 @@ import io.jeph.oopbot.agent.SubagentStatus
 import io.jeph.oopbot.agent.TimelineItem
 import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.chat.ChatController
+import io.jeph.oopbot.ui.chat.ChatView
 import io.jeph.oopbot.ui.chat.PendingDialogCard
 import io.jeph.oopbot.ui.chat.SteerButton
 import io.jeph.oopbot.ui.chat.SteeringBox
@@ -65,10 +67,13 @@ import io.jeph.oopbot.ui.workspace.CloseSplitButton
 import io.jeph.oopbot.ui.workspace.PaneControls
 import io.jeph.oopbot.ui.workspace.TabsButton
 import io.jeph.oopbot.ui.workspace.rememberWorkspaceTabs
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+private const val STEER_DRAFT_DEBOUNCE_MILLIS = 300L
 private val TRAY_SHAPE = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
 private val SEND_SIZE = 40.dp
 private val SEND_ICON_SIZE = 18.dp
@@ -128,6 +133,7 @@ internal fun ChatSubagentScreen(
         // The keyboard and a dialog take the room the steers would use, as in the chat.
         val compact = WindowInsets.isImeVisible || timeline.pendingUi != null
         val draft = controller.view.steerDraft(run.toolCallId)
+        PersistSteerDraft(draft, controller.view)
         // Weighted, so the steer box is measured first and keeps its height when the room runs short.
         PendingSubagentSteering(
           run = run,
@@ -147,6 +153,21 @@ internal fun ChatSubagentScreen(
     } else {
       Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.ime.union(WindowInsets.navigationBars)))
     }
+  }
+}
+
+@Composable
+private fun PersistSteerDraft(draft: TextFieldState, view: ChatView) {
+  LaunchedEffect(draft, view) {
+    snapshotFlow { draft.text.toString() }
+      .drop(1)
+      .collectLatest { text ->
+        if (text.isNotEmpty()) delay(STEER_DRAFT_DEBOUNCE_MILLIS)
+        view.onSave?.invoke()
+      }
+  }
+  DisposableEffect(draft, view) {
+    onDispose { view.onSave?.invoke() }
   }
 }
 

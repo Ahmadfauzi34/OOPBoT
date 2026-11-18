@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
@@ -114,14 +113,8 @@ internal fun ChatStream(
   val rows by remember(stream) { derivedStateOf { stream.expand(view.expanded) } }
   val count = rows.items.size + if (banner != null) 1 else 0
   val listState = remember { restoredListState(scroll, stream, rows.items, banner != null) }
-  val items by rememberUpdatedState(timeline.items)
-  DisposableEffect(listState) {
-    onDispose {
-      scroll.top = listState.top()
-      // Markdown the chat no longer has, as after a session switch, needn't stay parsed.
-      view.markdown.keepShown(items.mapNotNullTo(HashSet()) { it.cachedMarkdown })
-    }
-  }
+  // Markdown the chat no longer has, as after a session switch, needn't stay parsed.
+  PersistStreamScroll(listState, view) { timeline.items.mapNotNullTo(HashSet()) { item -> item.cachedMarkdown } }
   val follow = scroll.follow
   val activeReplies = remember(timeline.items) { timeline.items.endReplies() }
   LaunchedEffect(view.markdown, activeReplies) { view.markdown.warmMissing(activeReplies) }
@@ -188,12 +181,6 @@ private fun restoredListState(
   } else {
     LazyListState(index + if (bannerShown) 1 else 0, if (row == null) 0 else top.offset)
   }
-}
-
-/** The item at the top of the viewport and how far it is scrolled past; null before the list has measured. */
-private fun LazyListState.top(): StreamTop? {
-  val first = layoutInfo.visibleItemsInfo.firstOrNull { it.index == firstVisibleItemIndex } ?: return null
-  return StreamTop(first.key, firstVisibleItemScrollOffset)
 }
 
 /** [AutoFollow] for the stream, which jumps to its last item while that is too far off screen to measure. */

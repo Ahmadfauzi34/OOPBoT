@@ -27,6 +27,10 @@ Place every UI file strictly in its matching feature folder:
   - Keep `SelectionContainer` opt-in on large virtualized code lists (`FileScreen.kt`) and disabled while an assistant message is actively streaming (`OopbotMarkdown.kt`).
   - Provide stable `key` and `contentType` lambdas on `LazyColumn` / `LazyRow` item lists (`FileScreen.kt`, timelines, diffs, logs).
   - Annotate immutable UI state/model classes wrapping lists or sealed trees with `@Immutable` (`DiffDocument.kt`, `TimelineModels.kt`).
+- **Offline Cache & Persistent UI State (`ui/chat/`, `ui/subagents/`, `ui/archive/`):**
+  - `ChatViews` hydrates and persists per-session drafts, subagent steer drafts, stream scroll position, and expanded folds to SQLite `chat_drafts`; debounce text draft saves and flush on disposal / scroll settle. Read-only `ArchivedChatScreen` and `SubagentScreen` views leave `ChatView.onSave == null`.
+  - `SubagentScreen` fetches transcripts with `preferCache = !live` so running subagents poll Termux directly while finished runs use cached transcripts & offline fallback.
+  - `ArchiveScreen` combines instant metadata matching with debounced FTS4 `SessionRepository.searchMessages` content queries.
 - **Localization & Pseudolocale Compliance:** Zero hardcoded user-facing strings in Kotlin; add all UI copy to `android/app/src/main/res/values/strings_*.xml` matching the domain file (`strings_chat.xml`, `strings_settings.xml`, etc.).
 - **Shared Theme & Primitives:** Consume colors, spacing, and typography exclusively from `ui/theme/` (`OopbotTheme`, `OopbotColors`, `OopbotTokens`, `OopbotFonts`) instead of raw hex literals or ad-hoc wrappers.
 

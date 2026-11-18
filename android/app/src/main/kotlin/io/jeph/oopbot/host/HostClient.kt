@@ -3,6 +3,7 @@ package io.jeph.oopbot.host
 import android.content.Context
 import android.util.Log
 import io.jeph.oopbot.data.BundledExtension
+import io.jeph.oopbot.data.SessionHost
 import io.jeph.oopbot.termux.TermuxIdentity
 import io.jeph.oopbot.termux.TermuxSetup
 import java.io.IOException
@@ -36,7 +37,8 @@ import org.json.JSONObject
  * are only seen on screen.
  */
 @Suppress("TooManyFunctions") // One typed wrapper per host mode, beside the launch code they share.
-internal class HostClient(context: Context, private val foreground: Flow<Boolean>, scope: CoroutineScope) {
+internal class HostClient(context: Context, private val foreground: Flow<Boolean>, scope: CoroutineScope) :
+  SessionHost {
   private val context = context.applicationContext
   private val helloState = MutableStateFlow<HostHello?>(null)
   private val failureState = MutableStateFlow<HostFailure?>(null)
@@ -96,16 +98,16 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   }
 
   /** Newest first. */
-  suspend fun sessions(): List<SessionInfo> =
+  override suspend fun sessions(): List<SessionInfo> =
     utilityCall("sessions", JSONObject()).optJSONArray("sessions").objects().map(SessionInfo::from)
 
   /** Deletes the session files at [paths]; one that is already gone counts as deleted. */
-  suspend fun deleteSessions(paths: List<String>) {
+  override suspend fun deleteSessions(paths: List<String>) {
     utilityCall("delete_sessions", JSONObject().put("paths", JSONArray(paths)))
   }
 
   /** A session's messages as Pi's RPC `get_messages` reports them, read without starting Pi. */
-  suspend fun sessionMessages(path: String): JSONArray =
+  override suspend fun sessionMessages(path: String): JSONArray =
     utilityCall("session_messages", JSONObject().put("path", path)).optJSONArray("messages") ?: JSONArray()
 
   suspend fun authStatus(): AuthStatus = AuthStatus.from(utilityCall("auth_status", JSONObject()))

@@ -19,36 +19,56 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
-/** App settings in the `oopbot` SharedPreferences file. */
+/** App settings in the `oopbot` SharedPreferences file, with large workspace/session collections stored in SQLite. */
 @Suppress("TooManyFunctions") // One setter per setting, beside the readers they share.
-internal class Preferences(context: Context) {
-  private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-
+internal class Preferences internal constructor(
+  private val prefs: SharedPreferences,
   /**
    * Android's build and when OOPBoT was last installed or updated, which [localModelFailedBuilds] are kept for. The
    * install time rather than the version, since every development build has the same version.
    */
-  private val softwareVersion =
-    "${Build.FINGERPRINT} ${context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime}"
+  private val softwareVersion: String,
+  private val db: OopbotDatabase? = null,
+) {
+  constructor(context: Context, db: OopbotDatabase? = null) : this(
+    prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE),
+    softwareVersion =
+      "${Build.FINGERPRINT} ${context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime}",
+    db = db,
+  )
+
+  init {
+    migrateToSqlIfNeeded()
+  }
+
   private val setupCompleteState = MutableStateFlow(prefs.getBoolean(SETUP_COMPLETE, false))
   private val setupCommandCopiedForState = MutableStateFlow(prefs.getString(SETUP_COMMAND_COPIED_FOR, null))
   private val setupPagesPassedState = MutableStateFlow(readStringSet(SETUP_PAGES_PASSED))
   private val themeState = MutableStateFlow(readTheme())
   private val lastProjectCwdState = MutableStateFlow(prefs.getString(LAST_PROJECT_CWD, null))
-  private val workspacesState = MutableStateFlow(readWorkspaces())
-  private val archivedState = MutableStateFlow(readLongMap(ARCHIVED_SESSIONS))
-  private val touchedState = MutableStateFlow(readLongMap(TOUCHED_SESSIONS))
+  private val workspacesState = MutableStateFlow(db?.prefs?.readWorkspaces() ?: readWorkspaces())
+  private val archivedState = MutableStateFlow(db?.prefs?.readArchived() ?: readLongMap(ARCHIVED_SESSIONS))
+  private val touchedState = MutableStateFlow(db?.prefs?.readTouched() ?: readLongMap(TOUCHED_SESSIONS))
   private val autoArchiveState = MutableStateFlow(prefs.getBoolean(AUTO_ARCHIVE, false))
   private val autoArchiveDaysState = MutableStateFlow(
     prefs.getInt(AUTO_ARCHIVE_DAYS, AutoArchive.DEFAULT_DAYS).coerceIn(AutoArchive.DAYS),
   )
   private val showHiddenFilesState = MutableStateFlow(prefs.getBoolean(SHOW_HIDDEN_FILES, true))
   private val explorerSortState = MutableStateFlow(readExplorerSort())
-  private val explorerTabsState = MutableStateFlow(readEnumMap(EXPLORER_TABS, ExplorerTab.entries))
-  private val diffModesState = MutableStateFlow(readEnumMap(DIFF_MODES, GitDiffMode.entries))
-  private val trustedRepositoriesState = MutableStateFlow(readStringSet(TRUSTED_REPOSITORIES))
+  private val explorerTabsState = MutableStateFlow(
+    db?.prefs?.readEnumMap(PrefsDbStore.SCOPE_EXPLORER_TAB, ExplorerTab.entries)
+      ?: readEnumMap(EXPLORER_TABS, ExplorerTab.entries),
+  )
+  private val diffModesState = MutableStateFlow(
+    db?.prefs?.readEnumMap(PrefsDbStore.SCOPE_DIFF_MODE, GitDiffMode.entries)
+      ?: readEnumMap(DIFF_MODES, GitDiffMode.entries),
+  )
+  private val trustedRepositoriesState = MutableStateFlow(
+    db?.prefs?.readTrustedRepositories() ?: readStringSet(TRUSTED_REPOSITORIES),
+  )
   private val diffWrapLinesState = MutableStateFlow(prefs.getBoolean(DIFF_WRAP_LINES, false))
   private val diffHideWhitespaceState = MutableStateFlow(prefs.getBoolean(DIFF_HIDE_WHITESPACE, false))
   private val commitsCollapsedState = MutableStateFlow(prefs.getBoolean(COMMITS_COLLAPSED, true))
@@ -73,6 +93,10 @@ internal class Preferences(context: Context) {
       .coerceIn(LocalModelSettings.IDLE_UNLOAD_MINUTES),
   )
   private val pickerMachineState = MutableStateFlow(prefs.getString(PICKER_MACHINE, null))
+
+  @Volatile
+  private var remoteHostsCacheText: String? =
+    if (db != null) db.prefs.readRemoteHostsCache() else prefs.getString(REMOTE_HOSTS, null)
 
   /** Onboarding finished. */
   val setupComplete: StateFlow<Boolean> = setupCompleteState.asStateFlow()
@@ -192,8 +216,13 @@ internal class Preferences(context: Context) {
   fun addWorkspace(cwd: String) {
     val current = workspacesState.value
     if (current.any { sameFolder(it, cwd) }) return
-    val updated = listOf(folderKey(cwd)) + current
-    prefs.edit { putString(WORKSPACES, JSONArray(updated).toString()) }
+    val key = folderKey(cwd)
+    val updated = listOf(key) + current
+    if (db != null) {
+      db.prefs.addWorkspace(key)
+    } else {
+      prefs.edit { putString(WORKSPACES, JSONArray(updated).toString()) }
+    }
     workspacesState.value = updated
   }
 
@@ -202,11 +231,16 @@ internal class Preferences(context: Context) {
    * repository is no longer trusted, so adding it back asks again.
    */
   fun removeWorkspace(cwd: String) {
+    val key = folderKey(cwd)
     val updated = workspacesState.value.filterNot { sameFolder(it, cwd) }
-    val trusted = trustedRepositoriesState.value - folderKey(cwd)
-    prefs.edit {
-      putString(WORKSPACES, JSONArray(updated).toString())
-      putString(TRUSTED_REPOSITORIES, JSONArray(trusted).toString())
+    val trusted = trustedRepositoriesState.value - key
+    if (db != null) {
+      db.prefs.removeWorkspace(key)
+    } else {
+      prefs.edit {
+        putString(WORKSPACES, JSONArray(updated).toString())
+        putString(TRUSTED_REPOSITORIES, JSONArray(trusted).toString())
+      }
     }
     workspacesState.value = updated
     trustedRepositoriesState.value = trusted
@@ -214,21 +248,39 @@ internal class Preferences(context: Context) {
 
   /** Marks [paths] archived at [at]; a path already archived keeps its time. Their touches go with them. */
   fun archiveSessions(paths: Collection<String>, at: Long) {
-    writeArchived(
-      archived = archivedState.value + paths.filterNot(archivedState.value::containsKey).associateWith { at },
-      touched = touchedState.value - paths.toSet(),
-    )
+    val pathSet = paths.toSet()
+    val updatedArchived = archivedState.value + paths.filterNot(archivedState.value::containsKey).associateWith { at }
+    val updatedTouched = touchedState.value - pathSet
+    if (db != null) {
+      db.prefs.archiveSessions(pathSet, at)
+      archivedState.value = updatedArchived
+      touchedState.value = updatedTouched
+    } else {
+      writeArchived(updatedArchived, updatedTouched)
+    }
   }
 
   fun unarchiveSessions(paths: Collection<String>) {
-    writeArchived(archived = archivedState.value - paths.toSet(), touched = touchedState.value)
+    val pathSet = paths.toSet()
+    val updatedArchived = archivedState.value - pathSet
+    if (db != null) {
+      db.prefs.unarchiveSessions(pathSet)
+      archivedState.value = updatedArchived
+    } else {
+      writeArchived(updatedArchived, touchedState.value)
+    }
   }
 
   /** Records that [paths] were touched at [at]. */
   fun touchSessions(paths: Collection<String>, at: Long) {
     if (paths.isEmpty()) return
-    val updated = touchedState.value + paths.associateWith { at }
-    prefs.edit { putString(TOUCHED_SESSIONS, JSONObject(updated).toString()) }
+    val pathSet = paths.toSet()
+    val updated = touchedState.value + pathSet.associateWith { at }
+    if (db != null) {
+      db.prefs.touchSessions(pathSet, at)
+    } else {
+      prefs.edit { putString(TOUCHED_SESSIONS, JSONObject(updated).toString()) }
+    }
     touchedState.value = updated
   }
 
@@ -258,20 +310,35 @@ internal class Preferences(context: Context) {
   }
 
   fun setExplorerTab(cwd: String, tab: ExplorerTab) {
-    val updated = explorerTabsState.value + (folderKey(cwd) to tab)
-    prefs.edit { putString(EXPLORER_TABS, JSONObject(updated.mapValues { it.value.name }).toString()) }
+    val key = folderKey(cwd)
+    val updated = explorerTabsState.value + (key to tab)
+    if (db != null) {
+      db.prefs.setExplorerTab(key, tab)
+    } else {
+      prefs.edit { putString(EXPLORER_TABS, JSONObject(updated.mapValues { it.value.name }).toString()) }
+    }
     explorerTabsState.value = updated
   }
 
   fun setDiffMode(cwd: String, mode: GitDiffMode) {
-    val updated = diffModesState.value + (folderKey(cwd) to mode)
-    prefs.edit { putString(DIFF_MODES, JSONObject(updated.mapValues { it.value.name }).toString()) }
+    val key = folderKey(cwd)
+    val updated = diffModesState.value + (key to mode)
+    if (db != null) {
+      db.prefs.setDiffMode(key, mode)
+    } else {
+      prefs.edit { putString(DIFF_MODES, JSONObject(updated.mapValues { it.value.name }).toString()) }
+    }
     diffModesState.value = updated
   }
 
   fun trustRepository(cwd: String) {
-    val updated = trustedRepositoriesState.value + folderKey(cwd)
-    prefs.edit { putString(TRUSTED_REPOSITORIES, JSONArray(updated).toString()) }
+    val key = folderKey(cwd)
+    val updated = trustedRepositoriesState.value + key
+    if (db != null) {
+      db.prefs.trustRepository(key)
+    } else {
+      prefs.edit { putString(TRUSTED_REPOSITORIES, JSONArray(updated).toString()) }
+    }
     trustedRepositoriesState.value = updated
   }
 
@@ -311,8 +378,7 @@ internal class Preferences(context: Context) {
     val updated = if (enabled) {
       disabledExtensionsState.value - extension.id
     } else {
-      disabledExtensionsState.value +
-        extension.id
+      disabledExtensionsState.value + extension.id
     }
     prefs.edit { putString(DISABLED_EXTENSIONS, JSONArray(updated).toString()) }
     disabledExtensionsState.value = updated
@@ -366,10 +432,15 @@ internal class Preferences(context: Context) {
    * The last `remote_hosts` result, so remote workspaces show their host and path as soon as OOPBoT starts, before
    * Termux has answered; null before the first.
    */
-  fun remoteHostsCache(): String? = prefs.getString(REMOTE_HOSTS, null)
+  fun remoteHostsCache(): String? = remoteHostsCacheText
 
   fun setRemoteHostsCache(json: String) {
-    prefs.edit { putString(REMOTE_HOSTS, json) }
+    remoteHostsCacheText = json
+    if (db != null) {
+      db.prefs.setRemoteHostsCache(json)
+    } else {
+      prefs.edit { putString(REMOTE_HOSTS, json) }
+    }
   }
 
   /** The tabs and panes last shown, for a restarted OOPBoT to show again; null before any were saved. */
@@ -379,6 +450,31 @@ internal class Preferences(context: Context) {
     prefs.edit { putString(LAYOUT, layout.toJson()) }
   }
 
+  /** Moves legacy JSON blobs from SharedPreferences XML into SQLite once and removes those keys from XML. */
+  private fun migrateToSqlIfNeeded() {
+    val store = db?.prefs ?: return
+    if (store.isMigrated(PREFS_MIGRATED_KEY)) return
+    val legacy = LegacyPrefsData(
+      workspaces = readWorkspaces(),
+      archived = readLongMap(ARCHIVED_SESSIONS),
+      touched = readLongMap(TOUCHED_SESSIONS),
+      explorerTabs = readEnumMap(EXPLORER_TABS, ExplorerTab.entries),
+      diffModes = readEnumMap(DIFF_MODES, GitDiffMode.entries),
+      trustedRepositories = readStringSet(TRUSTED_REPOSITORIES),
+      remoteHostsCache = prefs.getString(REMOTE_HOSTS, null),
+    )
+    store.migrateLegacy(PREFS_MIGRATED_KEY, legacy)
+    prefs.edit(commit = true) {
+      remove(WORKSPACES)
+      remove(ARCHIVED_SESSIONS)
+      remove(TOUCHED_SESSIONS)
+      remove(EXPLORER_TABS)
+      remove(DIFF_MODES)
+      remove(TRUSTED_REPOSITORIES)
+      remove(REMOTE_HOSTS)
+    }
+  }
+
   /** The saved theme. Before there were palettes to pick, the setting was Light or Dark, which kept their colours. */
   private fun readTheme(): AppTheme = when (val name = prefs.getString(THEME, null)) {
     "Light" -> AppTheme.Porcelain
@@ -386,9 +482,11 @@ internal class Preferences(context: Context) {
     else -> AppTheme.entries.firstOrNull { it.name == name } ?: AppTheme.System
   }
 
-  private fun readWorkspaces(): List<String> {
+  private fun readWorkspaces(): List<String> = try {
     val array = JSONArray(prefs.getString(WORKSPACES, null) ?: return emptyList())
-    return List(array.length()) { array.getString(it) }
+    List(array.length()) { array.getString(it) }
+  } catch (_: JSONException) {
+    emptyList()
   }
 
   private fun readExplorerSort(): ExplorerSort {
@@ -398,20 +496,24 @@ internal class Preferences(context: Context) {
   }
 
   /** The JSON array of strings at [key], as a set. */
-  private fun readStringSet(key: String): Set<String> {
+  private fun readStringSet(key: String): Set<String> = try {
     val array = JSONArray(prefs.getString(key, null) ?: return emptySet())
-    return List(array.length()) { array.getString(it) }.toSet()
+    List(array.length()) { array.getString(it) }.toSet()
+  } catch (_: JSONException) {
+    emptySet()
   }
 
   /**
    * The JSON object at [key] of folder keys or model ids to names of [entries]; names no entry has any more are
    * dropped.
    */
-  private fun <T : Enum<T>> readEnumMap(key: String, entries: List<T>): Map<String, T> {
+  private fun <T : Enum<T>> readEnumMap(key: String, entries: List<T>): Map<String, T> = try {
     val json = JSONObject(prefs.getString(key, null) ?: return emptyMap())
-    return json.keys().asSequence()
+    json.keys().asSequence()
       .mapNotNull { folder -> entries.firstOrNull { it.name == json.optString(folder) }?.let { folder to it } }
       .toMap()
+  } catch (_: JSONException) {
+    emptyMap()
   }
 
   private fun writeArchived(archived: Map<String, Long>, touched: Map<String, Long>) {
@@ -424,13 +526,16 @@ internal class Preferences(context: Context) {
   }
 
   /** The JSON object at [key] of strings to epoch milliseconds. */
-  private fun readLongMap(key: String): Map<String, Long> {
+  private fun readLongMap(key: String): Map<String, Long> = try {
     val json = JSONObject(prefs.getString(key, null) ?: return emptyMap())
-    return json.keys().asSequence().associateWith(json::getLong)
+    json.keys().asSequence().associateWith(json::getLong)
+  } catch (_: JSONException) {
+    emptyMap()
   }
 
   private companion object {
     const val FILE = "oopbot"
+    const val PREFS_MIGRATED_KEY = "prefs_v1_migrated"
     const val SETUP_COMPLETE = "setupComplete"
 
     const val SETUP_COMMAND_COPIED_FOR = "setupCommandCopiedFor"

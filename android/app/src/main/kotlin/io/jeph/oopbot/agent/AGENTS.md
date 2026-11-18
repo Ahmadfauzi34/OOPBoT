@@ -15,6 +15,7 @@ Manages per-chat agent processes (`AgentProcess`), pooling/parking lifecycle (`A
 - **Compose Stability:** Public data models consumed by `ui/chat/` (`TimelineModels.kt`, etc.) MUST be immutable and annotated `@Immutable` when wrapping collections or sealed hierarchies so scrolling chat timelines avoid unnecessary recomposition.
 - **Safe Partial JSON & Streaming:** `PartialJson.kt` and `StepStream.kt` MUST tolerate truncated/malformed JSON fragments during token streaming without throwing on the UI loop.
 - **Background Foreground Service Sync:** `AgentService.refresh()` MUST be invoked via `AppGraph.holdWhileWorking()` only on transitions of `KeepAlive` holdings, preventing Android foreground service start-rate exceptions.
+- **Transcript Indexing & Inbox Persistence:** `AgentProcess` eagerly pushes non-empty transcripts into `SessionRepository.cacheMessages` on session load, move, resync, and `agent_settled`; `ChatInbox` hydrates from and persists mutations to SQLite `chat_inbox` so unread alerts survive process death.
 
 ## Work Guidance
 - Keep `agent/` free of Compose UI composables (Compose views live in `ui/chat/` and `ui/subagents/`).

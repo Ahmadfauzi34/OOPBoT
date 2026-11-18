@@ -598,6 +598,8 @@ dependencies {
   implementation("io.github.sagernet:libghostty-android-compose:0.1.0-alpha02")
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.json:json:20260814")
+  // Real SQLite WAL + FTS4 execution in JVM tests against the production schema and queries.
+  testImplementation("org.xerial:sqlite-jdbc:3.54.1.0")
   // Virtual time for the local model scheduler's reservations and idle unload.
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }

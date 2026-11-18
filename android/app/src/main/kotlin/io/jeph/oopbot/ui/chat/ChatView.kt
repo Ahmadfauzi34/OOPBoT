@@ -2,20 +2,34 @@ package io.jeph.oopbot.ui.chat
 
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateSetOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.agent.AgentRegistry
 import io.jeph.oopbot.agent.TimelineItem
+import io.jeph.oopbot.data.ChatDraftSnapshot
+import io.jeph.oopbot.data.OopbotDatabase
 import io.jeph.oopbot.ui.components.MarkdownCache
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+
+private const val DRAFT_SAVE_DEBOUNCE_MILLIS = 300L
 
 /** More items than a screen holds, at the height of the shortest rows. */
 private const val WARM_ITEMS = 60
@@ -56,21 +70,94 @@ internal class ChatView {
   val draft = TextFieldState()
   private val steerDrafts = HashMap<String, TextFieldState>()
 
+  /** Hook set by [ChatViews] to persist this view's drafts/scroll/folds when screen state changes or disposes. */
+  internal var onSave: (() -> Unit)? = null
+
   /**
    * The unsent steer for the subagent the chat's `subagent` call [toolCallId] started. Keyed by the call rather than
    * the run's id, which a restarted Pi counts again from the first.
    */
   fun steerDraft(toolCallId: String): TextFieldState = steerDrafts.getOrPut(toolCallId) { TextFieldState() }
+
+  internal fun steerDraftTexts(): Map<String, String> =
+    steerDrafts.mapValues { (_, state) -> state.text.toString() }.filterValues { it.isNotEmpty() }
+
+  internal fun snapshotFor(sessionPath: String): ChatDraftSnapshot {
+    val follow = scroll.follow.value
+    val top = if (follow) null else scroll.top
+    val topKey = top?.key as? String
+    return ChatDraftSnapshot(
+      sessionPath = sessionPath,
+      draftText = draft.text.toString(),
+      steerDrafts = steerDraftTexts(),
+      scrollFollow = follow,
+      scrollTopKey = topKey,
+      scrollTopOffset = if (topKey != null) top.offset else 0,
+      expandedKeys = expanded.toSet(),
+    )
+  }
+
+  internal fun restoreDrafts(snapshot: ChatDraftSnapshot) {
+    if (draft.text.isEmpty() && snapshot.draftText.isNotEmpty()) {
+      draft.setTextAndPlaceCursorAtEnd(snapshot.draftText)
+    }
+    for ((callId, text) in snapshot.steerDrafts) {
+      if (text.isEmpty()) continue
+      val state = steerDraft(callId)
+      if (state.text.isEmpty()) state.setTextAndPlaceCursorAtEnd(text)
+    }
+    if (scroll.top == null && scroll.follow.value) {
+      scroll.follow.value = snapshot.scrollFollow
+      snapshot.scrollTopKey?.let { key -> scroll.top = StreamTop(key, snapshot.scrollTopOffset) }
+    }
+    if (expanded.isEmpty() && snapshot.expandedKeys.isNotEmpty()) {
+      expanded.addAll(snapshot.expandedKeys)
+    }
+  }
 }
 
 /**
- * Each chat's [ChatView], kept as long as its process: a parked chat keeps its own, a closed one's is dropped. Held by
- * the [io.jeph.oopbot.AppGraph], so it outlives the activity; nothing is saved to disk.
+ * Each chat's [ChatView], kept as long as its process: a parked chat keeps its own, a closed one's is dropped, while
+ * drafts, scroll position, and expanded folds are backed by SQLite `chat_drafts` via [db] across process death.
  */
-internal class ChatViews {
+internal class ChatViews(private val db: OopbotDatabase? = null) {
   private val views = WeakHashMap<AgentProcess, ChatView>()
+  private val persisted = ConcurrentHashMap<String, ChatDraftSnapshot>()
 
-  operator fun get(process: AgentProcess): ChatView = views.getOrPut(process) { ChatView() }
+  init {
+    db?.drafts?.loadAll()?.forEach { snapshot -> persisted[snapshot.sessionPath] = snapshot }
+  }
+
+  operator fun get(process: AgentProcess): ChatView = synchronized(views) {
+    views.getOrPut(process) {
+      ChatView().also { view ->
+        process.sessionFile.value?.let { path -> restoreFor(path, view) }
+        view.onSave = { process.sessionFile.value?.let { path -> saveNow(path, view) } }
+      }
+    }
+  }
+
+  internal fun restoreFor(sessionPath: String, view: ChatView) {
+    persisted[sessionPath]?.let(view::restoreDrafts)
+  }
+
+  internal fun saveNow(sessionPath: String, view: ChatView) {
+    if (sessionPath.isBlank()) return
+    val snapshot = view.snapshotFor(sessionPath)
+    val previous = persisted[sessionPath]
+    if (snapshot.isEmpty) {
+      if (previous == null) return
+      persisted.remove(sessionPath)
+    } else {
+      if (previous == snapshot) return
+      persisted[sessionPath] = snapshot
+    }
+    db?.drafts?.save(snapshot)
+  }
+
+  fun forget(sessionPaths: Collection<String>) {
+    for (path in sessionPaths) persisted.remove(path)
+  }
 
   /**
    * Parses the finished replies at the end of every chat [registry] has open but no pane shows, as they finish or as a
@@ -110,4 +197,64 @@ internal fun List<TimelineItem>.endReplies(): Set<String> {
     }
   }
   return replies
+}
+
+/** Persists composer drafts, expanded folds, and follow state for [process] via [views] as they change or dispose. */
+@Composable
+internal fun PersistChatView(process: AgentProcess, views: ChatViews, view: ChatView) {
+  LaunchedEffect(process, view) {
+    var lastPath = process.sessionFile.value
+    process.sessionFile.collect { path ->
+      if (path != null && path != lastPath) views.saveNow(path, view)
+      lastPath = path
+    }
+  }
+  LaunchedEffect(process, view) {
+    snapshotFlow { view.draft.text.toString() }
+      .drop(1)
+      .collectLatest { text ->
+        if (text.isNotEmpty()) delay(DRAFT_SAVE_DEBOUNCE_MILLIS)
+        view.onSave?.invoke()
+      }
+  }
+  LaunchedEffect(process, view) {
+    snapshotFlow { view.expanded.toSet() }
+      .drop(1)
+      .collect { view.onSave?.invoke() }
+  }
+  LaunchedEffect(process, view) {
+    snapshotFlow { view.scroll.follow.value }
+      .drop(1)
+      .collect { view.onSave?.invoke() }
+  }
+  DisposableEffect(process, view) {
+    onDispose { view.onSave?.invoke() }
+  }
+}
+
+/** Saves [view] scroll position on settle and disposal, returning kept markdown cache keys when disposed. */
+@Composable
+internal fun PersistStreamScroll(listState: LazyListState, view: ChatView, keptMarkdown: () -> Set<String>) {
+  val latestKept = rememberUpdatedState(keptMarkdown)
+  DisposableEffect(listState, view) {
+    onDispose {
+      view.scroll.top = listState.topPosition()
+      view.onSave?.invoke()
+      view.markdown.keepShown(latestKept.value())
+    }
+  }
+  LaunchedEffect(listState, view) {
+    snapshotFlow { listState.isScrollInProgress }
+      .drop(1)
+      .filter { !it }
+      .collect { _ ->
+        view.scroll.top = listState.topPosition()
+        view.onSave?.invoke()
+      }
+  }
+}
+
+private fun LazyListState.topPosition(): StreamTop? {
+  val first = layoutInfo.visibleItemsInfo.firstOrNull { item -> item.index == firstVisibleItemIndex } ?: return null
+  return StreamTop(first.key, firstVisibleItemScrollOffset)
 }

@@ -1,5 +1,6 @@
 package io.jeph.oopbot.agent
 
+import io.jeph.oopbot.data.OopbotDatabase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,8 +29,8 @@ internal data class InboxEntry(
  * the dialog goes away. Takes nothing in while [enabled] is off, and drops what it holds when switched off. Main thread
  * only.
  */
-internal class ChatInbox {
-  private val entriesState = MutableStateFlow<List<InboxEntry>>(emptyList())
+internal class ChatInbox(private val db: OopbotDatabase? = null) {
+  private val entriesState = MutableStateFlow(db?.inbox?.loadAll().orEmpty())
   private var onScreen: Set<String> = emptySet()
   private var archived: Set<String> = emptySet()
 
@@ -46,13 +47,16 @@ internal class ChatInbox {
     val path = entry.location.sessionPath
     if (!enabled || path in onScreen || path in archived) return
     entriesState.update { entries -> listOf(entry) + entries.filterNot { it.location.sessionPath == path } }
+    db?.inbox?.upsert(entry)
   }
 
   /** The dialog the chat in [sessionPath] waited on went away, so it no longer needs the user for it. */
   fun dialogGone(sessionPath: String) {
+    if (entriesState.value.none { it.location.sessionPath == sessionPath && it.reason == InboxReason.Waiting }) return
     entriesState.update { entries ->
       entries.filterNot { it.location.sessionPath == sessionPath && it.reason == InboxReason.Waiting }
     }
+    db?.inbox?.deleteWaiting(sessionPath)
   }
 
   /**
@@ -60,6 +64,7 @@ internal class ChatInbox {
    * went in, keeping the entry's place and time.
    */
   fun nameAsker(sessionPath: String, asker: String) {
+    if (entriesState.value.none { it.location.sessionPath == sessionPath && it.reason == InboxReason.Waiting }) return
     entriesState.update { entries ->
       entries.map { entry ->
         if (entry.location.sessionPath == sessionPath && entry.reason == InboxReason.Waiting) {
@@ -69,12 +74,16 @@ internal class ChatInbox {
         }
       }
     }
+    db?.inbox?.updateAsker(sessionPath, asker)
   }
 
   /** Sets the session files of the chats the user sees, taking theirs out. */
   fun setOnScreen(sessionPaths: Set<String>) {
     onScreen = sessionPaths
+    val dropped = entriesState.value.mapNotNull { it.location.sessionPath.takeIf { path -> path in sessionPaths } }
+    if (dropped.isEmpty()) return
     entriesState.update { entries -> entries.filterNot { it.location.sessionPath in sessionPaths } }
+    db?.inbox?.deletePaths(dropped)
   }
 
   /**
@@ -83,14 +92,21 @@ internal class ChatInbox {
    */
   fun setArchived(sessionPaths: Set<String>) {
     archived = sessionPaths
+    val dropped = entriesState.value.mapNotNull { it.location.sessionPath.takeIf { path -> path in sessionPaths } }
+    if (dropped.isEmpty()) return
     entriesState.update { entries -> entries.filterNot { it.location.sessionPath in sessionPaths } }
+    db?.inbox?.deletePaths(dropped)
   }
 
   fun remove(sessionPath: String) {
+    if (entriesState.value.none { it.location.sessionPath == sessionPath }) return
     entriesState.update { entries -> entries.filterNot { it.location.sessionPath == sessionPath } }
+    db?.inbox?.deletePaths(listOf(sessionPath))
   }
 
   fun clear() {
+    if (entriesState.value.isEmpty()) return
     entriesState.value = emptyList()
+    db?.inbox?.clear()
   }
 }

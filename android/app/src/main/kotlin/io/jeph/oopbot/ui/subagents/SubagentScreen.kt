@@ -209,7 +209,7 @@ private suspend fun readTranscript(
   failed: String,
   retry: () -> Unit,
 ): SubagentTranscript = try {
-  val read = repository.messages(path)
+  val read = repository.messages(path, preferCache = !live)
   // Off the main thread: a long transcript takes a while to turn into rows.
   withContext(Dispatchers.Default) {
     val history = (previous as? SubagentTranscript.Loaded)?.history?.after(read) ?: TranscriptHistory.of(read)

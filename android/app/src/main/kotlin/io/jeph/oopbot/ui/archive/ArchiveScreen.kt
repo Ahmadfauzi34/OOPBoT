@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.data.ArchivedSession
+import io.jeph.oopbot.data.SessionRepository
 import io.jeph.oopbot.host.SessionInfo
 import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.ShellActions
@@ -70,13 +71,16 @@ import io.jeph.oopbot.ui.workspace.relativeTime
 import io.jeph.oopbot.ui.workspace.sessionTitle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+private const val SEARCH_DEBOUNCE_MILLIS = 120L
+
 /**
- * Archived chats, most recently archived first, searchable by title or workspace folder. Tapping a chat opens its
- * read-only transcript; a long press starts selecting for bulk Restore and Delete. A chat whose folder is gone can
- * be deleted but not restored, alone or in bulk.
+ * Archived chats, most recently archived first, searchable by title, workspace folder, or message text. Tapping a chat
+ * opens its read-only transcript; a long press starts selecting for bulk Restore and Delete. A chat whose folder is
+ * gone can be deleted but not restored, alone or in bulk.
  */
 @Composable
 internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat: (path: String) -> Unit) {
@@ -95,7 +99,8 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
     if (page.selected.isNotEmpty()) page.keepSelected(archived.map { it.session.path }.toSet())
   }
   BackHandler(enabled = page.selected.isNotEmpty()) { page.selected = emptySet() }
-  val shown = remember(archived, query, names) { page.filter(archived, query, names) }
+  val contentMatches = page.rememberContentMatches(archived, query, graph.sessionRepository)
+  val shown = remember(archived, query, names, contentMatches) { page.filter(archived, query, names, contentMatches) }
   val selectedSessions = remember(archived, page.selected) {
     if (page.selected.isEmpty()) emptyList() else archived.map { it.session }.filter { it.path in page.selected }
   }
@@ -156,6 +161,26 @@ private class ArchivePage(
   var busy by mutableStateOf(false)
     private set
 
+  @Composable
+  fun rememberContentMatches(
+    archived: List<ArchivedSession>,
+    query: String,
+    repository: SessionRepository,
+  ): Set<String> {
+    var result by remember { mutableStateOf("" to emptySet<String>()) }
+    val trimmed = query.trim()
+    LaunchedEffect(archived, trimmed, repository) {
+      if (trimmed.isEmpty() || archived.isEmpty()) {
+        result = "" to emptySet()
+        return@LaunchedEffect
+      }
+      delay(SEARCH_DEBOUNCE_MILLIS)
+      val found = repository.searchMessages(trimmed, archived.mapTo(HashSet()) { it.session.path })
+      result = trimmed to found
+    }
+    return if (result.first.isNotEmpty() && trimmed.startsWith(result.first)) result.second else emptySet()
+  }
+
   fun toggle(path: String) {
     selected = if (path in selected) selected - path else selected + path
   }
@@ -188,13 +213,19 @@ private class ArchivePage(
     }
   }
 
-  fun filter(archived: List<ArchivedSession>, query: String, names: FolderNames): List<ArchivedSession> {
+  fun filter(
+    archived: List<ArchivedSession>,
+    query: String,
+    names: FolderNames,
+    contentMatches: Set<String> = emptySet(),
+  ): List<ArchivedSession> {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return archived
     return archived.filter { entry ->
       val session = entry.session
-      listOfNotNull(session.name, session.firstMessage, session.cwd, names.path(session.cwd))
-        .any { it.contains(trimmed, ignoreCase = true) }
+      session.path in contentMatches ||
+        listOfNotNull(session.name, session.firstMessage, session.cwd, names.path(session.cwd))
+          .any { it.contains(trimmed, ignoreCase = true) }
     }
   }
 
