@@ -75,12 +75,7 @@ fun OopbotMarkdown(
 }
 
 @Composable
-private fun OopbotMarkdownContent(
-  state: State,
-  colors: OopbotColors,
-  body: TextStyle,
-  modifier: Modifier,
-) {
+private fun OopbotMarkdownContent(state: State, colors: OopbotColors, body: TextStyle, modifier: Modifier) {
   Markdown(
     state = state,
     modifier = modifier,

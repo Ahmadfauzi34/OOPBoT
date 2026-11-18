@@ -183,36 +183,32 @@ private fun TableCell(
  * Lays out the cells row by row in columns sized by [columnWidths] for the captured viewport width, each row as tall
  * as its tallest cell, then the lines between rows.
  */
-private fun gridMeasurePolicy(
-  rows: Int,
-  columns: Int,
-  viewport: TableViewportWidth,
-  widthsCache: TableWidthsCache,
-) = MultiContentMeasurePolicy { (cells, lines), _ ->
-  val widths = widthsCache.widths(
-    available = viewport.available,
-    floor = COLUMN_FLOOR.roundToPx(),
-    wordCap = WORD_CAP.roundToPx(),
-  ) { minimums, naturals ->
-    cells.forEachIndexed { index, cell ->
-      val column = index % columns
-      minimums[column] = maxOf(minimums[column], cell.minIntrinsicWidth(Constraints.Infinity))
-      naturals[column] = maxOf(naturals[column], cell.maxIntrinsicWidth(Constraints.Infinity))
+private fun gridMeasurePolicy(rows: Int, columns: Int, viewport: TableViewportWidth, widthsCache: TableWidthsCache) =
+  MultiContentMeasurePolicy { (cells, lines), _ ->
+    val widths = widthsCache.widths(
+      available = viewport.available,
+      floor = COLUMN_FLOOR.roundToPx(),
+      wordCap = WORD_CAP.roundToPx(),
+    ) { minimums, naturals ->
+      cells.forEachIndexed { index, cell ->
+        val column = index % columns
+        minimums[column] = maxOf(minimums[column], cell.minIntrinsicWidth(Constraints.Infinity))
+        naturals[column] = maxOf(naturals[column], cell.maxIntrinsicWidth(Constraints.Infinity))
+      }
+    }
+    val placed = cells.mapIndexed { index, cell -> cell.measure(Constraints.fixedWidth(widths[index % columns])) }
+    val heights = IntArray(rows) { row -> (0 until columns).maxOf { placed[row * columns + it].height } }
+    val lefts = widths.runningFold(0, Int::plus)
+    val tops = heights.toList().runningFold(0, Int::plus)
+    val width = lefts.last()
+    val height = tops.last()
+    val line = GRID_LINE.roundToPx()
+    val rowLines = (1 until rows).map { lines[it - 1].measure(Constraints.fixed(width, line)) }
+    layout(width, height) {
+      placed.forEachIndexed { index, cell -> cell.place(lefts[index % columns], tops[index / columns]) }
+      rowLines.forEachIndexed { index, rowLine -> rowLine.place(0, tops[index + 1]) }
     }
   }
-  val placed = cells.mapIndexed { index, cell -> cell.measure(Constraints.fixedWidth(widths[index % columns])) }
-  val heights = IntArray(rows) { row -> (0 until columns).maxOf { placed[row * columns + it].height } }
-  val lefts = widths.runningFold(0, Int::plus)
-  val tops = heights.toList().runningFold(0, Int::plus)
-  val width = lefts.last()
-  val height = tops.last()
-  val line = GRID_LINE.roundToPx()
-  val rowLines = (1 until rows).map { lines[it - 1].measure(Constraints.fixed(width, line)) }
-  layout(width, height) {
-    placed.forEachIndexed { index, cell -> cell.place(lefts[index % columns], tops[index / columns]) }
-    rowLines.forEachIndexed { index, rowLine -> rowLine.place(0, tops[index + 1]) }
-  }
-}
 
 /**
  * Column widths for cells whose longest words need [minimums] and whose text on one line needs [naturals]. Columns

@@ -95,11 +95,10 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
     if (page.selected.isNotEmpty()) page.keepSelected(archived.map { it.session.path }.toSet())
   }
   BackHandler(enabled = page.selected.isNotEmpty()) { page.selected = emptySet() }
-  val shown = remember(archived, query, names) { archived.filter { it.session.matches(query.trim(), names) } }
+  val shown = remember(archived, query, names) { page.filter(archived, query, names) }
   val selectedSessions = remember(archived, page.selected) {
     if (page.selected.isEmpty()) emptyList() else archived.map { it.session }.filter { it.path in page.selected }
   }
-  val restorable = remember(selectedSessions) { selectedSessions.filter { it.cwdExists } }
   Box(modifier = Modifier.fillMaxSize().background(oopbotColors.surface0)) {
     Column(modifier = Modifier.fillMaxSize()) {
       ArchiveHeader(
@@ -122,15 +121,7 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
         onOpenChat = onOpenChat,
         modifier = Modifier.weight(1f).fillMaxWidth().imePadding(),
       )
-      if (page.selected.isNotEmpty()) {
-        BulkActions(
-          restoreCount = restorable.size,
-          deleteCount = selectedSessions.size,
-          enabled = !page.busy,
-          onRestore = { page.restore(restorable) },
-          onDelete = { page.deleting = selectedSessions },
-        )
-      }
+      ArchiveBulkActions(selectedSessions, page)
     }
     SnackbarStack(
       state = page.snackbar,
@@ -194,6 +185,16 @@ private class ArchivePage(
       }
       selected -= paths.toSet()
       show(resources.getQuantityString(R.plurals.archive_deleted, paths.size, paths.size))
+    }
+  }
+
+  fun filter(archived: List<ArchivedSession>, query: String, names: FolderNames): List<ArchivedSession> {
+    val trimmed = query.trim()
+    if (trimmed.isEmpty()) return archived
+    return archived.filter { entry ->
+      val session = entry.session
+      listOfNotNull(session.name, session.firstMessage, session.cwd, names.path(session.cwd))
+        .any { it.contains(trimmed, ignoreCase = true) }
     }
   }
 
@@ -282,9 +283,18 @@ private fun ArchivePageOverlays(page: ArchivePage) {
   }
 }
 
-/** Whether [query] (already trimmed) is in the chat's title or its folder, as a full or `~` path or with its host. */
-private fun SessionInfo.matches(query: String, names: FolderNames): Boolean = query.isEmpty() ||
-  listOfNotNull(name, firstMessage, cwd, names.path(cwd)).any { it.contains(query, ignoreCase = true) }
+@Composable
+private fun ArchiveBulkActions(selectedSessions: List<SessionInfo>, page: ArchivePage) {
+  if (selectedSessions.isEmpty()) return
+  val restorable = remember(selectedSessions) { selectedSessions.filter { it.cwdExists } }
+  BulkActions(
+    restoreCount = restorable.size,
+    deleteCount = selectedSessions.size,
+    enabled = !page.busy,
+    onRestore = { page.restore(restorable) },
+    onDelete = { page.deleting = selectedSessions },
+  )
+}
 
 @Composable
 private fun ArchiveHeader(

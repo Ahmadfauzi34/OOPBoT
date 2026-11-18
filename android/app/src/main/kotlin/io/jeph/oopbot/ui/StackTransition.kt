@@ -49,10 +49,7 @@ internal val LocalTransitionSettled = compositionLocalOf { true }
  * transition settlement via [LocalTransitionSettled].
  */
 @Composable
-internal fun AnimatedVisibilityScope.TransitionFrame(
-  modifier: Modifier = Modifier,
-  content: @Composable () -> Unit,
-) {
+internal fun AnimatedVisibilityScope.TransitionFrame(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
   val settled = LocalTransitionSettled.current &&
     transition.currentState == transition.targetState &&
     transition.targetState == EnterExitState.Visible

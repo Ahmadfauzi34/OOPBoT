@@ -63,19 +63,12 @@ internal fun BackupsScreen(onBack: () -> Unit) {
   val snackbar = remember { SnackbarStackState() }
   val task by backups.task.collectAsStateWithLifecycle()
   val outcome by backups.outcome.collectAsStateWithLifecycle()
-  var list by remember { mutableStateOf<BackupList>(BackupList.Loading) }
   var reloads by remember { mutableIntStateOf(0) }
   var restoring by remember { mutableStateOf<BackupInfo?>(null) }
   var deleting by remember { mutableStateOf<BackupInfo?>(null) }
   val failed = stringResource(R.string.provider_failed)
   val idle = task == null
-  val settled by rememberUpdatedState(LocalTransitionSettled.current)
-  LaunchedEffect(idle, reloads) {
-    if (!idle) return@LaunchedEffect
-    val loaded = loadBackups(backups)
-    snapshotFlow { settled }.first { it }
-    list = loaded
-  }
+  val list = rememberBackupList(backups, idle, reloads)
   SettingsPage(title = stringResource(R.string.backups_title), onBack = onBack, snackbar = snackbar) {
     TaskSection(task, list, onCreate = backups::create)
     outcome?.let { OutcomeCaption(it, failed) }
@@ -116,6 +109,19 @@ internal fun BackupsScreen(onBack: () -> Unit) {
       onDismiss = { deleting = null },
     )
   }
+}
+
+@Composable
+private fun rememberBackupList(backups: ConfigBackups, idle: Boolean, reloads: Int): BackupList {
+  var list by remember { mutableStateOf<BackupList>(BackupList.Loading) }
+  val settled by rememberUpdatedState(LocalTransitionSettled.current)
+  LaunchedEffect(idle, reloads) {
+    if (!idle) return@LaunchedEffect
+    val loaded = loadBackups(backups)
+    snapshotFlow { settled }.first { ready -> ready }
+    list = loaded
+  }
+  return list
 }
 
 /** Names a file that isn't a readable backup, since its time is only when the file last changed. */

@@ -126,7 +126,8 @@ internal sealed interface SubagentTranscript {
 /**
  * The transcript at [source], read again whenever the run's [messages] count changes, at most once a [RELOAD_MILLIS],
  * and when a failed read is retried. A null [source] isn't known yet, so the transcript stays loading. While the
- * subagent is [live], a file that isn't there yet means it is starting: Pi writes a session's file with its first reply.
+ * subagent is [live], a file that isn't there yet means it is starting: Pi writes a session's file with its first
+ * reply.
  */
 @Composable
 internal fun rememberSubagentTranscript(
@@ -151,22 +152,22 @@ internal fun rememberSubagentTranscript(
     val path = try {
       transcriptPath(graph.hostClient, source)
     } catch (error: HostRejected) {
-      snapshotFlow { settled }.first { it }
+      snapshotFlow { settled }.first { ready -> ready }
       value = SubagentTranscript.Failed(error.error, retry)
       return@produceState
     } catch (error: IOException) {
-      snapshotFlow { settled }.first { it }
+      snapshotFlow { settled }.first { ready -> ready }
       value = SubagentTranscript.Failed(error.message ?: failed, retry)
       return@produceState
     }
     if (path == null) {
-      snapshotFlow { settled }.first { it }
+      snapshotFlow { settled }.first { ready -> ready }
       value = SubagentTranscript.CutOff
       return@produceState
     }
     snapshotFlow { currentMessages }.conflate().collect {
       val next = readTranscript(graph.sessionRepository, path, currentLive, value, failed, retry)
-      if (value is SubagentTranscript.Loading) snapshotFlow { settled }.first { it }
+      if (value is SubagentTranscript.Loading) snapshotFlow { settled }.first { ready -> ready }
       value = next
       delay(RELOAD_MILLIS)
     }

@@ -13,6 +13,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.AppGraph
 import io.jeph.oopbot.R
+import io.jeph.oopbot.host.HostClient
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.termux.TermuxInstall
 import io.jeph.oopbot.ui.components.SimmeringPot
@@ -43,28 +44,12 @@ private sealed interface ReinstallOutcome {
  */
 @Composable
 internal fun AgentSection(graph: AppGraph, onOpenRunningAgents: () -> Unit, onOpenPermissions: () -> Unit) {
-  val context = LocalContext.current
   val hostClient = graph.hostClient
-  val termuxVersion by produceState<TermuxVersion>(TermuxVersion.Loading, context) {
-    value = TermuxVersion.Loaded(withContext(Dispatchers.IO) { TermuxInstall.version(context) })
-  }
-  val hello by hostClient.lastHello.collectAsStateWithLifecycle()
+  val status = rememberAgentStatus(hostClient)
   val installing by hostClient.installing.collectAsStateWithLifecycle()
   var progressLine by remember { mutableStateOf<String?>(null) }
   var outcome by remember { mutableStateOf<ReinstallOutcome?>(null) }
   val failed = stringResource(R.string.provider_failed)
-  val notInstalled = stringResource(R.string.settings_termux_not_installed)
-  val status =
-    listOfNotNull(
-      when (val current = termuxVersion) {
-        TermuxVersion.Loading -> null
-        is TermuxVersion.Loaded -> current.version ?: notInstalled
-      },
-      hello?.let { current ->
-        current.oopbotVersion?.let { stringResource(R.string.settings_oopbot_version, it) }
-          ?: stringResource(R.string.settings_pi_missing)
-      },
-    ).joinToString(stringResource(R.string.separator_dot))
   val reinstall = {
     progressLine = null
     outcome = null
@@ -108,6 +93,26 @@ internal fun AgentSection(graph: AppGraph, onOpenRunningAgents: () -> Unit, onOp
       onReinstall = { reinstall() },
     )
   }
+}
+
+@Composable
+private fun rememberAgentStatus(hostClient: HostClient): String {
+  val context = LocalContext.current
+  val termuxVersion by produceState<TermuxVersion>(TermuxVersion.Loading, context) {
+    value = TermuxVersion.Loaded(withContext(Dispatchers.IO) { TermuxInstall.version(context) })
+  }
+  val hello by hostClient.lastHello.collectAsStateWithLifecycle()
+  val notInstalled = stringResource(R.string.settings_termux_not_installed)
+  return listOfNotNull(
+    when (val current = termuxVersion) {
+      TermuxVersion.Loading -> null
+      is TermuxVersion.Loaded -> current.version ?: notInstalled
+    },
+    hello?.let { current ->
+      current.oopbotVersion?.let { stringResource(R.string.settings_oopbot_version, it) }
+        ?: stringResource(R.string.settings_pi_missing)
+    },
+  ).joinToString(stringResource(R.string.separator_dot))
 }
 
 @Composable
