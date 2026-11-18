@@ -26,6 +26,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -154,14 +155,17 @@ internal fun ExplorerPanel(
         modifier = content,
       )
 
-      else -> ChangesPane(
-        workspace = repository,
-        open = open,
-        snackbar = snackbar,
-        onDetect = detect,
-        onOpenCommit = onOpenCommit,
-        modifier = content,
-      )
+      else -> {
+        val open by remember { derivedStateOf(isOpen) }
+        ChangesPane(
+          workspace = repository,
+          open = open,
+          snackbar = snackbar,
+          onDetect = detect,
+          onOpenCommit = onOpenCommit,
+          modifier = content,
+        )
+      }
     }
   }
 }
