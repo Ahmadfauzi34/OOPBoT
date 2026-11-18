@@ -460,7 +460,7 @@ private fun WorkspacePanes(
 @Composable
 private fun WorkspacePaneSlot(
   pane: Pane,
-  item: PaneItem?,
+  item: PaneItem<AgentProcess>?,
   panels: PanePanels,
   splitAvailable: Boolean,
   closesSplit: Boolean,
