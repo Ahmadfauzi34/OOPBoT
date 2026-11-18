@@ -83,13 +83,33 @@ pub(super) fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool)
         }
         "web_search" => {
             let count = val["count"].as_u64().unwrap_or(0);
-            let mut out = format!("Ditemukan {} hasil pencarian:\n", count);
+            let engine = val["engine"].as_str().unwrap_or("");
+            let mut out = if engine.is_empty() {
+                format!("Ditemukan {} hasil pencarian:\n", count)
+            } else {
+                format!("Ditemukan {} hasil pencarian ({}):\n", count, engine)
+            };
+            if let Some(note) = val["note"].as_str().filter(|s| !s.is_empty()) {
+                out.push_str(&format!("Catatan: {}\n", note));
+            }
             if let Some(results) = val["results"].as_array() {
                 for (idx, r) in results.iter().enumerate() {
                     let title = r["title"].as_str().unwrap_or("");
                     let url = r["url"].as_str().unwrap_or("");
                     let snippet = r["snippet"].as_str().unwrap_or("");
-                    out.push_str(&format!("{}. [{}]({})\n   {}\n", idx + 1, title, url, snippet));
+                    let source = r["source"].as_str().unwrap_or("");
+                    if source.is_empty() {
+                        out.push_str(&format!("{}. [{}]({})\n   {}\n", idx + 1, title, url, snippet));
+                    } else {
+                        out.push_str(&format!(
+                            "{}. [{}]({}) [{}]\n   {}\n",
+                            idx + 1,
+                            title,
+                            url,
+                            source,
+                            snippet
+                        ));
+                    }
                 }
             }
             (out, false)

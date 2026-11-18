@@ -29,6 +29,28 @@ fn formats_shell_exit_code_for_step_figure() {
 }
 
 #[test]
+fn formats_web_search_with_engine_note_and_source() {
+    let val = json!({
+        "engine": "fallback_public_apis",
+        "count": 1,
+        "note": "DuckDuckGo diblokir; menggunakan API publik.",
+        "results": [
+            {
+                "title": "Tokio",
+                "url": "https://tokio.rs/",
+                "snippet": "Async runtime",
+                "source": "github"
+            }
+        ]
+    });
+    let (text, is_err) = format_tool_output("web_search", &val);
+    assert!(!is_err);
+    assert!(text.contains("(fallback_public_apis)"));
+    assert!(text.contains("Catatan: DuckDuckGo diblokir"));
+    assert!(text.contains("[Tokio](https://tokio.rs/) [github]"));
+}
+
+#[test]
 fn load_providers_applies_model_overrides_and_local_providers() {
     let tmp = std::env::temp_dir().join(format!("oopbot_rpc_test_{}", epoch_ms()));
     let _ = std::fs::create_dir_all(&tmp);

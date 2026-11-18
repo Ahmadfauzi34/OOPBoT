@@ -11,6 +11,7 @@
 pub mod background;
 pub mod interact;
 pub mod todo;
+pub mod web_access;
 
 pub use background::{BackgroundPlugin, BackgroundTool, BgCompletionEvent, BgTaskInfo};
 pub use interact::{
@@ -20,16 +21,16 @@ pub use todo::{
     NO_TODOS_MESSAGE, TODO_STATE_ENTRY, TODO_WIDGET_KEY, TaskItem, TaskStatus, TodoDetails,
     TodoPlugin, TodoState, TodoTool,
 };
+pub use web_access::{FetchPageTool, WebAccessPlugin, WebSearchTool};
 
 use crate::gemini::BoxError;
-use crate::tools::{truncate, Tool, ToolRegistry};
+use crate::tools::ToolRegistry;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 // ===========================================================================
 // Kontrak & Abstraksi Plugin (OOP Interface)
@@ -251,214 +252,6 @@ pub fn extract_plugin_id(identifier: &str) -> String {
 }
 
 // ===========================================================================
-// 2. WebAccessPlugin (Pencarian Web & Fetch Konten Tanpa Ketergantungan Eksternal)
-// ===========================================================================
-
-pub struct WebAccessPlugin {
-    client: reqwest::Client,
-}
-
-impl Default for WebAccessPlugin {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WebAccessPlugin {
-    pub fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .user_agent("OOPBoT-WebAccess/0.5 (Android Termux; Linux)")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        Self { client }
-    }
-}
-
-#[async_trait]
-impl Plugin for WebAccessPlugin {
-    fn id(&self) -> &str {
-        "oopbot-web-access"
-    }
-
-    fn aliases(&self) -> Vec<&'static str> {
-        vec!["web-access", "web_access", "web_search", "browser"]
-    }
-
-    fn name(&self) -> &str {
-        "Web Access & Search"
-    }
-
-    fn description(&self) -> &str {
-        "Kemampuan pencarian internet dan pembacaan konten web (DuckDuckGo / scraping teks)."
-    }
-
-    fn register_tools(&self, registry: &mut ToolRegistry) {
-        registry.register(Box::new(WebSearchTool {
-            client: self.client.clone(),
-        }));
-        registry.register(Box::new(FetchPageTool {
-            client: self.client.clone(),
-        }));
-    }
-
-    fn system_prompt_append(&self) -> Option<String> {
-        Some(
-            "## Web Access Guidelines\n\
-            - Gunakan `web_search` untuk mencari informasi terbaru di internet, dokumentasi library, atau referensi masalah.\n\
-            - Gunakan `fetch_page` untuk membaca isi lengkap dari sebuah URL hasil pencarian."
-                .to_string(),
-        )
-    }
-}
-
-pub struct WebSearchTool {
-    client: reqwest::Client,
-}
-
-#[async_trait]
-impl Tool for WebSearchTool {
-    fn name(&self) -> &'static str {
-        "web_search"
-    }
-
-    fn description(&self) -> &'static str {
-        "Cari informasi terkini di internet (menggunakan DuckDuckGo instant search / HTML)."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Kata kunci pencarian yang ingin dicari di internet"
-                }
-            },
-            "required": ["query"]
-        })
-    }
-
-    fn preview(&self, args: &Value) -> String {
-        let q = args["query"].as_str().unwrap_or("");
-        format!("web_search: \"{}\"", q)
-    }
-
-    async fn execute(&self, args: &Value) -> Result<Value, String> {
-        let query = args["query"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| "argumen 'query' (string) wajib diisi".to_string())?;
-
-        // Gunakan DuckDuckGo HTML Lite yang ringan dan stabil tanpa CAPTCHA JS
-        let url = format!(
-            "https://html.duckduckgo.com/html/?q={}",
-            urlencoding(query)
-        );
-
-        let res = self
-            .client
-            .get(&url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .send()
-            .await
-            .map_err(|e| format!("Gagal menghubungi mesin pencari: {}", e))?;
-
-        if !res.status().is_success() {
-            return Err(format!("Pencarian mengembalikan status {}", res.status()));
-        }
-
-        let body = res
-            .text()
-            .await
-            .map_err(|e| format!("Gagal membaca respons web: {}", e))?;
-
-        let results = parse_ddg_results(&body);
-        if results.is_empty() {
-            Ok(json!({
-                "query": query,
-                "count": 0,
-                "results": [],
-                "note": "Tidak ada hasil ditemukan atau respons terpotong."
-            }))
-        } else {
-            Ok(json!({
-                "query": query,
-                "count": results.len(),
-                "results": results
-            }))
-        }
-    }
-}
-
-pub struct FetchPageTool {
-    client: reqwest::Client,
-}
-
-#[async_trait]
-impl Tool for FetchPageTool {
-    fn name(&self) -> &'static str {
-        "fetch_page"
-    }
-
-    fn description(&self) -> &'static str {
-        "Ambil dan baca isi teks dari sebuah halaman web (URL). Tag HTML otomatis dibersihkan menjadi teks polos."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL website lengkap yang ingin dibaca (misal: https://example.com)"
-                }
-            },
-            "required": ["url"]
-        })
-    }
-
-    fn preview(&self, args: &Value) -> String {
-        let url = args["url"].as_str().unwrap_or("");
-        format!("fetch_page: {}", url)
-    }
-
-    async fn execute(&self, args: &Value) -> Result<Value, String> {
-        let url = args["url"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| "argumen 'url' wajib diisi".to_string())?;
-
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err("URL harus diawali dengan http:// atau https://".to_string());
-        }
-
-        let res = self
-            .client
-            .get(url)
-            .header("User-Agent", "Mozilla/5.0 (compatible; OOPBoT/0.5; +https://github.com/Ahmadfauzi34/OOPBoT)")
-            .send()
-            .await
-            .map_err(|e| format!("Gagal memuat URL '{}': {}", url, e))?;
-
-        let status = res.status();
-        if !status.is_success() {
-            return Err(format!("Server mengembalikan status HTTP {}", status));
-        }
-
-        let html = res.text().await.map_err(|e| e.to_string())?;
-        let text = strip_html_tags(&html);
-        let clean = truncate(&text, 25_000);
-
-        Ok(json!({
-            "url": url,
-            "status": status.as_u16(),
-            "content": clean
-        }))
-    }
-}
-
-// ===========================================================================
 // 3. SubagentsPlugin (Fondasi Orkestrasi Multi-Agen)
 // ===========================================================================
 
@@ -502,117 +295,6 @@ impl Plugin for SubagentsPlugin {
         // Jangan mengiklankan tool subagent di system prompt sebelum tool benar-benar terdaftar.
         None
     }
-}
-
-// ===========================================================================
-// Helper String & Web Scraping Ringan
-// ===========================================================================
-
-fn urlencoding(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-            out.push(b as char);
-        } else if b == b' ' {
-            out.push('+');
-        } else {
-            out.push_str(&format!("%{:02X}", b));
-        }
-    }
-    out
-}
-
-fn strip_html_tags(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut inside = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => inside = true,
-            '>' => {
-                inside = false;
-                out.push(' ');
-            }
-            _ if !inside => out.push(ch),
-            _ => {}
-        }
-    }
-
-    // Rapikan spasi berlebih
-    let mut cleaned = String::new();
-    let mut last_space = false;
-    for line in out.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if !last_space {
-                cleaned.push('\n');
-                last_space = true;
-            }
-        } else {
-            cleaned.push_str(trimmed);
-            cleaned.push('\n');
-            last_space = false;
-        }
-    }
-    cleaned
-}
-
-fn parse_ddg_results(html: &str) -> Vec<Value> {
-    let mut results = Vec::new();
-    // Cari pola `<a class="result__url" href="...">(...)</a>` atau `<a class="result__snippet"`
-    let mut remaining = html;
-    while let Some(start) = remaining.find("<div class=\"result__body\">") {
-        let chunk = &remaining[start..];
-        let end = chunk.find("</div>").unwrap_or(chunk.len());
-        let block = &chunk[..end];
-
-        let title = extract_tag_inner(block, "result__title");
-        let snippet = extract_tag_inner(block, "result__snippet");
-        let url = extract_href(block);
-
-        if !title.is_empty() || !snippet.is_empty() {
-            results.push(json!({
-                "title": strip_html_tags(&title),
-                "snippet": strip_html_tags(&snippet),
-                "url": url.unwrap_or_default()
-            }));
-            if results.len() >= 8 {
-                break;
-            }
-        }
-        remaining = &chunk[end.min(chunk.len())..];
-    }
-    results
-}
-
-fn extract_tag_inner(chunk: &str, class_marker: &str) -> String {
-    if let Some(pos) = chunk.find(class_marker) {
-        let sub = &chunk[pos..];
-        if let Some(gt) = sub.find('>') {
-            let inner_start = &sub[gt + 1..];
-            if let Some(lt) = inner_start.find("</") {
-                return inner_start[..lt].to_string();
-            }
-        }
-    }
-    String::new()
-}
-
-fn extract_href(chunk: &str) -> Option<String> {
-    if let Some(href_pos) = chunk.find("href=\"") {
-        let after = &chunk[href_pos + 6..];
-        if let Some(end_quote) = after.find('"') {
-            let raw_url = &after[..end_quote];
-            // Format DuckDuckGo redirects: `//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com`
-            if let Some(uddg_pos) = raw_url.find("uddg=") {
-                let encoded = &raw_url[uddg_pos + 5..];
-                let end = encoded.find('&').unwrap_or(encoded.len());
-                let clean = &encoded[..end];
-                return Some(clean.replace("%2F", "/").replace("%3A", ":"));
-            }
-            return Some(raw_url.to_string());
-        }
-    }
-    None
 }
 
 // ===========================================================================
