@@ -69,9 +69,17 @@ class OnboardingStateTest {
   fun theAgentInstallsByItselfOnceTermuxMayBeReady() {
     assertFalse(state(fdroid(runCommand = true)).shouldAutoInstall)
     assertTrue(state(fdroid(runCommand = true), copied = true).shouldAutoInstall)
+    // Right after tapping Copy & open Termux on F-Droid, wait until the user switches to Termux and returns
+    // so RunCommandService is not fired before allow-external-apps=true has been pasted.
+    val awaitingFdroid = state(fdroid(runCommand = true), copied = true, awaitingReturn = true)
+    assertTrue(awaitingFdroid.waitingForTermux)
+    assertTrue(awaitingFdroid.autoInstallDeferred)
+    assertFalse(awaitingFdroid.shouldAutoInstall)
+    // Already-reached Termux or Play build after pairing need not defer.
+    assertTrue(state(fdroid(runCommand = true, reached = true), copied = true, awaitingReturn = true).shouldAutoInstall)
     assertFalse(state(fdroid(), copied = true).shouldAutoInstall)
     assertFalse(state(play(paired = false), copied = true).shouldAutoInstall)
-    assertTrue(state(play(paired = true), copied = true).shouldAutoInstall)
+    assertTrue(state(play(paired = true), copied = true, awaitingReturn = true).shouldAutoInstall)
     assertFalse(state(fdroid(runCommand = true), copied = true, hello = READY).shouldAutoInstall)
   }
 
@@ -164,6 +172,7 @@ class OnboardingStateTest {
     passed: Set<String> = emptySet(),
     complete: Boolean = false,
     copied: Boolean = false,
+    awaitingReturn: Boolean = false,
     hello: HostHello? = null,
     error: SetupError? = null,
   ) = OnboardingState(
@@ -178,6 +187,7 @@ class OnboardingStateTest {
     progress = emptyList(),
     error = error,
     authStatus = null,
+    awaitingTermuxReturn = awaitingReturn,
   )
 
   private companion object {

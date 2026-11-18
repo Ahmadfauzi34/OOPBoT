@@ -94,6 +94,7 @@ internal object SetupProgress {
   private val progressState = MutableStateFlow<List<String>>(emptyList())
   private val errorState = MutableStateFlow<SetupError?>(null)
   private val storagePromptShownState = MutableStateFlow(false)
+  private val awaitingTermuxReturnState = MutableStateFlow(false)
   private var job: Job? = null
   private var storageCheck: Job? = null
 
@@ -114,8 +115,18 @@ internal object SetupProgress {
    */
   val storagePromptShown: StateFlow<Boolean> = storagePromptShownState.asStateFlow()
 
+  /**
+   * True after "Copy command & open Termux" is tapped until the user switches to Termux and returns, preventing a
+   * premature F-Droid `RUN_COMMAND` before the user has had a chance to paste `allow-external-apps=true`.
+   */
+  val awaitingTermuxReturn: StateFlow<Boolean> = awaitingTermuxReturnState.asStateFlow()
+
   fun markStoragePromptShown() {
     storagePromptShownState.value = true
+  }
+
+  fun clearAwaitingTermuxReturn() {
+    awaitingTermuxReturnState.value = false
   }
 
   /**
@@ -123,6 +134,7 @@ internal object SetupProgress {
    * fresh pairing session each time, which reads assets and may bind OOPBoT's server, so it runs off the main thread.
    */
   suspend fun setupCommand(context: Context, literal: String?): String {
+    awaitingTermuxReturnState.value = true
     TermuxInstall.installation(context)?.let(context.appGraph.preferences::setSetupCommandCopiedFor)
     return literal ?: withContext(Dispatchers.IO) { TermuxSetup.command(context, context.appGraph.keepAlive) }
   }
@@ -134,6 +146,7 @@ internal object SetupProgress {
   /** Installs the pinned Pi runtime unless an install is already running. Main thread only. */
   fun install(graph: AppGraph) {
     if (job?.isActive == true) return
+    awaitingTermuxReturnState.value = false
     errorState.value = null
     progressState.value = emptyList()
     installingState.value = true

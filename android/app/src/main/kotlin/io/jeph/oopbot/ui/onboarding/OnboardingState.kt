@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -169,6 +170,11 @@ internal data class OnboardingState(
   val authStatus: AuthStatus?,
   /** Termux's storage prompt was opened this session ([SetupProgress.storagePromptShown]). */
   val storagePromptShown: Boolean = false,
+  /**
+   * "Copy command & open Termux" was tapped and the user hasn't returned from Termux yet
+   * ([SetupProgress.awaitingTermuxReturn]).
+   */
+  val awaitingTermuxReturn: Boolean = false,
 ) {
   /**
    * The storage step sends the user to All files access: Play's Termux has no storage prompt, and F-Droid's may have
@@ -197,12 +203,20 @@ internal data class OnboardingState(
   val setupLiteral: String? get() = errorFor(SetupStep.TermuxSetup)?.command?.takeUnless { checks.termuxChanged }
 
   /**
+   * Wait until the user switches to Termux and returns before launching `ensure` automatically on F-Droid, so
+   * `RunCommandService` isn't invoked before the user pastes `allow-external-apps=true`. Play's helper pairing only
+   * happens after the command is actually pasted, and an already-reached Termux needs no paste.
+   */
+  val autoInstallDeferred: Boolean
+    get() = awaitingTermuxReturn && !checks.helperPaired && !checks.termuxReached && currentHello == null
+
+  /**
    * Install Pi once Termux may be prepared: the setup command was copied for this installation, setup finished earlier,
    * or a host already connected. After a reinstall, only a fresh copy counts. The install's first launch is also what
    * proves the setup command ran.
    */
   val shouldAutoInstall: Boolean
-    get() = canLaunchHost && !agentReady && !installing &&
+    get() = canLaunchHost && !agentReady && !installing && !autoInstallDeferred &&
       (commandCopied || currentHello != null || (setupComplete && !checks.termuxChanged))
 
   /** The setup command was copied and Termux hasn't reported back yet. */
@@ -316,6 +330,7 @@ internal fun rememberOnboardingState(graph: AppGraph, checks: DeviceChecks): Onb
   val progress by SetupProgress.progress.collectAsStateWithLifecycle()
   val installError by SetupProgress.error.collectAsStateWithLifecycle()
   val storagePromptShown by SetupProgress.storagePromptShown.collectAsStateWithLifecycle()
+  val awaitingTermuxReturn by SetupProgress.awaitingTermuxReturn.collectAsStateWithLifecycle()
   return OnboardingState(
     checks = checks,
     hello = hello,
@@ -330,23 +345,50 @@ internal fun rememberOnboardingState(graph: AppGraph, checks: DeviceChecks): Onb
     error = installError ?: lastFailure?.takeIf { it.fixedInTermux }?.toSetupError(),
     authStatus = authStatus,
     storagePromptShown = storagePromptShown,
+    awaitingTermuxReturn = awaitingTermuxReturn,
   )
 }
 
 /**
  * Starts the Pi install as soon as its prerequisites are met, and retries a failed one when OOPBoT comes back (the
- * user may have fixed the problem in Termux). Refreshes sign-in status once Pi is installed.
+ * user may have fixed the problem in Termux). When "Copy command & open Termux" was just tapped on F-Droid, it waits
+ * until OOPBoT actually leaves for Termux and returns so `RunCommandService` isn't called before the user pastes.
+ * Refreshes sign-in status once Pi is installed.
  */
 @Composable
 internal fun AutoInstall(graph: AppGraph, state: OnboardingState) {
+  val currentState by rememberUpdatedState(state)
+  val focused = LocalWindowInfo.current.isWindowFocused
+  var leftForTermux by remember { mutableStateOf(false) }
+
   // A failure stops the automatic start until OOPBoT resumes, rather than relaunching in a loop.
   LaunchedEffect(state.shouldAutoInstall && state.currentError == null) {
     if (state.shouldAutoInstall && state.currentError == null) SetupProgress.install(graph)
   }
+  // Covers split-screen multi-resume where focus moves to Termux and back without ON_PAUSE/ON_RESUME.
+  LaunchedEffect(focused, state.awaitingTermuxReturn) {
+    if (state.awaitingTermuxReturn && !focused) {
+      leftForTermux = true
+    } else if (leftForTermux && focused && state.awaitingTermuxReturn) {
+      leftForTermux = false
+      SetupProgress.clearAwaitingTermuxReturn()
+      if (currentState.copy(awaitingTermuxReturn = false).shouldAutoInstall) SetupProgress.install(graph)
+    }
+  }
+  LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
+    if (currentState.awaitingTermuxReturn) leftForTermux = true
+  }
   LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-    if (state.shouldAutoInstall) SetupProgress.install(graph)
+    val next = if (leftForTermux && currentState.awaitingTermuxReturn) {
+      leftForTermux = false
+      SetupProgress.clearAwaitingTermuxReturn()
+      currentState.copy(awaitingTermuxReturn = false)
+    } else {
+      currentState
+    }
+    if (next.shouldAutoInstall) SetupProgress.install(graph)
     // The user may be back from changing Termux's storage access in settings.
-    if (state.canCheckStorage) SetupProgress.recheckStorage(graph)
+    if (next.canCheckStorage) SetupProgress.recheckStorage(graph)
   }
   LaunchedEffect(state.storageUnconfirmed) {
     if (state.storageUnconfirmed) SetupProgress.recheckStorage(graph)
