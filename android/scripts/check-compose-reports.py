@@ -29,14 +29,18 @@ REQUIRED_STABLE_CLASSES = (
 )
 
 REQUIRED_SKIPPABLE_COMPOSABLES = (
+    "StreamList",
     "StreamItem",
     "AssistantMessage",
     "UserMessage",
     "StepFoldRow",
+    "ToolRow",
+    "MobilePanels",
     "WorkspacePane",
     "WorkspacePaneSlot",
     "OopbotMarkdown",
     "OopbotMarkdownContent",
+    "ExplorerPanel",
 )
 
 
@@ -62,12 +66,26 @@ def parse_composables(text: str) -> dict[str, list[tuple[str, str]]]:
         if match:
             modifiers, name = match.groups()
             block = [lines[i]]
-            while i + 1 < len(lines) and not lines[i].strip().endswith(")"):
-                i += 1
-                block.append(lines[i])
-            composables.setdefault(name, []).append((modifiers, "\n".join(block)))
+            if not stripped.endswith(")"):
+                while i + 1 < len(lines) and not pattern.match(lines[i + 1].strip()):
+                    i += 1
+                    block.append(lines[i])
+                    if lines[i].strip().startswith(")"):
+                        break
+            composables.setdefault(name, []).append((modifiers.strip(), "\n".join(block)))
         i += 1
     return composables
+
+
+def lookup_composable(composables: dict[str, list[tuple[str, str]]], name: str) -> list[tuple[str, str]]:
+    if name in composables:
+        return composables[name]
+    matches: list[tuple[str, str]] = []
+    suffix = f".{name}"
+    for key, entries in composables.items():
+        if key.endswith(suffix):
+            matches.extend(entries)
+    return matches
 
 
 def main() -> int:
@@ -106,7 +124,7 @@ def main() -> int:
             errors.append(f"Class '{name}' regressed to 'unstable' in Compose class report")
 
     for name in REQUIRED_SKIPPABLE_COMPOSABLES:
-        entries = composables.get(name)
+        entries = lookup_composable(composables, name)
         if not entries:
             errors.append(f"Composable '{name}' missing from Compose composables report")
         elif not all("skippable" in mods for mods, _ in entries):
