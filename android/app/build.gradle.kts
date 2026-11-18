@@ -522,11 +522,20 @@ android {
   }
 }
 
+val composeReportsEnabled = providers.gradleProperty("oopbot.composeReports").map(String::toBoolean).getOrElse(false)
+
 composeCompiler {
-  if (providers.gradleProperty("oopbot.composeReports").map(String::toBoolean).getOrElse(false)) {
+  if (composeReportsEnabled) {
     val reportsDir = layout.buildDirectory.dir("compose_compiler")
     reportsDestination.set(reportsDir)
     metricsDestination.set(reportsDir)
+  }
+}
+
+tasks.matching { it.name == "compileDebugKotlin" || it.name == "compileReleaseKotlin" }.configureEach {
+  inputs.property("oopbot.composeReports", composeReportsEnabled)
+  if (composeReportsEnabled) {
+    outputs.dir(layout.buildDirectory.dir("compose_compiler"))
   }
 }
 
