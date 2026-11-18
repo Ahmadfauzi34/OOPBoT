@@ -12,18 +12,21 @@
 #   BUILD_TOOLS                the Android build-tools folder holding zipalign and apksigner
 set -euo pipefail
 
-if [ $# -ne 2 ]; then
-  echo "Usage: $0 <unsigned.apk> <signed.apk>" >&2
+verify_only=false
+if [ $# -eq 1 ] && [ "$1" = "--verify-only" ]; then
+  verify_only=true
+elif [ $# -ne 2 ]; then
+  echo "Usage: $0 <unsigned.apk> <signed.apk> | --verify-only" >&2
   exit 2
+else
+  unsigned=$1
+  signed=$2
 fi
-unsigned=$1
-signed=$2
 
 : "${RELEASE_KEYSTORE_BASE64:?is not set}"
 : "${RELEASE_KEYSTORE_PASSWORD:?is not set}"
 : "${RELEASE_KEY_ALIAS:?is not set}"
 : "${RELEASE_CERT_SHA256:?is not set}"
-: "${BUILD_TOOLS:?is not set}"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -33,6 +36,32 @@ keystore="$work/release.p12"
   printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode >"$keystore"
 )
 key_alias=$(printf '%s' "$RELEASE_KEY_ALIAS" | tr -d '[:space:]')
+
+trimmed_pw=$(printf '%s' "$RELEASE_KEYSTORE_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+lower_first_pw="${trimmed_pw,}"
+upper_first_pw="${trimmed_pw^}"
+
+resolved_pw=""
+for candidate in "$RELEASE_KEYSTORE_PASSWORD" "$trimmed_pw" "$lower_first_pw" "$upper_first_pw"; do
+  [ -z "$candidate" ] && continue
+  if CANDIDATE_PW="$candidate" keytool -list -keystore "$keystore" -storetype PKCS12 -alias "$key_alias" -storepass:env CANDIDATE_PW >/dev/null 2>&1; then
+    resolved_pw="$candidate"
+    break
+  fi
+done
+
+if [ -z "$resolved_pw" ]; then
+  echo "Failed to unlock PKCS12 keystore with RELEASE_KEYSTORE_PASSWORD (also tried trimming whitespace and toggling first-letter case)." >&2
+  exit 2
+fi
+export RELEASE_KEYSTORE_PASSWORD="$resolved_pw"
+
+if [ "$verify_only" = true ]; then
+  echo "Keystore and password verified for alias '$key_alias'."
+  exit 0
+fi
+
+: "${BUILD_TOOLS:?is not set}"
 
 # 16 KB page alignment keeps the APK installable on devices with 16 KB memory pages.
 "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$unsigned" "$work/aligned.apk"

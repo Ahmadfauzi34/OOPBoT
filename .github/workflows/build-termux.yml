@@ -144,6 +144,7 @@ jobs:
           : "${RELEASE_KEYSTORE_PASSWORD:?RELEASE_KEYSTORE_PASSWORD secret is not set in repository Ahmadfauzi34/OOPBoT}"
           : "${RELEASE_KEY_ALIAS:?RELEASE_KEY_ALIAS secret is not set in repository Ahmadfauzi34/OOPBoT}"
           : "${RELEASE_CERT_SHA256:?RELEASE_CERT_SHA256 secret is not set in repository Ahmadfauzi34/OOPBoT}"
+          ./scripts/sign-release-apk.sh --verify-only
           VER="${GITHUB_REF_NAME#v}"
           if [[ "$VER" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             VER_CODE=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))
