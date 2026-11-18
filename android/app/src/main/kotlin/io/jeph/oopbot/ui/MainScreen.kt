@@ -438,55 +438,84 @@ private fun WorkspacePanes(
       if (pane == Pane.Secondary) VerticalDivider(thickness = 1.dp, color = oopbotColors.border)
       // Keyed, so each pane keeps its own state whichever panes show.
       key(pane) {
-        val item = items[pane]
-        val panelState = panels[pane]
-        val hasOpenPanel by remember(panelState) { derivedStateOf { panelState.targetValue != Panel.Chat } }
-        // The session sheet belongs to the pane rather than either of its screens, so it stays open when archiving from
-        // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
-        var tabsOpen by rememberSaveable { mutableStateOf(false) }
-        val closesSplit = split && pane == endPane
-        val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
-        val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
-        val swapPanes = { panels.swapFrom(pane) }
-        BackHandler(enabled = hasOpenPanel) { panels.show(pane, Panel.Chat) }
-        SidePanelOpenedEffect(panelState)
-        MobilePanels(
-          modifier = Modifier.onTouch { panels.active = pane },
-          state = panelState,
-          sidebar = {
-            // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
-            val shimmer by remember(panelState) { derivedStateOf { panelState.targetValue == Panel.Sidebar } }
-            CompositionLocalProvider(LocalPotsSimmer provides shimmer) { sidebar(pane, onShownInSplit) }
-          },
-          workspace = {
-            // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
-            WorkspacePane(
-              item = item,
-              isCovered = { panels.isCovered(pane) },
-              actions = actions,
-              views = views,
-              controls = controls,
-              onOpenSettings = onOpenSettings,
-              onOpenProviders = onOpenProviders,
-              onOpenOnboarding = onOpenOnboarding,
-            )
-          },
-          explorer = {
-            PaneExplorer(
-              pane = pane,
-              item = item,
-              isOpen = { panelState.settledValue == Panel.Explorer },
-              snackbar = snackbar,
-              onSwapPanes = swapPanes,
-            ) { panels.show(pane, Panel.Chat) }
-          },
+        WorkspacePaneSlot(
+          pane = pane,
+          item = items[pane],
+          panels = panels,
+          splitAvailable = splitAvailable,
+          closesSplit = split && pane == endPane,
+          actions = actions,
+          snackbar = snackbar,
+          onOpenSettings = onOpenSettings,
+          onOpenProviders = onOpenProviders,
+          onOpenOnboarding = onOpenOnboarding,
+          sidebar = sidebar,
         )
-        if (tabsOpen && item != null) {
-          WorkspaceTabsSheet(pane, item.cwd, actions, snackbar, controls.shownTab, onShownInSplit, swapPanes) {
-            tabsOpen = false
-          }
-        }
       }
+    }
+  }
+}
+
+@Suppress("LongParameterList")
+@Composable
+private fun WorkspacePaneSlot(
+  pane: Pane,
+  item: PaneItem?,
+  panels: PanePanels,
+  splitAvailable: Boolean,
+  closesSplit: Boolean,
+  actions: ShellActions,
+  snackbar: SnackbarStackState,
+  onOpenSettings: () -> Unit,
+  onOpenProviders: () -> Unit,
+  onOpenOnboarding: () -> Unit,
+  sidebar: @Composable (pane: Pane, onShownInSplit: (() -> Unit)?) -> Unit,
+) {
+  val views = LocalContext.current.appGraph.chatViews
+  val panelState = panels[pane]
+  val hasOpenPanel by remember(panelState) { derivedStateOf { panelState.targetValue != Panel.Chat } }
+  // The session sheet belongs to the pane rather than either of its screens, so it stays open when archiving from
+  // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
+  var tabsOpen by rememberSaveable { mutableStateOf(false) }
+  val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
+  val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
+  val swapPanes = { panels.swapFrom(pane) }
+  BackHandler(enabled = hasOpenPanel) { panels.show(pane, Panel.Chat) }
+  SidePanelOpenedEffect(panelState)
+  MobilePanels(
+    modifier = Modifier.onTouch { panels.active = pane },
+    state = panelState,
+    sidebar = {
+      // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
+      val shimmer by remember(panelState) { derivedStateOf { panelState.targetValue == Panel.Sidebar } }
+      CompositionLocalProvider(LocalPotsSimmer provides shimmer) { sidebar(pane, onShownInSplit) }
+    },
+    workspace = {
+      // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
+      WorkspacePane(
+        item = item,
+        isCovered = { panels.isCovered(pane) },
+        actions = actions,
+        views = views,
+        controls = controls,
+        onOpenSettings = onOpenSettings,
+        onOpenProviders = onOpenProviders,
+        onOpenOnboarding = onOpenOnboarding,
+      )
+    },
+    explorer = {
+      PaneExplorer(
+        pane = pane,
+        item = item,
+        isOpen = { panelState.settledValue == Panel.Explorer },
+        snackbar = snackbar,
+        onSwapPanes = swapPanes,
+      ) { panels.show(pane, Panel.Chat) }
+    },
+  )
+  if (tabsOpen && item != null) {
+    WorkspaceTabsSheet(pane, item.cwd, actions, snackbar, controls.shownTab, onShownInSplit, swapPanes) {
+      tabsOpen = false
     }
   }
 }

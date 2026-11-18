@@ -70,6 +70,7 @@ import io.jeph.oopbot.ui.sidebar.rememberFolderNames
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -112,20 +113,7 @@ internal fun ExplorerPanel(
   val scope = rememberCoroutineScope()
   val detect = rememberDetection(repository, trusted, snackbar)
   val filesShown = repository == null || shownTab == ExplorerTab.Files
-  // Launched in the panel's scope, so switching back to Changes mid-listing doesn't abort it.
-  LaunchedEffect(state, filesShown) {
-    if (!filesShown) return@LaunchedEffect
-    snapshotFlow(isOpen)
-      .distinctUntilChanged()
-      .filter { it }
-      .collect { scope.launch { state?.refresh() } }
-  }
-  LaunchedEffect(repository) {
-    snapshotFlow(isOpen)
-      .distinctUntilChanged()
-      .filter { it }
-      .collect { detect() }
-  }
+  ExplorerOpenEffects(state, repository, filesShown, isOpen, scope, detect)
   Column(
     modifier = modifier
       .fillMaxSize()
@@ -155,19 +143,54 @@ internal fun ExplorerPanel(
         modifier = content,
       )
 
-      else -> {
-        val open by remember { derivedStateOf(isOpen) }
-        ChangesPane(
-          workspace = repository,
-          open = open,
-          snackbar = snackbar,
-          onDetect = detect,
-          onOpenCommit = onOpenCommit,
-          modifier = content,
-        )
-      }
+      else -> ExplorerChangesPane(repository, isOpen, snackbar, detect, onOpenCommit, content)
     }
   }
+}
+
+@Composable
+private fun ExplorerOpenEffects(
+  state: FileExplorerState?,
+  repository: GitWorkspace?,
+  filesShown: Boolean,
+  isOpen: () -> Boolean,
+  scope: CoroutineScope,
+  detect: suspend () -> Unit,
+) {
+  // Launched in the panel's scope, so switching back to Changes mid-listing doesn't abort it.
+  LaunchedEffect(state, filesShown) {
+    if (!filesShown) return@LaunchedEffect
+    snapshotFlow(isOpen)
+      .distinctUntilChanged()
+      .filter { it }
+      .collect { scope.launch { state?.refresh() } }
+  }
+  LaunchedEffect(repository) {
+    snapshotFlow(isOpen)
+      .distinctUntilChanged()
+      .filter { it }
+      .collect { detect() }
+  }
+}
+
+@Composable
+private fun ExplorerChangesPane(
+  workspace: GitWorkspace,
+  isOpen: () -> Boolean,
+  snackbar: SnackbarStackState,
+  onDetect: suspend () -> Unit,
+  onOpenCommit: (GitCommit) -> Unit,
+  modifier: Modifier,
+) {
+  val open by remember { derivedStateOf(isOpen) }
+  ChangesPane(
+    workspace = workspace,
+    open = open,
+    snackbar = snackbar,
+    onDetect = onDetect,
+    onOpenCommit = onOpenCommit,
+    modifier = modifier,
+  )
 }
 
 /**
