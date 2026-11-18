@@ -138,8 +138,12 @@ jobs:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_CERT_SHA256: ${{ secrets.RELEASE_CERT_SHA256 }}
-          BUILD_TOOLS: ${{ env.ANDROID_HOME }}/build-tools/${{ env.BUILD_TOOLS_VERSION }}
         run: |
+          export BUILD_TOOLS="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          : "${RELEASE_KEYSTORE_BASE64:?RELEASE_KEYSTORE_BASE64 secret is not set in repository Ahmadfauzi34/OOPBoT}"
+          : "${RELEASE_KEYSTORE_PASSWORD:?RELEASE_KEYSTORE_PASSWORD secret is not set in repository Ahmadfauzi34/OOPBoT}"
+          : "${RELEASE_KEY_ALIAS:?RELEASE_KEY_ALIAS secret is not set in repository Ahmadfauzi34/OOPBoT}"
+          : "${RELEASE_CERT_SHA256:?RELEASE_CERT_SHA256 secret is not set in repository Ahmadfauzi34/OOPBoT}"
           VER="${GITHUB_REF_NAME#v}"
           if [[ "$VER" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             VER_CODE=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))
