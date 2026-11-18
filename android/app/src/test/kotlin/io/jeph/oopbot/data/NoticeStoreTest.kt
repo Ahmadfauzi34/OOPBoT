@@ -83,4 +83,25 @@ class NoticeStoreTest {
     assertTrue(writer.awaitTermination(5, TimeUnit.SECONDS))
     assertEquals(lists.last(), NoticeStore(dir, now).load("/s/a.jsonl"))
   }
+
+  @Test
+  fun sqliteStoreMigratesLegacyJsonLazilyAndDeletesLargeBatchesInChunks() {
+    NoticeStore(dir, now).put("/s/legacy.jsonl", listOf(first, own))
+    val dbFile = folder.newFile("notices.db")
+
+    JdbcSqlDb(dbFile).use { sqlDb ->
+      val store = NoticeStore(db = OopbotDatabase(sqlDb, now), dir = dir, writer = now)
+      assertEquals(listOf(first, own), store.load("/s/legacy.jsonl"))
+      assertEquals(0, dir.listFiles().orEmpty().size)
+
+      val manyPaths = (1..850).map { "/s/batch-$it.jsonl" }
+      for (path in manyPaths) store.put(path, listOf(second))
+      store.delete(manyPaths)
+
+      val reopened = NoticeStore(db = OopbotDatabase(sqlDb, now), dir = dir, writer = now)
+      assertEquals(listOf(first, own), reopened.load("/s/legacy.jsonl"))
+      assertEquals(emptyList<SavedNotice>(), reopened.load(manyPaths.first()))
+      assertEquals(emptyList<SavedNotice>(), reopened.load(manyPaths.last()))
+    }
+  }
 }

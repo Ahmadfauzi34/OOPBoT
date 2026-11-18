@@ -15,51 +15,105 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /**
- * The extension notices of each session, by session file path, in one JSON file per session under [dir]. Pi keeps no
- * record of `ctx.ui.notify`, and OOPBoT stops a chat's Pi far more often than a desktop terminal does, so this is what
- * brings them back. [load] reads a session's file once and serves the cache after that, and [put] updates the cache
- * while [writer] writes each change in order, so the file always ends up with the latest notices.
+ * The extension notices of each session, by session file path. Stored in SQLite `session_notices` when [db] is
+ * provided (lazily migrating any legacy SHA-256 `.json` files under [dir] on first read or overwrite), or in `.json`
+ * files under [dir] when constructed standalone. [load] reads a session once and serves the in-memory cache thereafter;
+ * [put] and [delete] update the cache immediately and persist asynchronously in order through [writer].
  */
-internal class NoticeStore(private val dir: File, private val writer: Executor = Executors.newSingleThreadExecutor()) {
+internal class NoticeStore(
+  private val db: OopbotDatabase? = null,
+  private val dir: File? = null,
+  private val writer: Executor = db?.writer ?: Executors.newSingleThreadExecutor(),
+) {
+  constructor(dir: File, writer: Executor = Executors.newSingleThreadExecutor()) : this(
+    db = null,
+    dir = dir,
+    writer = writer,
+  )
+
   private val cache = HashMap<String, List<SavedNotice>>()
 
   /** Reads [sessionPath]'s notices into the cache, unless it has them already. Blocking: call off the main thread. */
   fun load(sessionPath: String): List<SavedNotice> {
     synchronized(cache) { cache[sessionPath] }?.let { return it }
-    val read = read(fileOf(sessionPath))
-    return synchronized(cache) { cache.getOrPut(sessionPath) { read } }
+    val loaded = loadFromStorage(sessionPath)
+    return synchronized(cache) { cache.getOrPut(sessionPath) { loaded } }
   }
 
-  /** Saves [notices] as [sessionPath]'s; an empty list deletes its file. */
+  /** Saves [notices] as [sessionPath]'s; an empty list deletes its persisted rows/file. */
   fun put(sessionPath: String, notices: List<SavedNotice>) {
-    val file = fileOf(sessionPath)
     synchronized(cache) {
       if (cache[sessionPath] == notices) return
       cache[sessionPath] = notices
-      // Queued under the lock, so the writes land in the order the cache changed.
-      writer.execute { write(file, notices) }
+      // Queued under the lock, so writes land in the order the cache changed.
+      writer.execute { writePersisted(sessionPath, notices) }
     }
   }
 
   /** Forgets the notices of the deleted sessions [sessionPaths]. */
   fun delete(sessionPaths: Collection<String>) {
-    for (path in sessionPaths) put(path, emptyList())
+    if (sessionPaths.isEmpty()) return
+    val unique = sessionPaths.distinct()
+    synchronized(cache) {
+      for (path in unique) cache[path] = emptyList()
+      writer.execute { deletePersisted(unique) }
+    }
   }
 
-  private fun fileOf(sessionPath: String): File {
+  private fun loadFromStorage(sessionPath: String): List<SavedNotice> {
+    if (db != null) {
+      val stored = db.notices.load(sessionPath)
+      if (stored.isNotEmpty()) return stored
+      val legacyFile = fileOf(sessionPath) ?: return emptyList()
+      if (!legacyFile.exists()) return emptyList()
+      val migrated = readFile(legacyFile)
+      if (migrated.isNotEmpty()) db.notices.replace(sessionPath, migrated)
+      deleteLegacyFile(legacyFile)
+      return migrated
+    }
+    return fileOf(sessionPath)?.let(::readFile).orEmpty()
+  }
+
+  private fun writePersisted(sessionPath: String, notices: List<SavedNotice>) {
+    if (db != null) {
+      db.notices.replace(sessionPath, notices)
+      fileOf(sessionPath)?.let(::deleteLegacyFile)
+    } else {
+      fileOf(sessionPath)?.let { writeFile(it, notices) }
+    }
+  }
+
+  private fun deletePersisted(sessionPaths: List<String>) {
+    if (db != null) {
+      db.notices.deleteBatch(sessionPaths)
+      for (path in sessionPaths) fileOf(path)?.let(::deleteLegacyFile)
+    } else {
+      for (path in sessionPaths) fileOf(path)?.delete()
+    }
+  }
+
+  private fun fileOf(sessionPath: String): File? {
+    val root = dir ?: return null
     val digest = MessageDigest.getInstance("SHA-256").digest(sessionPath.toByteArray(Charsets.UTF_8))
-    return File(dir, digest.joinToString("", postfix = ".json") { "%02x".format(Locale.ROOT, it) })
+    return File(root, digest.joinToString("", postfix = ".json") { "%02x".format(Locale.ROOT, it) })
   }
 
-  private fun write(file: File, notices: List<SavedNotice>) {
+  private fun deleteLegacyFile(file: File) {
+    if (file.exists()) file.delete()
+    val root = dir ?: return
+    if (root.exists() && root.list().isNullOrEmpty()) root.delete()
+  }
+
+  private fun writeFile(file: File, notices: List<SavedNotice>) {
+    val root = dir ?: return
     if (notices.isEmpty()) {
       file.delete()
       return
     }
     try {
-      dir.mkdirs()
+      root.mkdirs()
       // Renamed over the old file, so a crash mid-write leaves the previous notices rather than half a file.
-      val partial = File(dir, "${file.name}.partial")
+      val partial = File(root, "${file.name}.partial")
       partial.writeText(notices.toJson().toString(), Charsets.UTF_8)
       if (!partial.renameTo(file)) throw IOException("Could not replace $file")
     } catch (error: IOException) {
@@ -67,7 +121,7 @@ internal class NoticeStore(private val dir: File, private val writer: Executor =
     }
   }
 
-  private fun read(file: File): List<SavedNotice> {
+  private fun readFile(file: File): List<SavedNotice> {
     if (!file.exists()) return emptyList()
     return try {
       val array = JSONArray(file.readText(Charsets.UTF_8))

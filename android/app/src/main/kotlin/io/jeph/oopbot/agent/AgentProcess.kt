@@ -128,6 +128,7 @@ internal class AgentProcess(
   private val extensionWidgetsState = MutableStateFlow(sessionPath?.let { sessions.extensionWidgets[it] }.orEmpty())
   private val contextUsageState = MutableStateFlow<ContextUsage?>(null)
   private val contextUsageRequests = Channel<Unit>(Channel.CONFLATED)
+  private val indexRequests = Channel<Unit>(Channel.CONFLATED)
 
   /**
    * How many of the `oopbot-background` extension's tasks run in this Pi, as it last said over OOPBoT's channel. Not
@@ -273,6 +274,17 @@ internal class AgentProcess(
           contextUsageState.value = ContextUsage.from(call("get_session_stats"))
         } catch (_: RpcError) {
           // Pi stopped or is restarting; the meter keeps its last reading until the next refresh.
+        }
+      }
+    }
+    processScope.launch {
+      indexRequests.consumeEach {
+        val path = sessionFileState.value ?: continue
+        try {
+          val messages = getMessages()
+          if (messages.length() > 0) sessions.cacheMessages(path, messages)
+        } catch (_: RpcError) {
+          // Pi stopped or is restarting; the next start or turn end indexes the history.
         }
       }
     }
@@ -486,6 +498,7 @@ internal class AgentProcess(
     timeline.restoreNotices { placed -> saved.ifEmpty { placed.filter { it.after == null || it.after in kept } } }
     path?.let { sessions.notices.put(it, timeline.savedNotices()) }
     seedTimeline(messages)
+    indexMessages(messages)
     refreshContextUsage()
     sessions.refresh()
     return data
@@ -520,6 +533,7 @@ internal class AgentProcess(
     }
     // A run that started while get_messages was answered has delivered events; its stream supersedes this reload.
     if (messages == null || !seedTimeline(messages, ifNoEventsSince = eventsBefore)) return
+    indexMessages(messages)
     Log.w(TAG, "Pi was idle but the chat still showed a run; reloaded its history")
     refreshContextUsage()
     sessions.refresh()
@@ -595,7 +609,9 @@ internal class AgentProcess(
     processScope.launch(Dispatchers.Default) { read(current) }
     return try {
       applyState(current.rpc.call("get_state"))
-      seedTimeline(current.rpc.call("get_messages").optJSONArray("messages") ?: JSONArray())
+      val messages = current.rpc.call("get_messages").optJSONArray("messages") ?: JSONArray()
+      seedTimeline(messages)
+      indexMessages(messages)
       stateFlow.value = AgentProcessState.Ready
       refreshContextUsage()
       null
@@ -744,6 +760,7 @@ internal class AgentProcess(
       "agent_settled" -> {
         refreshContextUsage()
         sessions.refresh()
+        indexRequests.trySend(Unit)
       }
 
       "session_info_changed" -> {
@@ -866,6 +883,12 @@ internal class AgentProcess(
 
   private fun refreshContextUsage() {
     contextUsageRequests.trySend(Unit)
+  }
+
+  private fun indexMessages(messages: JSONArray) {
+    if (messages.length() == 0) return
+    val path = sessionFileState.value ?: return
+    processScope.launch { sessions.cacheMessages(path, messages) }
   }
 
   private fun applyState(data: JSONObject) {

@@ -93,6 +93,7 @@ internal fun ChatScreen(
     val controller = remember {
       ChatController(process, views[process], context.applicationContext, paneChats.scope, snackbar, navigator)
     }
+    PersistChatView(process, views, controller.view)
     LaunchedEffect(controller) { controller.collectEffects() }
     LaunchedEffect(controller) { controller.steering.collectQueue() }
     var subagent by rememberSaveable { mutableStateOf<String?>(null) }

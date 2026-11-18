@@ -118,10 +118,12 @@ internal fun ChatStream(
   DisposableEffect(listState) {
     onDispose {
       scroll.top = listState.top()
+      view.onSave?.invoke()
       // Markdown the chat no longer has, as after a session switch, needn't stay parsed.
       view.markdown.keepShown(items.mapNotNullTo(HashSet()) { it.cachedMarkdown })
     }
   }
+  PersistStreamScroll(listState, view)
   val follow = scroll.follow
   val activeReplies = remember(timeline.items) { timeline.items.endReplies() }
   LaunchedEffect(view.markdown, activeReplies) { view.markdown.warmMissing(activeReplies) }

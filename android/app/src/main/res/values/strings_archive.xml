@@ -38,7 +38,7 @@
     </plurals>
     <string name="archive_remove_confirm">Remove</string>
 
-    <string name="archive_search">Search by title or folder</string>
+    <string name="archive_search">Search by title, folder, or messages</string>
     <string name="archive_empty">No archived chats</string>
     <string name="archive_no_matches">No matching chats</string>
     <string name="archive_folder_missing">Folder missing</string>

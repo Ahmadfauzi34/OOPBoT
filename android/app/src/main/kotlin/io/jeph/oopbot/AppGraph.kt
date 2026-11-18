@@ -19,6 +19,7 @@ import io.jeph.oopbot.data.AccountRepository
 import io.jeph.oopbot.data.ConfigBackups
 import io.jeph.oopbot.data.ModelDefaults
 import io.jeph.oopbot.data.NoticeStore
+import io.jeph.oopbot.data.OopbotDatabase
 import io.jeph.oopbot.data.PiExtensionUpdate
 import io.jeph.oopbot.data.Preferences
 import io.jeph.oopbot.data.RemoteHosts
@@ -60,16 +61,26 @@ internal class AppGraph(private val application: Application) {
     foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow.map { it.isAtLeast(Lifecycle.State.STARTED) },
     scope = scope,
   )
+  val database = OopbotDatabase.open(application)
   val keepAlive = KeepAlive(application)
-  val preferences = Preferences(application)
+  val preferences = Preferences(application, database)
   val remoteHosts = RemoteHosts(hostClient, preferences, RemotePasswords.of(application), keepAlive, scope)
-  val sessionRepository = SessionRepository(hostClient, NoticeStore(File(application.filesDir, "notices")), scope)
+
+  /** What the chat screens keep of each chat, such as unsent drafts, backed by SQLite across process restarts. */
+  val chatViews = ChatViews(database)
+  val sessionRepository = SessionRepository(
+    hostClient = hostClient,
+    notices = NoticeStore(db = database, dir = File(application.filesDir, "notices")),
+    scope = scope,
+    db = database,
+    onSessionsDeleted = chatViews::forget,
+  )
   val sessionArchive = SessionArchive(sessionRepository, preferences, scope)
   private val visibility = AppVisibility(application)
 
   /** The chats the user sees: those the panes show while OOPBoT is on screen and nothing covers them. */
   val chatsOnScreen = MutableStateFlow<Set<AgentProcess>>(emptySet())
-  val chatInbox = ChatInbox()
+  val chatInbox = ChatInbox(database)
   private val turnNotifications = TurnNotifications(application, visibility, chatInbox) { folderNames() }
   val registry: AgentRegistry<AgentProcess> =
     AgentRegistry(
@@ -106,9 +117,6 @@ internal class AppGraph(private val application: Application) {
   val commits = CommitTabRegistry(gitHost, tabs, preferences.trustedRepositories, scope)
   val layout = WorkspaceLayout(this)
   val localModels = LocalModels(application, scope, keepAlive, accountRepository, preferences)
-
-  /** What the chat screens keep of each chat, such as unsent drafts, held here so it survives rotation and folding. */
-  val chatViews = ChatViews()
 
   /** The session files of the chats on screen, which Pi can name late. */
   @OptIn(ExperimentalCoroutinesApi::class)
