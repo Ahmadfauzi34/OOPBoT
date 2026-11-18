@@ -13,14 +13,8 @@ import org.junit.Test
 
 /** Dynamic Settings display label switching for WebAccess -> Google Search when Gemini is connected. */
 class WebAccessDisplayTest {
-  private fun status(
-    builtin: List<BuiltinProvider> = emptyList(),
-    custom: List<CustomProvider> = emptyList(),
-  ) = AuthStatus(
-    builtin = builtin,
-    custom = custom,
-    modelsError = null,
-  )
+  private fun status(builtin: List<BuiltinProvider> = emptyList(), custom: List<CustomProvider> = emptyList()) =
+    AuthStatus(builtin = builtin, custom = custom, modelsError = null)
 
   @Test
   fun `null status or unconfigured providers stay on standard web access copy`() {
