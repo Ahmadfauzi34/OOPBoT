@@ -36,9 +36,8 @@ class ChatInboxPersistenceTest {
       assertEquals(listOf("Explore", null), reopened.entries.value.map { it.asker })
 
       reopened.remove("/s/1.jsonl")
-      assertEquals(listOf("/s/2.jsonl"), ChatInbox(OopbotDatabase(sqlDb, syncExecutor)).entries.value.map {
-        it.location.sessionPath
-      })
+      val remaining = ChatInbox(OopbotDatabase(sqlDb, syncExecutor)).entries.value.map { it.location.sessionPath }
+      assertEquals(listOf("/s/2.jsonl"), remaining)
 
       reopened.enabled = false
       assertEquals(emptyList<InboxEntry>(), ChatInbox(OopbotDatabase(sqlDb, syncExecutor)).entries.value)

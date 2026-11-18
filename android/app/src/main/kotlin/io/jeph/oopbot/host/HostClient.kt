@@ -37,11 +37,8 @@ import org.json.JSONObject
  * are only seen on screen.
  */
 @Suppress("TooManyFunctions") // One typed wrapper per host mode, beside the launch code they share.
-internal class HostClient(
-  context: Context,
-  private val foreground: Flow<Boolean>,
-  scope: CoroutineScope,
-) : SessionHost {
+internal class HostClient(context: Context, private val foreground: Flow<Boolean>, scope: CoroutineScope) :
+  SessionHost {
   private val context = context.applicationContext
   private val helloState = MutableStateFlow<HostHello?>(null)
   private val failureState = MutableStateFlow<HostFailure?>(null)

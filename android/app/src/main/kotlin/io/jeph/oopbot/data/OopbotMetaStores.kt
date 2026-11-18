@@ -19,10 +19,7 @@ internal data class LegacyPrefsData(
 
 /** Per-item preference and session metadata storage replacing large JSON blobs in SharedPreferences XML. */
 @Suppress("TooManyFunctions") // Focused CRUD queries over schema_meta, workspace_prefs, and session_meta.
-internal class PrefsDbStore(
-  private val db: SqlDb,
-  private val enqueueWrite: (SqlDb.() -> Unit) -> Unit,
-) {
+internal class PrefsDbStore(private val db: SqlDb, private val enqueueWrite: (SqlDb.() -> Unit) -> Unit) {
   fun isMigrated(flagKey: String): Boolean =
     db.queryOne("SELECT value FROM schema_meta WHERE key = ?", arrayOf(flagKey)) { it.string(0) } == "1"
 

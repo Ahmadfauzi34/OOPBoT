@@ -265,10 +265,7 @@ internal class DraftsDbStore(
 }
 
 /** Process-death persistence for unread [InboxEntry] alerts in `chat_inbox`. */
-internal class InboxDbStore(
-  private val db: SqlDb,
-  private val enqueueWrite: (SqlDb.() -> Unit) -> Unit,
-) {
+internal class InboxDbStore(private val db: SqlDb, private val enqueueWrite: (SqlDb.() -> Unit) -> Unit) {
   fun loadAll(): List<InboxEntry> = try {
     db.query(
       "SELECT session_path, cwd, reason, title, detail, at, asker FROM chat_inbox ORDER BY at DESC",

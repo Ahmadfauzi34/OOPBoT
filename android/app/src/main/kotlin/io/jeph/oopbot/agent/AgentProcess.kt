@@ -279,12 +279,14 @@ internal class AgentProcess(
     }
     processScope.launch {
       indexRequests.consumeEach {
-        val path = sessionFileState.value ?: continue
-        try {
-          val messages = getMessages()
-          if (messages.length() > 0) sessions.cacheMessages(path, messages)
-        } catch (_: RpcError) {
-          // Pi stopped or is restarting; the next start or turn end indexes the history.
+        val path = sessionFileState.value
+        if (path != null) {
+          try {
+            val messages = getMessages()
+            if (messages.length() > 0) sessions.cacheMessages(path, messages)
+          } catch (_: RpcError) {
+            // Pi stopped or is restarting; the next start or turn end indexes the history.
+          }
         }
       }
     }
