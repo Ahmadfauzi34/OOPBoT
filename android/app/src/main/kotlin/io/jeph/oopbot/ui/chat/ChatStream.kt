@@ -222,13 +222,15 @@ private fun StreamList(
   val anchor = remember(listState, follow) { BottomAnchor(listState, follow) }
   // Track stream-local changes instead of the whole activity's Recomposer.changeCount so unrelated animations
   // (SimmeringPot at 10 FPS, tabs, timers) don't trigger requestScrollToItem during scrolling.
+  val mdVersion = if (follow.value) view.markdown.version else 0
+  val imgVersion = if (follow.value) ChatImages.decodeVersion else 0
   val streamRevision = remember(
     rows,
     banner,
     lastTurn,
     subagents,
-    view.markdown.version,
-    ChatImages.decodeVersion,
+    mdVersion,
+    imgVersion,
   ) { anchor.nextRevision() }
   val gate = remember(listState) { FirstDrawGate(listState) }
   val currentItems by rememberUpdatedState(items)

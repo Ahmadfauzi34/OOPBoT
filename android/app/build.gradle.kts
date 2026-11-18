@@ -522,11 +522,20 @@ android {
   }
 }
 
+val composeReportsEnabled = providers.gradleProperty("oopbot.composeReports").map(String::toBoolean).getOrElse(false)
+
 composeCompiler {
-  if (providers.gradleProperty("oopbot.composeReports").map(String::toBoolean).getOrElse(false)) {
+  if (composeReportsEnabled) {
     val reportsDir = layout.buildDirectory.dir("compose_compiler")
     reportsDestination.set(reportsDir)
     metricsDestination.set(reportsDir)
+  }
+}
+
+tasks.matching { it.name == "compileDebugKotlin" || it.name == "compileReleaseKotlin" }.configureEach {
+  inputs.property("oopbot.composeReports", composeReportsEnabled)
+  if (composeReportsEnabled) {
+    outputs.dir(layout.buildDirectory.dir("compose_compiler"))
   }
 }
 
@@ -596,8 +605,11 @@ dependencies {
   implementation("io.github.sagernet:libghostty-android:0.1.0-alpha02")
   //noinspection GradleDependency
   implementation("io.github.sagernet:libghostty-android-compose:0.1.0-alpha02")
+  testImplementation("androidx.test:core:1.7.0")
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.json:json:20260814")
+  // Real Android SQLiteOpenHelper + FTS4 verification on API 29 and 35 without an emulator.
+  testImplementation("org.robolectric:robolectric:4.16.1")
   // Real SQLite WAL + FTS4 execution in JVM tests against the production schema and queries.
   testImplementation("org.xerial:sqlite-jdbc:3.54.1.0")
   // Virtual time for the local model scheduler's reservations and idle unload.

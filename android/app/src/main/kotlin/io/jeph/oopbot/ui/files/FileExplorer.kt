@@ -55,7 +55,6 @@ import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.components.RoundIconButton
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.git.ChangesContent
-import io.jeph.oopbot.ui.git.ChangesPane
 import io.jeph.oopbot.ui.git.ExplorerTab
 import io.jeph.oopbot.ui.git.GitLoss
 import io.jeph.oopbot.ui.git.GitWorkspace
@@ -87,7 +86,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun ExplorerPanel(
   cwd: String?,
-  open: Boolean,
+  isOpen: () -> Boolean,
   selectedPath: String?,
   snackbar: SnackbarStackState,
   onClose: () -> Unit,
@@ -108,9 +107,7 @@ internal fun ExplorerPanel(
   val scope = rememberCoroutineScope()
   val detect = rememberDetection(repository, trusted, snackbar)
   val filesShown = repository == null || shownTab == ExplorerTab.Files
-  // Launched in the panel's scope, so switching back to Changes mid-listing doesn't abort it.
-  LaunchedEffect(state, open, filesShown) { if (open && filesShown) scope.launch { state?.refresh() } }
-  LaunchedEffect(repository, open) { if (open) detect() }
+  ExplorerOpenEffects(state, repository, filesShown, isOpen, scope, detect)
   Column(
     modifier = modifier
       .fillMaxSize()
@@ -140,14 +137,7 @@ internal fun ExplorerPanel(
         modifier = content,
       )
 
-      else -> ChangesPane(
-        workspace = repository,
-        open = open,
-        snackbar = snackbar,
-        onDetect = detect,
-        onOpenCommit = onOpenCommit,
-        modifier = content,
-      )
+      else -> ExplorerChangesPane(repository, isOpen, snackbar, detect, onOpenCommit, content)
     }
   }
 }

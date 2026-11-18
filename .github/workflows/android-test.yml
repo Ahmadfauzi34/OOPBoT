@@ -78,7 +78,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gradle :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue
 
-      - name: Upload Android unit test & lint reports
+      - name: Generate and verify Compose stability reports
+        working-directory: android
+        run: |
+          rm -rf app/build/compose_compiler
+          gradle -Poopbot.composeReports=true :app:compileDebugKotlin --no-daemon --stacktrace
+          python3 scripts/check-compose-reports.py app/build/compose_compiler
+
+      - name: Upload Android unit test, lint & Compose reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -88,4 +95,5 @@ jobs:
             android/app/build/test-results/testDebugUnitTest/
             android/app/build/reports/ktlint/
             android/app/build/reports/detekt/
+            android/app/build/compose_compiler/
           if-no-files-found: ignore

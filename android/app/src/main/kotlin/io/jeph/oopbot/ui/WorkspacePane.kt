@@ -6,13 +6,17 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.appGraph
+import io.jeph.oopbot.terminal.TerminalSession
 import io.jeph.oopbot.ui.chat.ChatScreen
 import io.jeph.oopbot.ui.chat.ChatViews
 import io.jeph.oopbot.ui.chat.rememberPaneChats
@@ -35,7 +39,7 @@ import io.jeph.oopbot.workspace.sameAs
 @Composable
 internal fun WorkspacePane(
   item: PaneItem<AgentProcess>?,
-  covered: Boolean,
+  isCovered: () -> Boolean,
   actions: ShellActions,
   views: ChatViews,
   controls: PaneControls,
@@ -47,12 +51,11 @@ internal fun WorkspacePane(
   val stack = remember(panes, controls.pane) { PaneStack(panes, controls.pane, item) }
   val screen = stack.screenFor(item)
   val paneChats = rememberPaneChats()
-  val latestCovered by rememberUpdatedState(covered)
   AnimatedContent(
     targetState = screen,
     transitionSpec = {
       val (from, to) = initialState.depth to targetState.depth
-      if (latestCovered || from == to) {
+      if (isCovered() || from == to) {
         (EnterTransition.None togetherWith ExitTransition.None).apply { targetContentZIndex = to.toFloat() }
       } else {
         stackTransition(from, to)
@@ -131,7 +134,7 @@ internal fun ChatsOnScreen(chats: Set<AgentProcess>) {
 internal fun PaneExplorer(
   pane: Pane,
   item: PaneItem<AgentProcess>?,
-  open: Boolean,
+  isOpen: () -> Boolean,
   snackbar: SnackbarStackState,
   onSwapPanes: () -> Unit,
   onClose: () -> Unit,
@@ -145,11 +148,25 @@ internal fun PaneExplorer(
   }
   ExplorerPanel(
     cwd = cwd,
-    open = open,
+    isOpen = isOpen,
     selectedPath = shownFile?.path,
     snackbar = snackbar,
     onClose = onClose,
     onOpenFile = { path -> cwd?.let { closeOrSwap(graph.files.open(pane, it, path)) } },
     onOpenCommit = { commit -> cwd?.let { closeOrSwap(graph.commits.open(pane, it, commit)) } },
   )
+}
+
+/**
+ * Removing a focused terminal view hands focus to the first text field, a chat's composer, raising the keyboard; so
+ * focus is cleared whenever a terminal leaves a pane.
+ */
+@Composable
+internal fun ClearFocusWhenTerminalLeaves(terminals: Set<TerminalSession>) {
+  val focus = LocalFocusManager.current
+  var previous by remember { mutableStateOf(emptySet<TerminalSession>()) }
+  LaunchedEffect(terminals) {
+    if (!terminals.containsAll(previous)) focus.clearFocus()
+    previous = terminals
+  }
 }
