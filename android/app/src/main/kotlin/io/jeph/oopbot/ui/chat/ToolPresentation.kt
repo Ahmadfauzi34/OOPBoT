@@ -2,6 +2,7 @@ package io.jeph.oopbot.ui.chat
 
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.res.stringResource
 import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.StepFigure
@@ -13,6 +14,7 @@ import org.json.JSONObject
  * How a thinking block or tool call is labelled in its compact row and its detail sheet; [code] summaries are
  * monospace, and [figure] is what the row notes about a tool's result.
  */
+@Immutable
 internal data class ToolPresentation(
   @DrawableRes val icon: Int,
   val title: String,

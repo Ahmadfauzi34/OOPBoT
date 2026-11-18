@@ -20,7 +20,8 @@ Place every UI file strictly in its matching feature folder:
 - **Compose Draw & Allocation Performance:**
   - Prefer `Modifier.drawWithCache` over `drawBehind` / `drawWithContent` whenever creating `Brush`, gradient shaders, `Path`, or `Paint` objects per frame.
   - Reuse `Path` buffers via `Path.rewind()` instead of `reset()` on animated shapes (`SimmeringPot.kt`).
-  - Cache `Stroke`, `TextStyle`, or regex/parsing allocations across recompositions with `remember(...)`.
+  - Cache `Stroke`, `TextStyle`, `NumberFormat`, and style allocations across recompositions with `remember(...)`; keep UI parse/highlight/split/thumbnail caches (`MarkdownCache`, `HighlightCache`, `SourceLinesCache`, `ThumbnailCache`) bounded by entry and memory/char budgets.
+  - Keep `SelectionContainer` opt-in on large virtualized code lists (`FileScreen.kt`) and disabled while an assistant message is actively streaming (`OopbotMarkdown.kt`).
   - Provide stable `key` and `contentType` lambdas on `LazyColumn` / `LazyRow` item lists (`FileScreen.kt`, timelines, diffs, logs).
   - Annotate immutable UI state/model classes wrapping lists or sealed trees with `@Immutable` (`DiffDocument.kt`, `TimelineModels.kt`).
 - **Localization & Pseudolocale Compliance:** Zero hardcoded user-facing strings in Kotlin; add all UI copy to `android/app/src/main/res/values/strings_*.xml` matching the domain file (`strings_chat.xml`, `strings_settings.xml`, etc.).

@@ -3,11 +3,12 @@ package io.jeph.oopbot.ui
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -127,8 +129,12 @@ internal fun ChatInboxOverlay(shown: Boolean, onOpen: (ChatLocation) -> Unit, ab
       }
       AnimatedVisibility(
         visible = trayShown,
-        enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
-        exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+        enter = fadeIn() +
+          slideInVertically { -it / TRAY_SLIDE_DIVISOR } +
+          scaleIn(initialScale = TRAY_ENTER_SCALE, transformOrigin = TrayOrigin),
+        exit = fadeOut() +
+          slideOutVertically { -it / TRAY_SLIDE_DIVISOR } +
+          scaleOut(targetScale = TRAY_ENTER_SCALE, transformOrigin = TrayOrigin),
       ) {
         InboxTray(entries = entries, onOpen = open, onClearAll = inbox::clear)
       }
@@ -422,6 +428,9 @@ private val PILL_ELEVATION = 6.dp
 private val PILL_BADGE_SIZE = 22.dp
 private val PILL_TEXT_SIZE = 12.5.sp
 private const val PILL_DIM_ALPHA = 0.65f
+private const val TRAY_SLIDE_DIVISOR = 6
+private const val TRAY_ENTER_SCALE = 0.96f
+private val TrayOrigin = TransformOrigin(0.5f, 0f)
 private val TRAY_SHAPE = RoundedCornerShape(26.dp)
 private val TRAY_MAX_WIDTH = 400.dp
 private val TRAY_LIST_MAX_HEIGHT = 320.dp

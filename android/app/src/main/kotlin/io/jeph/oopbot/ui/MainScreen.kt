@@ -2,6 +2,8 @@ package io.jeph.oopbot.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.AnchoredDraggableState
@@ -76,8 +78,14 @@ import kotlinx.coroutines.launch
 
 private enum class Panel { Sidebar, Chat, Explorer }
 
-/** Paseo's panel slide: 220ms, standard easing. */
+/** Paseo's programmatic panel slide: 220ms, standard easing. */
 private val PanelAnimation = tween<Float>(durationMillis = 220, easing = FastOutSlowInEasing)
+
+/** Gesture fling spring for side panels, carrying swipe momentum cleanly to rest. */
+private val PanelFlingSpring = spring<Float>(
+  dampingRatio = Spring.DampingRatioNoBouncy,
+  stiffness = Spring.StiffnessMediumLow,
+)
 
 /**
  * Each pane's sliding panels: its sidebar, its screen and its explorer, which slide within that pane's width; which
@@ -143,6 +151,15 @@ private class PanePanels(
     onCloseTab = actions::closeTab,
     onCloseSplit = { actions.closeSplit(pane) }.takeIf { closesSplit },
   )
+
+  @Composable
+  fun rememberControls(pane: Pane, actions: ShellActions, closesSplit: Boolean, onOpenTabs: () -> Unit) =
+    remember(pane, this, actions, closesSplit) { controls(pane, actions, closesSplit, onOpenTabs) }
+
+  fun isCovered(pane: Pane): Boolean = get(pane).let { it.targetValue != Panel.Chat || it.currentValue != Panel.Chat }
+
+  fun onShownInSplit(pane: Pane, splitAvailable: Boolean): (() -> Unit)? =
+    { show(Pane.Secondary, Panel.Chat) }.takeIf { pane == Pane.Primary && splitAvailable }
 }
 
 @Composable
@@ -272,19 +289,23 @@ private fun ShellNotices(actions: ShellActions, snackbar: SnackbarStackState) {
 }
 
 /**
- * Opening a side panel hides the keyboard, so it doesn't cover the panel; opening the sidebar also refreshes the chat
- * list and the remote hosts.
+ * Opening a side panel hides the keyboard immediately so it doesn't cover the panel, while refreshing the chat list
+ * and remote hosts waits until the sidebar slide settles to avoid frame drops mid-transition.
  */
 @Composable
-private fun SidePanelOpenedEffect(panel: Panel) {
+private fun SidePanelOpenedEffect(state: AnchoredDraggableState<Panel>) {
   val keyboard = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
   val graph = LocalContext.current.appGraph
-  LaunchedEffect(panel) {
-    if (panel == Panel.Chat) return@LaunchedEffect
+  val target = state.targetValue
+  val settled = state.settledValue
+  LaunchedEffect(target) {
+    if (target == Panel.Chat) return@LaunchedEffect
     keyboard?.hide()
     focusManager.clearFocus(force = true)
-    if (panel != Panel.Sidebar) return@LaunchedEffect
+  }
+  LaunchedEffect(settled) {
+    if (settled != Panel.Sidebar) return@LaunchedEffect
     graph.sessionRepository.refresh()
     // Hosts added, renamed or connected elsewhere label their workspaces as the sidebar opens.
     graph.remoteHosts.refresh()
@@ -304,7 +325,7 @@ private fun MobilePanels(
   explorer: @Composable () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val fling = AnchoredDraggableDefaults.flingBehavior(state, animationSpec = PanelAnimation)
+  val fling = AnchoredDraggableDefaults.flingBehavior(state, animationSpec = PanelFlingSpring)
   Box(
     modifier = modifier
       .fillMaxSize()
@@ -388,36 +409,33 @@ private fun WorkspacePanes(
       // Keyed, so each pane keeps its own state whichever panes show.
       key(pane) {
         val item = items[pane]
-        val panel = panels[pane].targetValue
+        val panelState = panels[pane]
+        val panel = panelState.targetValue
         // The session sheet belongs to the pane rather than either of its screens, so it stays open when archiving from
         // it replaces the shown chat and with it the tab shown in its place; it shows the shell's snackbar over itself.
         var tabsOpen by rememberSaveable { mutableStateOf(false) }
         val closesSplit = split && pane == endPane
-        val controls = remember(pane, panels, actions, closesSplit) {
-          panels.controls(pane, actions, closesSplit) { tabsOpen = true }
-        }
-        val onShownInSplit = {
-          panels.show(Pane.Secondary, Panel.Chat)
-        }.takeIf { pane == Pane.Primary && splitAvailable }
+        val controls = panels.rememberControls(pane, actions, closesSplit) { tabsOpen = true }
+        val onShownInSplit = panels.onShownInSplit(pane, splitAvailable)
         val swapPanes = { panels.swapFrom(pane) }
         BackHandler(enabled = panel != Panel.Chat) { panels.show(pane, Panel.Chat) }
-        SidePanelOpenedEffect(panel)
+        SidePanelOpenedEffect(panelState)
         MobilePanels(
           modifier = Modifier.onTouch { panels.active = pane },
-          state = panels[pane],
+          state = panelState,
           sidebar = {
             // The sidebar stays composed behind the pane, where its working chats' pots would redraw for nothing.
-            CompositionLocalProvider(LocalPotsSimmer provides (panel == Panel.Sidebar)) {
-              sidebar(pane, onShownInSplit)
-            }
+            val shimmer = LocalPotsSimmer provides (panel == Panel.Sidebar)
+            CompositionLocalProvider(shimmer) { sidebar(pane, onShownInSplit) }
           },
           workspace = {
             // Covered until the panel has settled on the screen, so a chat picked in the sidebar comes in with it.
-            val covered = panel != Panel.Chat || panels[pane].currentValue != Panel.Chat
+            val covered = panels.isCovered(pane)
             WorkspacePane(item, covered, actions, views, controls, onOpenSettings, onOpenProviders, onOpenOnboarding)
           },
           explorer = {
-            PaneExplorer(pane, item, panel == Panel.Explorer, snackbar, swapPanes) { panels.show(pane, Panel.Chat) }
+            val explorerOpen = panelState.settledValue == Panel.Explorer
+            PaneExplorer(pane, item, explorerOpen, snackbar, swapPanes) { panels.show(pane, Panel.Chat) }
           },
         )
         if (tabsOpen && item != null) {

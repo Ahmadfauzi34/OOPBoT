@@ -1,11 +1,13 @@
 package io.jeph.oopbot.agent
 
+import androidx.compose.runtime.Immutable
 import org.json.JSONObject
 
 /**
  * A widget an extension set with `ctx.ui.setWidget` (Pi `docs/rpc-extension-ui.md`): its lines as Pi sent them, with
  * Pi's ANSI styling left in, and whether Pi's terminal UI draws it below the editor rather than above it.
  */
+@Immutable
 internal data class ExtensionWidget(val lines: List<String>, val belowEditor: Boolean)
 
 /**

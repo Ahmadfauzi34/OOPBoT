@@ -2,6 +2,7 @@ package io.jeph.oopbot.ui.files
 
 import android.graphics.BitmapFactory
 import android.text.format.Formatter
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalTextStyle
@@ -44,18 +46,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
-import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.files.FileState
 import io.jeph.oopbot.files.FileTab
 import io.jeph.oopbot.host.FileContent
 import io.jeph.oopbot.ui.components.OopbotSheet
 import io.jeph.oopbot.ui.components.SheetRow
+import io.jeph.oopbot.ui.components.SourceLinesCache
 import io.jeph.oopbot.ui.components.fileLanguage
 import io.jeph.oopbot.ui.components.rememberHighlightedCode
 import io.jeph.oopbot.ui.components.splitLines
@@ -80,7 +83,7 @@ import kotlinx.coroutines.withContext
  * One open file in a pane: the pane's header with the file's name over its folder, which acts through [controls]; a
  * caption with the file's size and line count; and the file itself, read again each time its tab shows, since Pi may
  * have changed it. Text shows with line numbers, coloured when a grammar knows the extension; images show fitted to
- * the width. Copy path and Close file go to the session sheet the title opens.
+ * the width. Select text, Copy path and Close file go to the session sheet the title opens.
  */
 @Composable
 internal fun FileScreen(file: FileTab, controls: PaneControls, modifier: Modifier = Modifier) {
@@ -90,17 +93,35 @@ internal fun FileScreen(file: FileTab, controls: PaneControls, modifier: Modifie
   val fullPath = rememberFolderNames().absolutePath(file.cwd, file.path)
   val scope = rememberCoroutineScope()
   LaunchedEffect(file) { file.reload() }
-  PublishTabActions(
-    controls.shownTab,
-    listOf(
+  val loadedText = (state as? FileState.Loaded)?.content as? FileContent.Text
+  val previewing = loadedText != null && isMarkdownFile(file.name) && loadedText.size <= PREVIEW_LIMIT &&
+    file.showsPreview
+  val sourceShown = loadedText != null && !previewing
+  var selectionMode by remember(file) { mutableStateOf(false) }
+  LaunchedEffect(sourceShown) { if (!sourceShown) selectionMode = false }
+  BackHandler(enabled = selectionMode) { selectionMode = false }
+  val tabActions = buildList {
+    if (sourceShown) {
+      add(
+        TabAction(
+          label = if (selectionMode) R.string.file_done_selecting else R.string.file_select_text,
+          icon = if (selectionMode) R.drawable.ic_lucide_check else R.drawable.ic_lucide_file_text,
+          onClick = { selectionMode = !selectionMode },
+        ),
+      )
+    }
+    add(
       TabAction(R.string.file_copy_path, R.drawable.ic_lucide_copy, {
         copyToClipboard(context, file.name, fullPath)
       }),
+    )
+    add(
       TabAction(R.string.file_close, R.drawable.ic_lucide_x, {
         controls.onCloseTab(WorkspaceTab.File(file))
       }, destructive = true),
-    ),
-  )
+    )
+  }
+  PublishTabActions(controls.shownTab, tabActions)
 
   Column(modifier = modifier.fillMaxSize().background(oopbotColors.surface0)) {
     PaneHeader(title = file.name, cwd = file.cwd, controls = controls, subfolder = file.folder)
@@ -122,14 +143,14 @@ internal fun FileScreen(file: FileTab, controls: PaneControls, modifier: Modifie
 
       is FileState.Loaded -> {
         // A fresh list per file, so switching files never carries the old one's scroll position over.
-        key(file) { LoadedFile(file, shown.content, Modifier.weight(1f)) }
+        key(file) { LoadedFile(file, shown.content, selectionMode, Modifier.weight(1f)) }
       }
     }
   }
 }
 
 @Composable
-private fun LoadedFile(file: FileTab, content: FileContent, modifier: Modifier) {
+private fun LoadedFile(file: FileTab, content: FileContent, selectionMode: Boolean, modifier: Modifier) {
   val lines = (content as? FileContent.Text)?.let { rememberSourceLines(it.text, file.name) }
   val previewable = content is FileContent.Text && isMarkdownFile(file.name) && content.size <= PREVIEW_LIMIT
   FileBar(
@@ -142,7 +163,7 @@ private fun LoadedFile(file: FileTab, content: FileContent, modifier: Modifier) 
     is FileContent.Text -> if (previewable && file.showsPreview) {
       MarkdownPreview(content.text, modifier)
     } else {
-      SourceView(lines.orEmpty(), modifier)
+      SourceView(lines.orEmpty(), selectionMode, modifier)
     }
 
     is FileContent.Image -> ImageView(content.bytes, modifier)
@@ -207,49 +228,80 @@ private fun FileBar(size: Long, lineCount: Int?, showsPreview: Boolean?, onShowP
 @Composable
 private fun rememberSourceLines(text: String, name: String): List<AnnotatedString> {
   val highlighted = rememberHighlightedCode(text, fileLanguage(name).takeIf { text.length <= HIGHLIGHT_LIMIT })
+  val cached = remember(highlighted) { SourceLinesCache.shared.get(highlighted) }
+  if (cached != null) return cached
   val lines by produceState<List<AnnotatedString>?>(null, highlighted) {
-    value = withContext(Dispatchers.Default) {
+    value = SourceLinesCache.shared.get(highlighted) ?: withContext(Dispatchers.Default) {
       highlighted.splitLines().let { if (it.size > 1 && it.last().isEmpty()) it.dropLast(1) else it }
-    }
+    }.also { SourceLinesCache.shared.put(highlighted, it) }
   }
   return lines.orEmpty()
 }
 
-/** The source view: a 56dp gutter of right-aligned, faint line numbers and the lines, wrapped, in the code font. */
+/**
+ * The source view: a 56dp gutter of right-aligned, faint line numbers and the lines, wrapped, in the code font.
+ * Selection is opt-in via [selectionMode] so fast scrolling stays free of global SelectionRegistrar overhead.
+ */
 @Composable
-private fun SourceView(lines: List<AnnotatedString>, modifier: Modifier) {
+private fun SourceView(lines: List<AnnotatedString>, selectionMode: Boolean, modifier: Modifier) {
   val colors = oopbotColors
+  val baseStyle = LocalTextStyle.current
+  val gutterStyle = remember(colors) {
+    TextStyle(
+      color = colors.foregroundExtraMuted,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
+      textAlign = TextAlign.End,
+    )
+  }
+  val lineStyle = remember(colors, baseStyle) {
+    baseStyle.copy(
+      color = colors.foreground,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
+      // Code reads left to right in any language, so its punctuation stays where it was written.
+      textDirection = TextDirection.Ltr,
+    )
+  }
   val navigationBar = WindowInsets.navigationBars.asPaddingValues()
-  SelectionContainer(modifier = modifier) {
-    LazyColumn(
-      modifier = Modifier.fillMaxSize(),
-      contentPadding = PaddingValues(
-        top = OopbotTokens.Spacing.s8,
-        bottom = OopbotTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
-      ),
-    ) {
-      itemsIndexed(lines, key = { index, _ -> index }, contentType = { _, _ -> "line" }) { index, line ->
-        Row(modifier = Modifier.fillMaxWidth()) {
-          Text(
-            text = (index + 1).toString(),
-            modifier = Modifier.width(GUTTER_WIDTH).padding(end = OopbotTokens.Spacing.s12),
-            color = colors.foregroundExtraMuted,
-            fontFamily = OopbotFonts.mono,
-            fontSize = OopbotTokens.FontSize.code,
-            lineHeight = OopbotTokens.LineHeight.code,
-            textAlign = TextAlign.End,
-          )
-          Text(
-            text = line,
-            modifier = Modifier.weight(1f).padding(end = OopbotTokens.Spacing.s12),
-            color = colors.foreground,
-            fontFamily = OopbotFonts.mono,
-            fontSize = OopbotTokens.FontSize.code,
-            lineHeight = OopbotTokens.LineHeight.code,
-            // Code reads left to right in any language, so its punctuation stays where it was written.
-            style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr),
-          )
+  val contentPadding = PaddingValues(
+    top = OopbotTokens.Spacing.s8,
+    bottom = OopbotTokens.Spacing.s16 + navigationBar.calculateBottomPadding(),
+  )
+  if (selectionMode) {
+    SelectionContainer(modifier = modifier) {
+      SourceList(lines, selectionMode = true, gutterStyle, lineStyle, contentPadding, Modifier.fillMaxSize())
+    }
+  } else {
+    SourceList(lines, selectionMode = false, gutterStyle, lineStyle, contentPadding, modifier.fillMaxSize())
+  }
+}
+
+@Composable
+private fun SourceList(
+  lines: List<AnnotatedString>,
+  selectionMode: Boolean,
+  gutterStyle: TextStyle,
+  lineStyle: TextStyle,
+  contentPadding: PaddingValues,
+  modifier: Modifier,
+) {
+  LazyColumn(modifier = modifier, contentPadding = contentPadding) {
+    itemsIndexed(lines, key = { index, _ -> index }, contentType = { _, _ -> "line" }) { index, line ->
+      Row(modifier = Modifier.fillMaxWidth()) {
+        val gutterModifier = Modifier.width(GUTTER_WIDTH).padding(end = OopbotTokens.Spacing.s12)
+        if (selectionMode) {
+          DisableSelection { Text(text = (index + 1).toString(), modifier = gutterModifier, style = gutterStyle) }
+        } else {
+          Text(text = (index + 1).toString(), modifier = gutterModifier, style = gutterStyle)
         }
+        Text(
+          text = line,
+          modifier = Modifier.weight(1f).padding(end = OopbotTokens.Spacing.s12),
+          style = lineStyle,
+        )
       }
     }
   }

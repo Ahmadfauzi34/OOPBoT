@@ -1,5 +1,6 @@
 package io.jeph.oopbot.agent
 
+import androidx.compose.runtime.Immutable
 import io.jeph.oopbot.agent.TimelineItem.Steps
 
 /** How the run a [Steps] fold belongs to went on after it: still working, done, or ended by Stop. */
@@ -17,6 +18,7 @@ val TimelineItem.isAgentStep: Boolean
  * A timeline's items as the stream shows them: [entries] has each run of two or more steps folded into one [Steps],
  * which a run of other items ends. [groupAt] is each fold's index in [entries], by key.
  */
+@Immutable
 class StepStream private constructor(val entries: List<TimelineItem>, private val groupAt: Map<String, Int>) {
   /** [entries] with the steps of each fold keyed in [expanded] listed under it. */
   fun expand(expanded: Set<String>): StreamRows {
@@ -86,6 +88,7 @@ class StepStream private constructor(val entries: List<TimelineItem>, private va
 }
 
 /** The rows a stream lists: [items], among them the steps of expanded folds, which [listed] holds. */
+@Immutable
 class StreamRows(val items: List<TimelineItem>, private val listed: Map<String, Boolean>) {
   /** Whether the row keyed [key] is a step listed under its fold. */
   fun isListedStep(key: String): Boolean = key in listed

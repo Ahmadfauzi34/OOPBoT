@@ -57,6 +57,7 @@ import io.jeph.oopbot.ui.theme.OopbotColors
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -272,7 +273,7 @@ private fun CodeText(text: AnnotatedString, style: DiffRowStyle, color: Color, m
       scroller.fit(placeable.width - width)
       layout(width, placeable.height) {
         // Read only while placing, so a sideways scroll moves the text without composing or measuring it again.
-        placeable.placeWithLayer(0, 0) { translationX = -scroller.offset }
+        placeable.place((-scroller.offset).roundToInt(), 0)
       }
     },
     style = style.code,

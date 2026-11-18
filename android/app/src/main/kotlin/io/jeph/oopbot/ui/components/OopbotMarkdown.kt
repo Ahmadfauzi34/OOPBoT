@@ -43,30 +43,31 @@ import org.intellij.markdown.MarkdownElementTypes
 
 /**
  * Assistant markdown: 15/22sp body, and code on raised cards that scroll sideways, headed by their language. With a
- * [cache], markdown it has parsed before shows from the first frame, and each parse of it is kept there.
+ * [cache], markdown it has parsed before shows from the first frame, and each parse of it is kept there. While a
+ * reply is streaming ([selectable] false), selection tracking is skipped until the message settles.
  */
 @Composable
-fun OopbotMarkdown(markdown: String, modifier: Modifier = Modifier, cache: MarkdownCache? = null) {
+fun OopbotMarkdown(
+  markdown: String,
+  modifier: Modifier = Modifier,
+  cache: MarkdownCache? = null,
+  selectable: Boolean = true,
+) {
   val colors = oopbotColors
-  val body = TextStyle(
-    color = colors.foreground,
-    fontFamily = OopbotFonts.ui,
-    fontSize = OopbotTokens.FontSize.content,
-    lineHeight = OopbotTokens.LineHeight.markdown,
-    fontFeatureSettings = OopbotFonts.FEATURES,
-  )
-  // CodeText is OOPBoT's one code style, so the library's code typography is ignored here.
-  val codeBlock: @Composable (String, String?, TextStyle) -> Unit = { text, language, _ ->
-    CodeBox(
-      modifier = Modifier.padding(vertical = OopbotTokens.Spacing.s6),
-      label = language?.takeIf { it.isNotBlank() },
-    ) { CodeText(text, language) }
+  val body = remember(colors) {
+    TextStyle(
+      color = colors.foreground,
+      fontFamily = OopbotFonts.ui,
+      fontSize = OopbotTokens.FontSize.content,
+      lineHeight = OopbotTokens.LineHeight.markdown,
+      fontFeatureSettings = OopbotFonts.FEATURES,
+    )
   }
   val state = rememberParsedMarkdown(markdown, cache)
-  SelectionContainer(modifier = modifier) {
+  val render: @Composable (Modifier) -> Unit = { contentModifier ->
     Markdown(
       state = state,
-      modifier = Modifier.fillMaxWidth(),
+      modifier = contentModifier,
       colors =
         markdownColor(
           text = colors.foreground,
@@ -75,12 +76,12 @@ fun OopbotMarkdown(markdown: String, modifier: Modifier = Modifier, cache: Markd
           dividerColor = colors.border,
         ),
       typography = typography(body),
-      padding = markdownPadding(block = OopbotTokens.Spacing.s6, codeBlock = PaddingValues(0.dp)),
+      padding = markdownPadding(block = OopbotTokens.Spacing.s6, codeBlock = CODE_BLOCK_PADDING),
       dimens = markdownDimens(codeBackgroundCornerSize = OopbotTokens.Radius.base),
       components =
         markdownComponents(
-          codeFence = { MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = codeBlock) },
-          codeBlock = { MarkdownCodeBlock(it.content, it.node, style = it.typography.code, block = codeBlock) },
+          codeFence = { MarkdownCodeFence(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
+          codeBlock = { MarkdownCodeBlock(it.content, it.node, style = it.typography.code, block = OopbotCodeBlock) },
           table = { MarkdownTable(it.content, it.node, it.typography.table) },
         ),
       // The library animates each text block's size by default, which relayouts every frame a streamed
@@ -89,18 +90,35 @@ fun OopbotMarkdown(markdown: String, modifier: Modifier = Modifier, cache: Markd
       annotator = imageAltAnnotator(),
     )
   }
+  if (selectable) {
+    SelectionContainer(modifier = modifier) { render(Modifier.fillMaxWidth()) }
+  } else {
+    render(modifier.fillMaxWidth())
+  }
+}
+
+private val CODE_BLOCK_PADDING = PaddingValues(0.dp)
+
+// CodeText is OOPBoT's one code style, so the library's code typography is ignored here.
+private val OopbotCodeBlock: @Composable (String, String?, TextStyle) -> Unit = { text, language, _ ->
+  CodeBox(
+    modifier = Modifier.padding(vertical = OopbotTokens.Spacing.s6),
+    label = language?.takeIf { it.isNotBlank() },
+  ) { CodeText(text, language) }
 }
 
 /**
  * [markdown] parsed off the main thread, one parse at a time with the latest text. Until the current text's parse
  * lands the last result stays, so a streamed reply doesn't collapse to the empty loading box between deltas. A text
- * [cache] holds needs no parse, and each result is kept in [cache].
+ * [cache] holds needs no parse or snapshot collector, and each result is kept in [cache].
  */
 @Composable
 private fun rememberParsedMarkdown(markdown: String, cache: MarkdownCache?): State {
-  var parsed by remember { mutableStateOf<State>(cache?.get(markdown) ?: State.Loading()) }
+  val cached = remember(markdown, cache) { cache?.get(markdown) }
+  var parsed by remember { mutableStateOf<State>(cached ?: State.Loading()) }
   val latest by rememberUpdatedState(markdown to cache)
-  LaunchedEffect(Unit) {
+  LaunchedEffect(cached != null) {
+    if (cached != null) return@LaunchedEffect
     // Conflated, so text that changes faster than it parses skips to the latest instead of queueing every delta.
     snapshotFlow { latest }.conflate().collect { (text, latestCache) ->
       val shown = parsed
@@ -112,7 +130,7 @@ private fun rememberParsedMarkdown(markdown: String, cache: MarkdownCache?): Sta
       latestCache?.put(text, next)
     }
   }
-  return parsed
+  return cached ?: parsed
 }
 
 /**
@@ -122,7 +140,9 @@ private fun rememberParsedMarkdown(markdown: String, cache: MarkdownCache?): Sta
 @Composable
 private fun imageAltAnnotator(): MarkdownAnnotator {
   val colors = oopbotColors
-  val style = SpanStyle(color = colors.foregroundMuted, background = colors.surface2, fontSize = IMAGE_ALT_FONT_SIZE)
+  val style = remember(colors) {
+    SpanStyle(color = colors.foregroundMuted, background = colors.surface2, fontSize = IMAGE_ALT_FONT_SIZE)
+  }
   return remember(style) {
     markdownAnnotator { content, node ->
       if (node.type != MarkdownElementTypes.IMAGE) return@markdownAnnotator false
@@ -138,31 +158,58 @@ private val IMAGE_ALT_FONT_SIZE = 10.sp
 @Composable
 private fun typography(body: TextStyle): MarkdownTypography {
   val colors = oopbotColors
-  val code = TextStyle(
-    color = colors.foreground,
-    fontFamily = OopbotFonts.mono,
-    fontSize = OopbotTokens.FontSize.code,
-    lineHeight = OopbotTokens.LineHeight.code,
-    fontFeatureSettings = OopbotFonts.FEATURES,
-  )
+  val styles = remember(body, colors) {
+    val code = TextStyle(
+      color = colors.foreground,
+      fontFamily = OopbotFonts.mono,
+      fontSize = OopbotTokens.FontSize.code,
+      lineHeight = OopbotTokens.LineHeight.code,
+      fontFeatureSettings = OopbotFonts.FEATURES,
+    )
+    val headings = HeadingStyles(
+      h1 = body.copy(fontSize = OopbotTokens.FontSize.xxl, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
+      h2 = body.copy(fontSize = OopbotTokens.FontSize.xl, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+      h3 = body.copy(fontSize = OopbotTokens.FontSize.lg, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
+      small = body.copy(fontWeight = FontWeight.SemiBold),
+    )
+    MemoizedMarkdownStyles(
+      headings = headings,
+      code = code,
+      inlineCode = code.copy(lineHeight = OopbotTokens.LineHeight.markdown),
+      quote = body.copy(color = colors.foregroundMuted),
+      textLink = TextLinkStyles(style = SpanStyle(color = colors.accent, textDecoration = TextDecoration.Underline)),
+      // The front matter table's cell type, a size under the body so more of a row fits across.
+      table = body.copy(fontSize = OopbotTokens.FontSize.base, lineHeight = 20.sp),
+    )
+  }
   return markdownTypography(
-    h1 = body.copy(fontSize = OopbotTokens.FontSize.xxl, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
-    h2 = body.copy(fontSize = OopbotTokens.FontSize.xl, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
-    h3 = body.copy(fontSize = OopbotTokens.FontSize.lg, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
-    h4 = body.copy(fontWeight = FontWeight.SemiBold),
-    h5 = body.copy(fontWeight = FontWeight.SemiBold),
-    h6 = body.copy(fontWeight = FontWeight.SemiBold),
+    h1 = styles.headings.h1,
+    h2 = styles.headings.h2,
+    h3 = styles.headings.h3,
+    h4 = styles.headings.small,
+    h5 = styles.headings.small,
+    h6 = styles.headings.small,
     text = body,
-    code = code,
-    inlineCode = code.copy(lineHeight = OopbotTokens.LineHeight.markdown),
-    quote = body.copy(color = colors.foregroundMuted),
+    code = styles.code,
+    inlineCode = styles.inlineCode,
+    quote = styles.quote,
     paragraph = body,
     ordered = body,
     bullet = body,
     list = body,
-    textLink = TextLinkStyles(style = SpanStyle(color = colors.accent, textDecoration = TextDecoration.Underline)),
-    // The front matter table's cell type, a size under the body so more of a row fits across.
-    table = body.copy(fontSize = OopbotTokens.FontSize.base, lineHeight = 20.sp),
-    alertTitle = body.copy(fontWeight = FontWeight.SemiBold),
+    textLink = styles.textLink,
+    table = styles.table,
+    alertTitle = styles.headings.small,
   )
 }
+
+private class HeadingStyles(val h1: TextStyle, val h2: TextStyle, val h3: TextStyle, val small: TextStyle)
+
+private class MemoizedMarkdownStyles(
+  val headings: HeadingStyles,
+  val code: TextStyle,
+  val inlineCode: TextStyle,
+  val quote: TextStyle,
+  val textLink: TextLinkStyles,
+  val table: TextStyle,
+)

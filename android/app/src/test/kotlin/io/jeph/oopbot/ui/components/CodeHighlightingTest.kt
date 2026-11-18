@@ -7,6 +7,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import io.jeph.oopbot.syntax.CaptureSpan
 import io.jeph.oopbot.syntax.Grammar
+import io.jeph.oopbot.ui.theme.ClayColors
+import io.jeph.oopbot.ui.theme.PorcelainColors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -134,6 +136,71 @@ class CodeHighlightingTest {
     assertEquals(AnnotatedString("var y"), withPlainTail(highlighted, "var y"))
     assertEquals(AnnotatedString("val"), withPlainTail(highlighted, "val"))
     assertEquals(AnnotatedString("val"), withPlainTail(null, "val"))
+  }
+
+  @Test
+  fun highlightCacheIsolatesByGrammarAndTheme() {
+    val cache = HighlightCache(maxEntries = 8, maxChars = 1_000)
+    val kotlinLight = AnnotatedString("kt-light")
+    val javaLight = AnnotatedString("java-light")
+    val kotlinClay = AnnotatedString("kt-clay")
+
+    cache.put(Grammar.KOTLIN, PorcelainColors, "class A", kotlinLight)
+    cache.put(Grammar.JAVA, PorcelainColors, "class A", javaLight)
+    cache.put(Grammar.KOTLIN, ClayColors, "class A", kotlinClay)
+
+    assertEquals(kotlinLight, cache.get(Grammar.KOTLIN, PorcelainColors, "class A"))
+    assertEquals(javaLight, cache.get(Grammar.JAVA, PorcelainColors, "class A"))
+    assertEquals(kotlinClay, cache.get(Grammar.KOTLIN, ClayColors, "class A"))
+    assertNull(cache.get(Grammar.KOTLIN, PorcelainColors, "class B"))
+  }
+
+  @Test
+  fun highlightCacheEvictsLeastRecentlyUsedWithinCountAndCharBudgets() {
+    val cache = HighlightCache(maxEntries = 2, maxChars = 10)
+    cache.put(Grammar.KOTLIN, PorcelainColors, "aaaa", AnnotatedString("1"))
+    cache.put(Grammar.KOTLIN, PorcelainColors, "bbbb", AnnotatedString("2"))
+    // Refresh "aaaa" so "bbbb" becomes the eldest entry.
+    assertEquals(AnnotatedString("1"), cache.get(Grammar.KOTLIN, PorcelainColors, "aaaa"))
+
+    cache.put(Grammar.KOTLIN, PorcelainColors, "cccc", AnnotatedString("3"))
+
+    assertEquals(AnnotatedString("1"), cache.get(Grammar.KOTLIN, PorcelainColors, "aaaa"))
+    assertNull(cache.get(Grammar.KOTLIN, PorcelainColors, "bbbb"))
+    assertEquals(AnnotatedString("3"), cache.get(Grammar.KOTLIN, PorcelainColors, "cccc"))
+
+    // Entry larger than maxChars / 2 is skipped without evicting existing entries.
+    cache.put(Grammar.KOTLIN, PorcelainColors, "123456", AnnotatedString("huge"))
+    assertNull(cache.get(Grammar.KOTLIN, PorcelainColors, "123456"))
+    assertEquals(AnnotatedString("1"), cache.get(Grammar.KOTLIN, PorcelainColors, "aaaa"))
+
+    cache.clear()
+    assertNull(cache.get(Grammar.KOTLIN, PorcelainColors, "aaaa"))
+  }
+
+  @Test
+  fun sourceLinesCacheEvictsEldestAndSkipsOversizedFiles() {
+    val cache = SourceLinesCache(maxEntries = 2, maxChars = 20)
+    val first = AnnotatedString("12345678")
+    val second = AnnotatedString("abcdefgh")
+    val third = AnnotatedString("ijklmnop")
+    val huge = AnnotatedString("x".repeat(12))
+
+    cache.put(first, listOf(first))
+    cache.put(second, listOf(second))
+    assertEquals(listOf(first), cache.get(first))
+
+    cache.put(third, listOf(third))
+    assertNull(cache.get(second))
+    assertEquals(listOf(first), cache.get(first))
+    assertEquals(listOf(third), cache.get(third))
+
+    cache.put(huge, listOf(huge))
+    assertNull(cache.get(huge))
+    assertEquals(listOf(first), cache.get(first))
+
+    cache.clear()
+    assertNull(cache.get(first))
   }
 
   private fun grammarOf(path: String): Grammar? = fileLanguage(path)?.let(Grammar::forName)

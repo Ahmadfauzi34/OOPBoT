@@ -1,13 +1,17 @@
 package io.jeph.oopbot.agent
 
+import androidx.compose.runtime.Immutable
 import org.json.JSONObject
 
 /** What a tool call's row notes about its result, beside its arguments. */
+@Immutable
 sealed interface StepFigure {
   /** An edit or write changed the file by [added] and [removed] lines. */
+  @Immutable
   data class Lines(val added: Int, val removed: Int) : StepFigure
 
   /** A shell command exited with [code], other than 0. */
+  @Immutable
   data class Exit(val code: Int) : StepFigure
 
   /** A shell command ran past its timeout. */

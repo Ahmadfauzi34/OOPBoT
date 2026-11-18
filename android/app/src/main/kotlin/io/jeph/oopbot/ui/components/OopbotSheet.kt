@@ -24,7 +24,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -39,6 +38,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -53,6 +53,7 @@ import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -109,7 +110,7 @@ fun OopbotSheet(
     val unscrolled = rememberScrollableState { 0f }
     Column(
       modifier = Modifier
-        .onGloballyPositioned { dismiss.shownFraction = it.boundsInWindow().height / it.size.height }
+        .onGloballyPositioned { dismiss.updateCoordinates(it) }
         .nestedScroll(guard)
         .scrollable(unscrolled, Orientation.Vertical)
         .pointerInput(guard) {
@@ -143,13 +144,26 @@ private class SheetDismiss(
   private val onDismissRequest: State<() -> Unit>,
 ) : (() -> Unit) -> Unit {
   private var closing = false
+  private var latestCoordinates: LayoutCoordinates? = null
 
   /** How much of the sheet's content is on screen: 1 when it's all up, 0 once it's out of sight. */
-  var shownFraction by mutableFloatStateOf(1f)
+  private val shownFraction = MutableStateFlow(1f)
+
+  fun updateCoordinates(coordinates: LayoutCoordinates) {
+    latestCoordinates = coordinates
+    if (closing) sampleFraction(coordinates)
+  }
+
+  private fun sampleFraction(coordinates: LayoutCoordinates) {
+    if (!coordinates.isAttached) return
+    val height = coordinates.size.height
+    if (height > 0) shownFraction.value = coordinates.boundsInWindow().height / height
+  }
 
   override fun invoke(then: () -> Unit) {
     if (closing) return
     closing = true
+    latestCoordinates?.let(::sampleFraction)
     var thenRan = false
     val runThen = {
       if (!thenRan) {
@@ -162,7 +176,7 @@ private class SheetDismiss(
       // Material's animation settles well after the sheet is out of sight; what the action brings up needn't wait
       // for it. A drag that catches the sheet cancels [SheetState.hide], and this job with it, dropping `then`.
       val outOfSight = launch {
-        snapshotFlow { shownFraction }.first { it <= OUT_OF_SIGHT_FRACTION }
+        shownFraction.first { it <= OUT_OF_SIGHT_FRACTION }
         runThen()
       }
       sheetState.hide()
