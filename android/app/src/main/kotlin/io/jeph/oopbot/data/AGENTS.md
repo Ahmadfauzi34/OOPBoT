@@ -17,7 +17,7 @@ Manages durable app state, session indexing, transcript caching, FTS full-text a
 - **One-Time Preferences Migration & Legacy Notices:** `Preferences` atomically migrates its 7 large collection/cache JSON keys into `workspace_prefs` / `session_meta` once (`prefs_v1_migrated`) and removes those keys from XML; `NoticeStore` lazily migrates legacy SHA-256 `.json` files on read or overwrite.
 
 ## Work Guidance
-- Mirror every SQL schema or query change with JVM tests against `org.xerial:sqlite-jdbc` via `JdbcSqlDb` under `android/app/src/test/kotlin/io/jeph/oopbot/data/` so real SQLite compiles and executes every query.
+- Mirror every SQL schema or query change with JVM tests against `org.xerial:sqlite-jdbc` via `JdbcSqlDb` and Android framework `SQLiteOpenHelper` via Robolectric (`AndroidSqlDbTest`) under `android/app/src/test/kotlin/io/jeph/oopbot/data/`.
 - Keep `SessionHost` narrow and free of Android framework types so `SessionRepositoryTest` stays pure JVM.
 
 ## Verification
