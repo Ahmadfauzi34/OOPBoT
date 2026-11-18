@@ -15,6 +15,7 @@ Core Rust crate (`oopbot`) compiled as both the Termux CLI/daemon binary (`oopbo
 - **FFI Panic & ABI Safety:** All `extern "C"` C-ABI and JNI functions in `src/ffi.rs` MUST guard boundaries with `std::panic::catch_unwind`, validate null pointers/handles without panicking, and match the exact Java signatures in `android/app/src/main/kotlin/io/jeph/oopbot/host/OopbotBridge.kt`.
 - **Atomic File Writes & Credential Safety:** Persistent config/session writes use `src/util.rs` (`write_json_atomic`); secrets (`auth.json`) must retain restrictive permissions (`0o600`).
 - **Release Profile:** Keep `[profile.release]` (`lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`) clean and warn-free under `cargo clippy --all-targets --locked -- -D warnings`.
+- **Shell Command Runner (`RunShell` & `Background`):** Both `src/tools.rs` (`run_shell`) and `src/plugins/background/process.rs` (`background`) MUST execute commands via `resolve_command_shell()` (preferring `$PREFIX/bin/bash` / `/data/data/com.termux/files/usr/bin/bash` on Termux or `/bin/bash` on Linux with `-c`, falling back to `sh -c` only when `bash` is absent) so bash builtins (`time`, `history`, `[[ ... ]]`, `pipefail`, arrays) work reliably.
 
 ## Work Guidance
 - Place core LLM/provider logic in `src/gemini.rs` or `src/agent.rs`, built-in filesystem/shell tools in `src/tools.rs`, model/provider catalog definitions in `src/models.rs`, and higher-level optional capabilities inside `src/plugins/`.

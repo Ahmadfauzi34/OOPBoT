@@ -608,3 +608,27 @@ fn incremental_since_byte_truncated_by_tail_bytes_emits_skip_banner() {
     );
     assert!(slice.text.ends_with(&"A".repeat(10_000)));
 }
+
+#[tokio::test]
+async fn bash_features_work_in_background_start() {
+    let (_plugin, reg) = setup_bg_tool();
+    let tool = reg.get("background").unwrap();
+
+    let started = tool
+        .execute(&json!({
+            "action": "start",
+            "command": "set -o pipefail; arr=({1..3}); [[ ${#arr[@]} -eq 3 ]] && time echo \"BG_BASH:${arr[*]}\""
+        }))
+        .await
+        .unwrap();
+    let id = started["id"].as_u64().unwrap();
+
+    let waited = tool
+        .execute(&json!({ "action": "wait", "id": id, "wait_timeout_secs": 5 }))
+        .await
+        .unwrap();
+    assert_eq!(waited["status"], "completed");
+    assert_eq!(waited["exit_code"], 0);
+    let out = waited["output"].as_str().unwrap_or("");
+    assert!(out.contains("BG_BASH:1 2 3"), "unexpected output: {}", out);
+}

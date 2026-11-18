@@ -360,7 +360,8 @@ pub(super) async fn start_task(state: &Arc<BgState>, args: &Value) -> Result<Val
     }
 
     let cmd_str = cmd.to_string();
-    let mut command = tokio::process::Command::new("sh");
+    let shell = crate::tools::resolve_command_shell();
+    let mut command = tokio::process::Command::new(&shell);
     command
         .arg("-c")
         .arg(&cmd_str)
@@ -379,7 +380,7 @@ pub(super) async fn start_task(state: &Arc<BgState>, args: &Value) -> Result<Val
     #[cfg(unix)]
     {
         // Jalankan di process group tersendiri agar `kill`/timeout juga mematikan seluruh
-        // subprocess turunan yang di-fork oleh `sh -c`.
+        // subprocess turunan yang di-fork oleh `bash -c` / `sh -c`.
         command.process_group(0);
     }
 
@@ -904,7 +905,8 @@ pub(super) fn signal_process_group(pgid: u32, force_kill: bool) {
             .unwrap_or(false);
 
         if !ok {
-            let _ = std::process::Command::new("sh")
+            let shell = crate::tools::resolve_command_shell();
+            let _ = std::process::Command::new(shell)
                 .args([
                     "-c",
                     &format!("kill -{} -- -{} 2>/dev/null || kill -{} -{} 2>/dev/null || true", sig_name, pgid, sig_name, pgid),

@@ -120,6 +120,104 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 // run_shell
 // ---------------------------------------------------------------------------
 
+const TERMUX_DEFAULT_PREFIX: &str = "/data/data/com.termux/files/usr";
+const TERMUX_DEFAULT_BASH: &str = "/data/data/com.termux/files/usr/bin/bash";
+
+/// Tentukan binary shell untuk mengeksekusi perintah agen dengan preferensi `bash`
+/// (`/data/data/com.termux/files/usr/bin/bash` atau `$PREFIX/bin/bash` di Termux, `/bin/bash`
+/// di Linux standar) agar fitur seperti `time`, `history`, `[[ ... ]]`, `set -o pipefail`,
+/// array, dan brace expansion bekerja; fallback ke `sh` jika `bash` tidak tersedia.
+pub fn resolve_command_shell_with<F>(
+    env_oopbot_shell: Option<&str>,
+    env_shell: Option<&str>,
+    env_prefix: Option<&str>,
+    env_path: Option<&str>,
+    exists: F,
+) -> String
+where
+    F: Fn(&str) -> bool,
+{
+    if let Some(custom) = env_oopbot_shell.map(str::trim).filter(|s| !s.is_empty()) {
+        if !custom.contains('/') || exists(custom) {
+            return custom.to_string();
+        }
+    }
+
+    if let Some(sh) = env_shell.map(str::trim).filter(|s| !s.is_empty()) {
+        if (sh == "bash" || sh.ends_with("/bash")) && (!sh.contains('/') || exists(sh)) {
+            return sh.to_string();
+        }
+    }
+
+    if let Some(prefix) = env_prefix
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_end_matches('/'))
+    {
+        let bash_in_prefix = format!("{}/bin/bash", prefix);
+        if exists(&bash_in_prefix) {
+            return bash_in_prefix;
+        }
+    }
+
+    if exists(TERMUX_DEFAULT_BASH) {
+        return TERMUX_DEFAULT_BASH.to_string();
+    }
+
+    for candidate in ["/bin/bash", "/usr/bin/bash"] {
+        if exists(candidate) {
+            return candidate.to_string();
+        }
+    }
+
+    if let Some(path_var) = env_path {
+        for dir in std::env::split_paths(path_var) {
+            let candidate = dir.join("bash");
+            let cand_str = candidate.to_string_lossy();
+            if exists(&cand_str) {
+                return cand_str.into_owned();
+            }
+        }
+    }
+
+    if let Some(prefix) = env_prefix
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_end_matches('/'))
+    {
+        let sh_in_prefix = format!("{}/bin/sh", prefix);
+        if exists(&sh_in_prefix) {
+            return sh_in_prefix;
+        }
+    }
+
+    let termux_sh = format!("{}/bin/sh", TERMUX_DEFAULT_PREFIX);
+    if exists(&termux_sh) {
+        return termux_sh;
+    }
+
+    if exists("/bin/sh") {
+        return "/bin/sh".to_string();
+    }
+
+    "sh".to_string()
+}
+
+/// Resolusi shell runtime untuk `run_shell` dan `background`.
+pub fn resolve_command_shell() -> String {
+    let oopbot_shell = std::env::var("OOPBOT_SHELL").ok();
+    let env_shell = std::env::var("SHELL").ok();
+    let env_prefix = std::env::var("PREFIX").ok();
+    let env_path = std::env::var("PATH").ok();
+    resolve_command_shell_with(
+        oopbot_shell.as_deref(),
+        env_shell.as_deref(),
+        env_prefix.as_deref(),
+        env_path.as_deref(),
+        |p| std::path::Path::new(p).is_file(),
+    )
+}
+
 pub struct RunShell;
 
 #[async_trait]
@@ -128,14 +226,15 @@ impl Tool for RunShell {
         "run_shell"
     }
     fn description(&self) -> &'static str {
-        "Jalankan perintah shell (sh -c) di perangkat user (Termux/Android) pada direktori kerja saat ini. \
+        "Jalankan perintah shell (bash -c di Termux/Linux, fallback sh -c) di perangkat user pada direktori kerja saat ini. \
+         Mendukung fitur bash seperti `time`, `[[ ... ]]`, `pipefail`, `history`, dan array. \
          Mengembalikan exit_code, stdout, dan stderr. Paket Termux bisa dipasang dengan `pkg install -y <nama>`."
     }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "Perintah shell yang akan dijalankan." },
+                "command": { "type": "string", "description": "Perintah shell (bash) yang akan dijalankan." },
                 "timeout_secs": { "type": "integer", "description": "Batas waktu detik (default 60, maks 600)." }
             },
             "required": ["command"]
@@ -155,9 +254,9 @@ impl Tool for RunShell {
     async fn execute(&self, args: &Value) -> Result<Value, String> {
         let command = str_arg(args, "command")?;
         let timeout = args["timeout_secs"].as_u64().unwrap_or(60).clamp(1, 600);
+        let shell = resolve_command_shell();
 
-        // "sh" dicari via PATH: di Termux ini $PREFIX/bin/sh, bukan /bin/sh.
-        let child = tokio::process::Command::new("sh")
+        let child = tokio::process::Command::new(&shell)
             .arg("-c")
             .arg(command)
             .stdin(Stdio::null())
@@ -165,7 +264,7 @@ impl Tool for RunShell {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| format!("gagal menjalankan sh: {}", e))?;
+            .map_err(|e| format!("gagal menjalankan {}: {}", shell, e))?;
 
         match tokio::time::timeout(Duration::from_secs(timeout), child.wait_with_output()).await {
             Err(_) => Err(format!("timeout setelah {} detik", timeout)),
@@ -236,16 +335,17 @@ pub fn is_dangerous_shell_command(cmd: &str) -> bool {
             continue;
         }
 
-        // Lewati command wrapper seperti sudo, doas, busybox, toybox, exec, command
-        let mut base_cmd = words[idx];
-        if ["sudo", "doas", "busybox", "toybox", "exec", "command", "builtin"].contains(&base_cmd) {
+        // Lewati command wrapper seperti sudo, doas, busybox, toybox, exec, command, time
+        while idx < words.len()
+            && ["sudo", "doas", "busybox", "toybox", "exec", "command", "builtin", "time"]
+                .contains(&words[idx])
+        {
             idx += 1;
-            if idx < words.len() {
-                base_cmd = words[idx];
-            } else {
-                continue;
-            }
         }
+        if idx >= words.len() {
+            continue;
+        }
+        let base_cmd = words[idx];
 
         let base_cmd_name = std::path::Path::new(base_cmd)
             .file_name()
@@ -630,6 +730,7 @@ mod tests {
             "fastboot flash boot boot.img",
             "echo test > /dev/sda",
             "cargo build && rm -rf /tmp/build",
+            "time rm -rf /tmp/build",
         ];
 
         let shell_tool = RunShell;
@@ -645,5 +746,79 @@ mod tests {
                 cmd
             );
         }
+    }
+
+    #[test]
+    fn resolve_command_shell_prefers_termux_bash_and_falls_back_cleanly() {
+        // 1. Termux normal: ignores non-bash $SHELL (e.g. zsh) and selects $PREFIX/bin/bash
+        let picked = resolve_command_shell_with(
+            None,
+            Some("/data/data/com.termux/files/usr/bin/zsh"),
+            Some("/data/data/com.termux/files/usr"),
+            Some("/data/data/com.termux/files/usr/bin:/system/bin"),
+            |p| {
+                matches!(
+                    p,
+                    "/data/data/com.termux/files/usr/bin/zsh"
+                        | "/data/data/com.termux/files/usr/bin/bash"
+                        | "/data/data/com.termux/files/usr/bin/sh"
+                )
+            },
+        );
+        assert_eq!(picked, "/data/data/com.termux/files/usr/bin/bash");
+
+        // 2. Termux stripped env without PREFIX still finds /data/data/com.termux/files/usr/bin/bash
+        let picked_no_prefix = resolve_command_shell_with(
+            None,
+            None,
+            None,
+            None,
+            |p| p == TERMUX_DEFAULT_BASH || p == "/bin/sh",
+        );
+        assert_eq!(picked_no_prefix, TERMUX_DEFAULT_BASH);
+
+        // 3. Explicit OOPBOT_SHELL override wins when valid
+        let override_sh = resolve_command_shell_with(
+            Some("/custom/bin/bash"),
+            None,
+            Some("/data/data/com.termux/files/usr"),
+            None,
+            |p| p == "/custom/bin/bash" || p == TERMUX_DEFAULT_BASH,
+        );
+        assert_eq!(override_sh, "/custom/bin/bash");
+
+        // 4. Standard Linux /bin/bash
+        let linux_bash = resolve_command_shell_with(
+            None,
+            Some("/bin/sh"),
+            None,
+            Some("/usr/local/bin:/usr/bin:/bin"),
+            |p| p == "/bin/bash" || p == "/bin/sh",
+        );
+        assert_eq!(linux_bash, "/bin/bash");
+
+        // 5. Fallback to sh when bash does not exist anywhere
+        let fallback_sh = resolve_command_shell_with(
+            None,
+            None,
+            None,
+            Some("/bin"),
+            |p| p == "/bin/sh",
+        );
+        assert_eq!(fallback_sh, "/bin/sh");
+    }
+
+    #[tokio::test]
+    async fn run_shell_supports_bash_builtins_time_history_and_arrays() {
+        let res = RunShell
+            .execute(&json!({
+                "command": "set -o pipefail; arr=(alpha beta); [[ ${arr[1]} == beta ]] && history >/dev/null && time echo OK:{1..2} \"${arr[*]}\""
+            }))
+            .await
+            .unwrap();
+        assert_eq!(res["exit_code"], 0, "stderr: {}", res["stderr"]);
+        assert_eq!(res["stdout"], "OK:1 OK:2 alpha beta\n");
+        let stderr = res["stderr"].as_str().unwrap_or("");
+        assert!(stderr.contains("real"), "expected `time` builtin timing in stderr, got: {}", stderr);
     }
 }

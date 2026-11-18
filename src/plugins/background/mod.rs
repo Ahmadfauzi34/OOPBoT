@@ -147,7 +147,7 @@ impl Tool for BackgroundTool {
     }
 
     fn description(&self) -> &'static str {
-        "Jalankan dan kelola proses shell di latar belakang (`start`, `list`, `output`, `wait`, `kill`, `clear`)."
+        "Jalankan dan kelola proses shell (bash -c di Termux/Linux, fallback sh -c) di latar belakang (`start`, `list`, `output`, `wait`, `kill`, `clear`)."
     }
 
     fn parameters(&self) -> Value {
