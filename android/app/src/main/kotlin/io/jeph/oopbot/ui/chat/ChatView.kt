@@ -9,6 +9,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateSetOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import io.jeph.oopbot.agent.AgentProcess
 import io.jeph.oopbot.agent.AgentRegistry
@@ -231,17 +232,29 @@ internal fun PersistChatView(process: AgentProcess, views: ChatViews, view: Chat
   }
 }
 
-/** Saves the top visible item key and offset in [view] whenever [listState] settles after a scroll. */
+/** Saves [view] scroll position on settle and disposal, returning kept markdown cache keys when disposed. */
 @Composable
-internal fun PersistStreamScroll(listState: LazyListState, view: ChatView) {
+internal fun PersistStreamScroll(listState: LazyListState, view: ChatView, keptMarkdown: () -> Set<String>) {
+  val latestKept = rememberUpdatedState(keptMarkdown)
+  DisposableEffect(listState, view) {
+    onDispose {
+      view.scroll.top = listState.topPosition()
+      view.onSave?.invoke()
+      view.markdown.keepShown(latestKept.value())
+    }
+  }
   LaunchedEffect(listState, view) {
     snapshotFlow { listState.isScrollInProgress }
       .drop(1)
       .filter { !it }
-      .collect {
-        val first = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == listState.firstVisibleItemIndex }
-        view.scroll.top = first?.let { StreamTop(it.key, listState.firstVisibleItemScrollOffset) }
+      .collect { _ ->
+        view.scroll.top = listState.topPosition()
         view.onSave?.invoke()
       }
   }
+}
+
+private fun LazyListState.topPosition(): StreamTop? {
+  val first = layoutInfo.visibleItemsInfo.firstOrNull { item -> item.index == firstVisibleItemIndex } ?: return null
+  return StreamTop(first.key, firstVisibleItemScrollOffset)
 }

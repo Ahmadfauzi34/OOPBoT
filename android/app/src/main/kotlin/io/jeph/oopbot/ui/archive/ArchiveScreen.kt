@@ -99,7 +99,7 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
     if (page.selected.isNotEmpty()) page.keepSelected(archived.map { it.session.path }.toSet())
   }
   BackHandler(enabled = page.selected.isNotEmpty()) { page.selected = emptySet() }
-  val contentMatches = page.rememberContentMatches(archived, query)
+  val contentMatches = page.rememberContentMatches(archived, query, graph.sessionRepository)
   val shown = remember(archived, query, names, contentMatches) { page.filter(archived, query, names, contentMatches) }
   val selectedSessions = remember(archived, page.selected) {
     if (page.selected.isEmpty()) emptyList() else archived.map { it.session }.filter { it.path in page.selected }
@@ -146,7 +146,6 @@ internal fun ArchiveScreen(actions: ShellActions, onBack: () -> Unit, onOpenChat
  */
 private class ArchivePage(
   private val actions: ShellActions,
-  private val repository: SessionRepository,
   private val appScope: CoroutineScope,
   private val screenScope: CoroutineScope,
   private val resources: Resources,
@@ -163,10 +162,14 @@ private class ArchivePage(
     private set
 
   @Composable
-  fun rememberContentMatches(archived: List<ArchivedSession>, query: String): Set<String> {
+  fun rememberContentMatches(
+    archived: List<ArchivedSession>,
+    query: String,
+    repository: SessionRepository,
+  ): Set<String> {
     var result by remember { mutableStateOf("" to emptySet<String>()) }
     val trimmed = query.trim()
-    LaunchedEffect(archived, trimmed) {
+    LaunchedEffect(archived, trimmed, repository) {
       if (trimmed.isEmpty() || archived.isEmpty()) {
         result = "" to emptySet()
         return@LaunchedEffect
@@ -234,13 +237,12 @@ private class ArchivePage(
 /** An [ArchivePage] whose selection survives configuration changes. */
 @Composable
 private fun rememberArchivePage(actions: ShellActions): ArchivePage {
-  val graph = LocalContext.current.appGraph
-  val appScope = graph.scope
+  val appScope = LocalContext.current.appGraph.scope
   val screenScope = rememberCoroutineScope()
   val resources = LocalResources.current
   val genericError = stringResource(R.string.shell_error_generic)
   val create = { selected: Set<String> ->
-    ArchivePage(actions, graph.sessionRepository, appScope, screenScope, resources, genericError, selected)
+    ArchivePage(actions, appScope, screenScope, resources, genericError, selected)
   }
   return rememberSaveable(saver = listSaver(save = { it.selected.toList() }, restore = { create(it.toSet()) })) {
     create(emptySet())

@@ -25,7 +25,7 @@ class PreferencesMigrationTest {
         "archivedSessions" to """{"/s/1.jsonl":1000,"/s/2.jsonl":2000}""",
         "touchedSessions" to """{"/s/3.jsonl":3000}""",
         "explorerTabs" to """{"/w/a":"Files","/w/b":"UnknownTab"}""",
-        "diffModes" to """{"/w/a":"Branch"}""",
+        "diffModes" to """{"/w/a":"Base"}""",
         "trustedRepositories" to """["/w/a"]""",
         "remoteHosts" to """[{"id":"r1","name":"box"}]""",
         "theme" to "Cobalt",
@@ -40,7 +40,7 @@ class PreferencesMigrationTest {
       assertEquals(mapOf("/s/1.jsonl" to 1000L, "/s/2.jsonl" to 2000L), prefs.archivedSessions.value)
       assertEquals(mapOf("/s/3.jsonl" to 3000L), prefs.touchedSessions.value)
       assertEquals(mapOf("/w/a" to ExplorerTab.Files), prefs.explorerTabs.value)
-      assertEquals(mapOf("/w/a" to GitDiffMode.Branch), prefs.diffModes.value)
+      assertEquals(mapOf("/w/a" to GitDiffMode.Base), prefs.diffModes.value)
       assertEquals(setOf("/w/a"), prefs.trustedRepositories.value)
       assertEquals("""[{"id":"r1","name":"box"}]""", prefs.remoteHostsCache())
 

@@ -60,18 +60,18 @@ internal class NoticeStore(
     }
   }
 
-  private fun loadFromStorage(sessionPath: String): List<SavedNotice> {
-    if (db != null) {
-      val stored = db.notices.load(sessionPath)
-      if (stored.isNotEmpty()) return stored
-      val legacyFile = fileOf(sessionPath) ?: return emptyList()
-      if (!legacyFile.exists()) return emptyList()
-      val migrated = readFile(legacyFile)
-      if (migrated.isNotEmpty()) db.notices.replace(sessionPath, migrated)
-      deleteLegacyFile(legacyFile)
-      return migrated
-    }
-    return fileOf(sessionPath)?.let(::readFile).orEmpty()
+  private fun loadFromStorage(sessionPath: String): List<SavedNotice> =
+    if (db != null) loadFromDb(sessionPath) else fileOf(sessionPath)?.let(::readFile).orEmpty()
+
+  private fun loadFromDb(sessionPath: String): List<SavedNotice> {
+    val database = db ?: return emptyList()
+    val stored = database.notices.load(sessionPath)
+    if (stored.isNotEmpty()) return stored
+    val legacyFile = fileOf(sessionPath)?.takeIf(File::exists) ?: return emptyList()
+    val migrated = readFile(legacyFile)
+    if (migrated.isNotEmpty()) database.notices.replace(sessionPath, migrated)
+    deleteLegacyFile(legacyFile)
+    return migrated
   }
 
   private fun writePersisted(sessionPath: String, notices: List<SavedNotice>) {

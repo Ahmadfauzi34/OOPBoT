@@ -18,8 +18,7 @@ internal object TranscriptIndexer {
     val sb = StringBuilder()
     for (index in 0 until messages.length()) {
       if (sb.length >= MAX_BODY_CHARS) break
-      val message = messages.optJSONObject(index) ?: continue
-      appendMessage(sb, message)
+      messages.optJSONObject(index)?.let { message -> appendMessage(sb, message) }
     }
     return sb.toString().trim()
   }
@@ -64,26 +63,29 @@ internal object TranscriptIndexer {
     val blocks = message.optJSONArray("content")
     if (blocks != null) {
       for (index in 0 until blocks.length()) {
-        val block = blocks.optJSONObject(index) ?: continue
-        when (block.optString("type")) {
-          "text" -> appendChunk(sb, block.optString("text"))
-
-          "thinking" -> appendChunk(sb, block.optString("thinking"))
-
-          "toolCall" -> {
-            appendChunk(sb, block.optString("name"))
-            val args = block.optJSONObject("arguments")
-            if (args != null) {
-              if (!args.isNull("command")) appendChunk(sb, args.optString("command"))
-              if (!args.isNull("path")) appendChunk(sb, args.optString("path"))
-            }
-          }
-        }
+        blocks.optJSONObject(index)?.let { block -> appendAssistantBlock(sb, block) }
       }
     }
     if (message.optString("stopReason") == "error" && !message.isNull("errorMessage")) {
       appendChunk(sb, message.optString("errorMessage"))
     }
+  }
+
+  private fun appendAssistantBlock(sb: StringBuilder, block: JSONObject) {
+    when (block.optString("type")) {
+      "text" -> appendChunk(sb, block.optString("text"))
+
+      "thinking" -> appendChunk(sb, block.optString("thinking"))
+
+      "toolCall" -> appendToolCall(sb, block)
+    }
+  }
+
+  private fun appendToolCall(sb: StringBuilder, block: JSONObject) {
+    appendChunk(sb, block.optString("name"))
+    val args = block.optJSONObject("arguments") ?: return
+    if (!args.isNull("command")) appendChunk(sb, args.optString("command"))
+    if (!args.isNull("path")) appendChunk(sb, args.optString("path"))
   }
 
   private fun blocksText(blocks: JSONArray): String = buildString {

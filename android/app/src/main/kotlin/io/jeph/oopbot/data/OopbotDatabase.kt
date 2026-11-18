@@ -12,7 +12,7 @@ import java.util.concurrent.Executors
 internal class OopbotDatabase(
   val db: SqlDb,
   val writer: Executor = defaultWriter(),
-  private val clock: () -> Long = System::currentTimeMillis,
+  clock: () -> Long = System::currentTimeMillis,
 ) : AutoCloseable {
   val prefs = PrefsDbStore(db, ::enqueueWrite)
   val notices = NoticesDbStore(db)

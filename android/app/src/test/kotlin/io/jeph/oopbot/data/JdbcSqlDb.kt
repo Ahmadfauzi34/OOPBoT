@@ -30,44 +30,38 @@ internal class JdbcSqlDb(file: File? = null) : SqlDb {
 
   fun pragmaString(name: String): String = queryOne("PRAGMA $name") { it.string(0) }.orEmpty()
 
-  override fun exec(sql: String, args: Array<Any?>) {
-    synchronized(lock) {
-      try {
-        conn.prepareStatement(sql).use { stmt ->
-          bindArgs(stmt, args)
-          stmt.execute()
-        }
-      } catch (error: SQLException) {
-        throw OopbotSqlException(error.message, error)
+  override fun exec(sql: String, args: Array<Any?>) = synchronized(lock) {
+    runSql {
+      conn.prepareStatement(sql).use { stmt ->
+        bindArgs(stmt, args)
+        stmt.execute()
       }
     }
+    Unit
   }
 
   override fun <T> query(sql: String, args: Array<Any?>, mapper: (SqlCursor) -> T): List<T> = synchronized(lock) {
-    try {
-      conn.prepareStatement(sql).use { stmt ->
-        bindArgs(stmt, args)
-        stmt.executeQuery().use { rs ->
-          val cursor = JdbcCursor(rs)
-          buildList { while (rs.next()) add(mapper(cursor)) }
-        }
-      }
-    } catch (error: SQLException) {
-      throw OopbotSqlException(error.message, error)
+    executeQuery(sql, args) { rs ->
+      val cursor = JdbcCursor(rs)
+      buildList { while (rs.next()) add(mapper(cursor)) }
     }
   }
 
   override fun <T> queryOne(sql: String, args: Array<Any?>, mapper: (SqlCursor) -> T): T? = synchronized(lock) {
-    try {
-      conn.prepareStatement(sql).use { stmt ->
-        bindArgs(stmt, args)
-        stmt.executeQuery().use { rs ->
-          if (rs.next()) mapper(JdbcCursor(rs)) else null
-        }
-      }
-    } catch (error: SQLException) {
-      throw OopbotSqlException(error.message, error)
+    executeQuery(sql, args) { rs -> if (rs.next()) mapper(JdbcCursor(rs)) else null }
+  }
+
+  private inline fun <T> executeQuery(sql: String, args: Array<Any?>, read: (ResultSet) -> T): T = runSql {
+    conn.prepareStatement(sql).use { stmt ->
+      bindArgs(stmt, args)
+      stmt.executeQuery().use(read)
     }
+  }
+
+  private inline fun <T> runSql(block: () -> T): T = try {
+    block()
+  } catch (error: SQLException) {
+    throw OopbotSqlException(error.message, error)
   }
 
   override fun <T> transaction(block: SqlDb.() -> T): T = synchronized(lock) {
