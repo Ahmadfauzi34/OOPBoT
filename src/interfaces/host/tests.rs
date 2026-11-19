@@ -1874,7 +1874,7 @@ async fn gate_host_engine_install_supports_flat_twin_binary_archive_and_termux_p
 #[tokio::test]
 async fn gate_host_engine_login_emits_auth_url_and_manual_code_prompt_and_marks_authenticated() {
     use std::io::{BufRead, BufReader, BufWriter, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpStream;
     use std::os::unix::fs::PermissionsExt;
 
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1909,13 +1909,15 @@ async fn gate_host_engine_login_emits_auth_url_and_manual_code_prompt_and_marks_
     };
     crate::config::save_engine_manifest(&config_dir, &manifest).unwrap();
 
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let cfg_clone = config_dir.clone();
     let pref_clone = prefix_dir.clone();
     let server_handle = tokio::spawn(async move {
-        let (stream, _) = listener.accept().unwrap();
+        let (tokio_stream, _) = listener.accept().await.unwrap();
+        let stream = tokio_stream.into_std().unwrap();
+        stream.set_nonblocking(false).unwrap();
         let write_stream = stream.try_clone().unwrap();
         handle_engine_login_mode(
             json!({ "engineId": "antigravity", "loginArgs": ["acp", "--login"] }),
@@ -1928,44 +1930,58 @@ async fn gate_host_engine_login_emits_auth_url_and_manual_code_prompt_and_marks_
         .unwrap();
     });
 
-    let client = TcpStream::connect(addr).unwrap();
-    let mut client_writer = BufWriter::new(client.try_clone().unwrap());
-    let mut client_reader = BufReader::new(client);
+    let client_task = tokio::task::spawn_blocking(move || {
+        let client = TcpStream::connect(addr).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut client_writer = BufWriter::new(client.try_clone().unwrap());
+        let mut client_reader = BufReader::new(client);
 
-    let mut saw_url = false;
-    let mut saw_prompt = false;
-    let mut saw_ok = false;
-    let mut line = String::new();
-    while client_reader.read_line(&mut line).unwrap() > 0 {
-        let msg: Value = serde_json::from_str(line.trim()).unwrap();
-        match msg["type"].as_str() {
-            Some("oopbot_auth_url") => {
-                assert_eq!(msg["url"], "https://antigravity.google/oauth/mock");
-                saw_url = true;
+        let mut saw_url = false;
+        let mut saw_prompt = false;
+        let mut saw_ok = false;
+        let mut line = String::new();
+        while client_reader.read_line(&mut line).unwrap() > 0 {
+            let msg: Value = serde_json::from_str(line.trim()).unwrap();
+            match msg["type"].as_str() {
+                Some("oopbot_auth_url") => {
+                    assert_eq!(msg["url"], "https://antigravity.google/oauth/mock");
+                    saw_url = true;
+                }
+                Some("oopbot_auth_prompt") => {
+                    assert_eq!(msg["prompt"]["type"], "manual_code");
+                    saw_prompt = true;
+                    let reply = json!({
+                        "type": "oopbot_auth_response",
+                        "id": msg["id"],
+                        "value": "4/0AUn6MockCode"
+                    });
+                    writeln!(client_writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                    client_writer.flush().unwrap();
+                }
+                Some("oopbot_result") => {
+                    assert_eq!(msg["ok"], true);
+                    assert_eq!(msg["data"]["authenticated"], true);
+                    saw_ok = true;
+                    break;
+                }
+                _ => {}
             }
-            Some("oopbot_auth_prompt") => {
-                assert_eq!(msg["prompt"]["type"], "manual_code");
-                saw_prompt = true;
-                let reply = json!({
-                    "type": "oopbot_auth_response",
-                    "id": msg["id"],
-                    "value": "4/0AUn6MockCode"
-                });
-                writeln!(client_writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
-                client_writer.flush().unwrap();
-            }
-            Some("oopbot_result") => {
-                assert_eq!(msg["ok"], true);
-                assert_eq!(msg["data"]["authenticated"], true);
-                saw_ok = true;
-                break;
-            }
-            _ => {}
+            line.clear();
         }
-        line.clear();
-    }
+        (saw_url, saw_prompt, saw_ok)
+    });
 
-    server_handle.await.unwrap();
+    let (saw_url, saw_prompt, saw_ok) =
+        tokio::time::timeout(std::time::Duration::from_secs(15), client_task)
+            .await
+            .expect("client timed out")
+            .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), server_handle)
+        .await
+        .expect("server timed out")
+        .unwrap();
     assert!(saw_url && saw_prompt && saw_ok);
 
     let list_after = handle_engine_list(&config_dir, &prefix_dir, home_dir.to_str().unwrap());

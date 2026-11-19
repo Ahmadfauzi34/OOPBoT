@@ -941,6 +941,8 @@ pub(super) async fn handle_engine_login_mode(
 
     let mut sent_url = false;
     let mut prompt_id: u64 = 0;
+    let mut sent_response = false;
+    let mut android_closed = false;
     let mut cancelled = false;
     let mut last_lines: Vec<String> = Vec::new();
 
@@ -981,11 +983,12 @@ pub(super) async fn handle_engine_login_mode(
                     None => break,
                 }
             }
-            maybe_android = android_rx.recv() => {
-                if let Some(msg) = maybe_android {
-                    match msg["type"].as_str() {
+            maybe_android = android_rx.recv(), if !android_closed => {
+                match maybe_android {
+                    Some(msg) => match msg["type"].as_str() {
                         Some("oopbot_auth_response") => {
                             if let Some(code) = msg["value"].as_str() {
+                                sent_response = true;
                                 if let Some(stdin) = child_stdin.as_mut() {
                                     let _ = stdin.write_all(format!("{}\n", code.trim()).as_bytes()).await;
                                     let _ = stdin.flush().await;
@@ -998,6 +1001,14 @@ pub(super) async fn handle_engine_login_mode(
                             break;
                         }
                         _ => {}
+                    }
+                    None => {
+                        android_closed = true;
+                        if !sent_response {
+                            cancelled = true;
+                            let _ = child.start_kill();
+                            break;
+                        }
                     }
                 }
             }
