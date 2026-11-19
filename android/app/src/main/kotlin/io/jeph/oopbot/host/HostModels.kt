@@ -234,6 +234,39 @@ internal class AuthReply(private val channel: HostChannel, val id: Long) {
   }
 }
 
+/** Status of an external CLI agent engine (ACP) reported by the host's `engine_list` utility op. */
+internal data class ExternalEngineInfo(
+  val id: String,
+  val selector: String,
+  val displayName: String,
+  val subtitle: String,
+  val protocol: String,
+  val githubRepo: String,
+  val installed: Boolean,
+  val installedVersion: String?,
+  val command: String?,
+  val requiresTermuxGlibc: Boolean,
+  val glibcReady: Boolean,
+  val authenticated: Boolean,
+) {
+  companion object {
+    fun from(json: JSONObject) = ExternalEngineInfo(
+      id = json.getString("id"),
+      selector = json.optString("selector", "acp:${json.getString("id")}"),
+      displayName = json.optString("displayName", json.getString("id")),
+      subtitle = json.optString("subtitle"),
+      protocol = json.optString("protocol", "acp"),
+      githubRepo = json.optString("githubRepo"),
+      installed = json.optBoolean("installed"),
+      installedVersion = (json.opt("installedVersion") as? String)?.takeIf { it.isNotEmpty() },
+      command = (json.opt("command") as? String)?.takeIf { it.isNotEmpty() },
+      requiresTermuxGlibc = json.optBoolean("requiresTermuxGlibc"),
+      glibcReady = json.optBoolean("glibcReady", true),
+      authenticated = json.optBoolean("authenticated"),
+    )
+  }
+}
+
 internal fun JSONArray?.objects(): List<JSONObject> =
   if (this == null) emptyList() else List(length()) { getJSONObject(it) }
 

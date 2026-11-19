@@ -4,6 +4,7 @@
 //! (terminal CLI, JSONL RPC, TCP host bridge, atau C-ABI/JNI FFI) ke layer inti
 //! (`agent`, `plugins`, `tools`, `config`, `llm`).
 
+pub mod acp;
 pub mod cli;
 pub mod ffi;
 pub mod host;

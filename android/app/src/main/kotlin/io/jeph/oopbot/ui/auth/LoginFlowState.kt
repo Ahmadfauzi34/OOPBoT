@@ -68,6 +68,19 @@ internal class LoginFlowState : LoginUi {
     prompt = null
   }
 
+  /** Runs an external ACP engine's interactive OAuth/CLI sign-in to completion. */
+  suspend fun runEngine(accounts: AccountRepository, engineId: String) {
+    outcome = try {
+      accounts.loginEngine(engineId, this)
+      LoginOutcome.SignedIn
+    } catch (failure: IOException) {
+      LoginOutcome.Failed(failure.message)
+    } catch (rejected: HostRejected) {
+      LoginOutcome.Failed(rejected.error)
+    }
+    prompt = null
+  }
+
   override fun onEvent(event: JSONObject) {
     when (event.optString("type")) {
       "auth_url" -> browser = BrowserStep(event.optString("url"), event.optionalString("instructions"))

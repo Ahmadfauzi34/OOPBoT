@@ -123,7 +123,7 @@ internal fun LoginSheet(providerId: String, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun LoginBody(flow: LoginFlowState, usesApiKey: Boolean, onOpen: (String) -> Unit, onRetry: () -> Unit) {
+internal fun LoginBody(flow: LoginFlowState, usesApiKey: Boolean, onOpen: (String) -> Unit, onRetry: () -> Unit) {
   val colors = oopbotColors
   when (val outcome = flow.outcome) {
     LoginOutcome.SignedIn -> LeadingRow(
@@ -287,7 +287,7 @@ private val CODE_RADIUS = 14.dp
 private val CODE_SIZE = 24.sp
 private val CODE_TRACKING = 0.08.em
 
-private fun openUrl(context: Context, url: String): Boolean = try {
+internal fun openUrl(context: Context, url: String): Boolean = try {
   context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
   true
 } catch (_: ActivityNotFoundException) {

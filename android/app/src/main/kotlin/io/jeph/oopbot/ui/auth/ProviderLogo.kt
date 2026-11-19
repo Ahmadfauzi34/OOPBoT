@@ -21,6 +21,7 @@ internal fun ProviderLogo(providerId: String, modifier: Modifier = Modifier) {
     "zai" -> R.drawable.ic_brand_zai
     "kimi-coding" -> R.drawable.ic_brand_kimi
     "openrouter" -> R.drawable.ic_brand_openrouter
+    "antigravity", "acp:antigravity" -> R.drawable.ic_lucide_bot
     else -> return
   }
   LucideIcon(

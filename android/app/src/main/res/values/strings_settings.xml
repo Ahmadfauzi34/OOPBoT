@@ -43,6 +43,30 @@
     <string name="providers_compatible">OpenAI-compatible API</string>
     <string name="providers_compatible_subtitle">Any endpoint that speaks the OpenAI API, hosted or local</string>
     <string name="providers_added">Added</string>
+    <string name="engine_antigravity_title">Antigravity</string>
+    <string name="engine_antigravity_subtitle">Antigravity CLI via Termux (ACP)</string>
+    <string name="engine_status_active">Active</string>
+    <string name="engine_status_installed">Installed</string>
+    <string name="engine_status_not_installed">Not installed</string>
+    <string name="engine_status_signed_in">Signed in</string>
+    <string name="engine_status_sign_in_needed">Sign in needed</string>
+    <!-- %1$s: version string, such as "1.5.12". -->
+    <string name="engine_version_label">Version %1$s</string>
+    <string name="engine_install_caption">Downloads the Termux release binary and automatically sets up Termux glibc if needed.</string>
+    <string name="engine_install_button">Install</string>
+    <string name="engine_reinstall_button">Reinstall / Update</string>
+    <string name="engine_installing">Installing…</string>
+    <string name="engine_sign_in_button">Sign in</string>
+    <string name="engine_sign_in_again_button">Sign in again</string>
+    <string name="engine_use_for_new_chats">Use for new chats</string>
+    <string name="engine_using_for_new_chats">Active for new chats</string>
+    <string name="engine_switch_to_native">Switch back to OOPBoT native</string>
+    <string name="engine_uninstall_button">Uninstall</string>
+    <string name="engine_uninstalling">Uninstalling…</string>
+    <string name="engine_manual_command_hint">Or run this command in Termux, then try again:</string>
+    <string name="engine_copy_command">Copy command</string>
+    <string name="engine_install_failed">Installation failed.</string>
+    <string name="engine_uninstall_failed">Could not uninstall engine.</string>
 
     <string name="settings_reload_agents">Reload idle agents</string>
     <string name="settings_reload_agents_summary">Applies config folder changes to idle chats</string>
