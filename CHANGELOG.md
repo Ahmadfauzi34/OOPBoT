@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.15] - 2026-11-19
+
+### Changed
+- Reorganized Rust core (`src/`) into a strict 4-layer acyclic (DAG) module hierarchy: `common/`, `config/`, `llm/` (`LlmClient`), `tools/`, headless `agent/` (`AgentHarness`), `plugins/` (`todo/`, `web_access/`, `background/`), and `interfaces/` (`cli/`, `rpc/`, `host/`, `ffi/`), with slimmed `src/main.rs` dispatcher and synchronized `AGENTS.md` contracts ([#38](https://github.com/Ahmadfauzi34/OOPBoT/pull/38)).
+- Clarified `BackgroundPlugin` prompt guidelines to reserve `background` for long-running processes and use `run_shell` for short one-off commands ([#38](https://github.com/Ahmadfauzi34/OOPBoT/pull/38)).
+
+### Fixed
+- Isolated internal background auto-wakeups into a dedicated `wakeup_queue` separate from user `steering_queue`/`follow_up_queue` so system wakeups never leak into `queue_update` (Android `STEERING` card with `Edit`/`Send now`) or `clear_queue` ([#38](https://github.com/Ahmadfauzi34/OOPBoT/pull/38)).
+- Added race-safe auto-dismissal (`WakeupDismissNotifier` + `dismissed_bg_wakeups`) whenever finished background tasks are observed (`output`/`wait`/`list`) or cancelled (`kill`/`clear`/`shutdown_all`/`abort`/`background: stop`), eliminating delayed ghost wakeups from instant-failing tasks, guarded by regression gate tests ([#38](https://github.com/Ahmadfauzi34/OOPBoT/pull/38)).
+
 ## [0.5.14] - 2026-11-19
 
 ### Added
