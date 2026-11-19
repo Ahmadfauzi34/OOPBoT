@@ -69,6 +69,19 @@ impl AgentHarness {
 
         let Some(tool) = self.tools.get(&call.name) else {
             let err_val = json!({ "error": format!("tool '{}' tidak dikenal", call.name) });
+            // Tetap pancarkan ToolCallStart agar assistant(toolCall) dan toolResult selalu berpasangan di JSONL.
+            self.emit(
+                AgentEvent::ToolCallStart {
+                    step_index,
+                    call_id: call_id.clone(),
+                    tool_name: call.name.clone(),
+                    args: call.args.clone(),
+                    preview: call.name.clone(),
+                    requires_confirmation: false,
+                    thought_signature: call.thought_signature.clone(),
+                },
+                collector,
+            );
             self.emit(
                 AgentEvent::ToolCallEnd {
                     step_index,
@@ -94,6 +107,7 @@ impl AgentHarness {
                 args: call.args.clone(),
                 preview: preview.clone(),
                 requires_confirmation,
+                thought_signature: call.thought_signature.clone(),
             },
             collector,
         );
@@ -194,6 +208,29 @@ impl AgentHarness {
     pub async fn chat_turn_cancellable(
         &self,
         input: &ChatInput,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+        steer_hook: Option<SteerHook>,
+    ) -> Result<TurnOutcome, BoxError> {
+        self.run_turn_cancellable(input, true, cancel_rx, steer_hook)
+            .await
+    }
+
+    /// Lanjutkan giliran yang gagal di tengah langkah tool (saat retry) tanpa menduplikasi
+    /// pesan `user` awal yang sudah ter-commit bersama hasil tool & pesan `steer` ke `history`.
+    pub async fn continue_turn_cancellable(
+        &self,
+        input: &ChatInput,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+        steer_hook: Option<SteerHook>,
+    ) -> Result<TurnOutcome, BoxError> {
+        self.run_turn_cancellable(input, false, cancel_rx, steer_hook)
+            .await
+    }
+
+    async fn run_turn_cancellable(
+        &self,
+        input: &ChatInput,
+        push_initial_user: bool,
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
         steer_hook: Option<SteerHook>,
     ) -> Result<TurnOutcome, BoxError> {
@@ -203,17 +240,20 @@ impl AgentHarness {
             (s.id.clone(), s.model.clone(), s.history.clone())
         };
 
-        let user_msg = if input.images.is_empty() {
-            user_text(&input.text)
-        } else {
-            user_message_with_images(&input.text, &input.images)
-        };
-        history.push(user_msg);
+        if push_initial_user {
+            let user_msg = if input.images.is_empty() {
+                user_text(&input.text)
+            } else {
+                user_message_with_images(&input.text, &input.images)
+            };
+            history.push(user_msg);
+        }
 
         let decls = self.tools.declarations();
         let collector = MemoryEventCollector::new();
         let turn_started = Instant::now();
         let mut tool_steps = 0usize;
+        let mut committed_progress = !push_initial_user;
         let mut total_usage: Option<TokenUsage> = None;
         let mut last_usage: Option<TokenUsage> = None;
         let mut was_aborted = false;
@@ -251,6 +291,7 @@ impl AgentHarness {
                             user_message_with_images(&steer.text, &steer.images)
                         };
                         history.push(steer_msg);
+                        committed_progress = true;
                     }
                 }
                 if *cancel_rx.borrow() {
@@ -259,7 +300,7 @@ impl AgentHarness {
                 }
             }
 
-            let turn = tokio::select! {
+            let turn_res = tokio::select! {
                 biased;
                 _ = wait_cancelled(&mut cancel_rx) => {
                     was_aborted = true;
@@ -271,7 +312,25 @@ impl AgentHarness {
                     &history,
                     &decls,
                     &gen_options,
-                ) => res?,
+                ) => res,
+            };
+            let turn = match turn_res {
+                Ok(t) => t,
+                Err(e) => {
+                    // KONTRAK: bila langkah tool atau pesan `steer` sudah dieksekusi di giliran ini,
+                    // simpan `history` parsial ke sesi aktif agar konteks tidak hilang saat retry/error.
+                    if committed_progress {
+                        let events = collector.take_events();
+                        let folded = MemoryEventCollector::fold_turn(&input.text, &events);
+                        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+                        let active = tabs.active_mut();
+                        active.update_title_from_prompt(&input.text);
+                        active.history = history;
+                        active.timeline.extend(folded);
+                        self.persist_tabs(&tabs);
+                    }
+                    return Err(e);
+                }
             };
             history.push(turn.raw_content.clone());
 
@@ -282,11 +341,16 @@ impl AgentHarness {
                 last_usage = Some(u);
             }
 
-            for thought in &turn.thoughts {
+            for (idx, thought) in turn.thoughts.iter().enumerate() {
+                let thought_signature = turn
+                    .thought_signatures
+                    .get(idx)
+                    .and_then(|s| s.clone());
                 self.emit(
                     AgentEvent::Thinking {
                         step_index: step_idx,
                         text: thought.clone(),
+                        thought_signature,
                     },
                     &collector,
                 );
@@ -333,6 +397,7 @@ impl AgentHarness {
                     AgentEvent::Thinking {
                         step_index: step_idx,
                         text: turn.text.clone(),
+                        thought_signature: None,
                     },
                     &collector,
                 );
@@ -360,6 +425,7 @@ impl AgentHarness {
                 }
             }
             history.push(json!({ "role": "user", "parts": parts }));
+            committed_progress = true;
             if was_aborted {
                 break;
             }

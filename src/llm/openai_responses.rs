@@ -241,7 +241,12 @@ pub fn parse_openai_responses_turn(res_json: &Value) -> ModelTurn {
                             "args": args
                         }
                     }));
-                    function_calls.push(FunctionCall { id, name, args });
+                    function_calls.push(FunctionCall {
+                        id,
+                        name,
+                        args,
+                        thought_signature: None,
+                    });
                 }
                 _ => {}
             }
@@ -275,6 +280,7 @@ pub fn parse_openai_responses_turn(res_json: &Value) -> ModelTurn {
         })
     });
 
+    let thought_signatures = vec![None; thoughts.len()];
     ModelTurn {
         raw_content: json!({
             "role": "model",
@@ -282,6 +288,7 @@ pub fn parse_openai_responses_turn(res_json: &Value) -> ModelTurn {
         }),
         text,
         thoughts,
+        thought_signatures,
         function_calls,
         usage,
     }

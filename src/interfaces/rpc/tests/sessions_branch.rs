@@ -883,3 +883,345 @@ fn audit_compaction_cut_point_skips_missing_id_and_preserves_assistant_under_bud
     assert_eq!(cut_partial.to_summarize.len(), 2);
 }
 
+#[test]
+fn gate_corrupted_jsonl_line_recovers_prior_history_without_cross_branch_leak() {
+    let tmp = TempConfigGuard::new("rpc_gate_corrupt_jsonl");
+    let session_file = tmp.path().join("corrupt.jsonl");
+    let lines = [
+        json!({ "type": "session", "version": 3, "id": "s-corrupt", "timestamp": "2026-11-19T00:00:00Z", "cwd": tmp.path() }).to_string(),
+        json!({ "type": "message", "id": "e0", "parentId": null, "timestamp": "2026-11-19T00:00:01Z",
+            "message": { "role": "user", "content": "konteks-lama-1", "timestamp": 1 } }).to_string(),
+        json!({ "type": "message", "id": "e1", "parentId": "e0", "timestamp": "2026-11-19T00:00:02Z",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "jawaban-lama-1" }], "timestamp": 2 } }).to_string(),
+        // Baris e2 terpotong saat crash
+        "{\"type\":\"message\",\"id\":\"e2\",\"parentId\":\"e1\",\"message\":{\"role\":\"user\",\"content\":\"terpo".to_string(),
+        json!({ "type": "message", "id": "e3", "parentId": "e2", "timestamp": "2026-11-19T00:00:04Z",
+            "message": { "role": "user", "content": "konteks-baru-3", "timestamp": 4 } }).to_string(),
+        json!({ "type": "message", "id": "e4", "parentId": "e3", "timestamp": "2026-11-19T00:00:05Z",
+            "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "jawaban-baru-4" }], "timestamp": 5 } }).to_string(),
+    ];
+    std::fs::write(&session_file, format!("{}\n", lines.join("\n"))).unwrap();
+
+    let loaded = load_session_from_path(&session_file);
+    let llm_str = serde_json::to_string(&loaded.llm_history).unwrap();
+    assert!(llm_str.contains("konteks-lama-1"), "GATE: konteks sebelum baris korup wajib pulih");
+    assert!(llm_str.contains("jawaban-lama-1"), "GATE: jawaban sebelum baris korup wajib pulih");
+    assert!(llm_str.contains("konteks-baru-3"), "GATE: konteks setelah baris korup wajib pulih");
+    assert!(llm_str.contains("jawaban-baru-4"), "GATE: jawaban setelah baris korup wajib pulih");
+
+    // Pastikan sesi bercabang yang valid TIDAK tercampur antar-branch
+    let branched = vec![
+        json!({ "type": "message", "id": "r0", "parentId": null }),
+        json!({ "type": "message", "id": "a1", "parentId": "r0" }),
+        json!({ "type": "message", "id": "b1", "parentId": "r0" }),
+        json!({ "type": "message", "id": "b2", "parentId": "b1" }),
+    ];
+    let active = crate::interfaces::rpc::active_branch_entries(&branched, Some("b2"));
+    let ids: Vec<&str> = active.iter().filter_map(|e| e["id"].as_str()).collect();
+    assert_eq!(ids, vec!["r0", "b1", "b2"]);
+}
+
+#[test]
+fn gate_compaction_prompt_bounds_giant_tool_outputs_and_total_budget() {
+    use crate::interfaces::rpc::compaction::build_compaction_prompt;
+
+    let giant_out = format!("HEAD_MARKER_{}_TAIL_MARKER", "X".repeat(25_000));
+    let mut entries = Vec::new();
+    for i in 0..40 {
+        entries.push(json!({
+            "type": "message",
+            "id": format!("e{}", i),
+            "message": {
+                "role": "toolResult",
+                "toolName": "read",
+                "content": [{ "type": "text", "text": format!("entry-{}: {}", i, giant_out) }]
+            }
+        }));
+    }
+
+    let prompt = build_compaction_prompt(&entries, Some("Ringkasan sebelumnya"), None);
+    assert!(
+        prompt.chars().count() <= 125_000,
+        "GATE: prompt compaction tidak boleh membengkak melampaui budget ({} chars)",
+        prompt.chars().count()
+    );
+    assert!(prompt.contains("HEAD_MARKER_"), "bagian awal output tool harus tetap terjaga");
+    assert!(prompt.contains("_TAIL_MARKER"), "bagian akhir output tool harus tetap terjaga");
+    assert!(prompt.contains("entry-39:"), "entri paling baru harus tetap masuk ringkasan");
+}
+
+#[tokio::test]
+async fn gate_thought_signature_persisted_in_jsonl_and_replayed_on_reload() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_thought_sig");
+
+    let (base_url, _reqs, mock_handle) = spawn_mock_llm_server(move |idx, _req| async move {
+        if idx == 0 {
+            (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [
+                                {
+                                    "thought": true,
+                                    "text": "Analisis mendalam",
+                                    "thoughtSignature": "SIG_THOUGHT_001"
+                                },
+                                {
+                                    "functionCall": {
+                                        "id": "fc_sig_1",
+                                        "name": "list_dir",
+                                        "args": { "path": "." }
+                                    },
+                                    "thoughtSignature": "SIG_CALL_002"
+                                }
+                            ]
+                        }
+                    }],
+                    "usageMetadata": { "promptTokenCount": 40, "candidatesTokenCount": 20 }
+                }),
+            )
+        } else {
+            (200, gemini_text_resp("Selesai cek direktori.", 50, 10))
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-gate-sig",
+    );
+
+    let session_file = tmp.path().join("sig_session.jsonl");
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        Some(session_file.to_string_lossy().to_string()),
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server
+            .run_loop_with_input(io::BufReader::new(reader))
+            .await
+            .unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p_sig", "type": "prompt", "message": "cek folder" }),
+    );
+    let _ = recv_response(&mut out_rx, "p_sig", std::time::Duration::from_millis(500)).await;
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+
+    // Reload dari JSONL (simulasi park & restart Android)
+    let reloaded = load_session_from_path(&session_file);
+    let llm_str = serde_json::to_string(&reloaded.llm_history).unwrap();
+    assert!(
+        llm_str.contains("SIG_THOUGHT_001"),
+        "GATE: thoughtSignature pada blok thinking harus bertahan setelah reload JSONL"
+    );
+    assert!(
+        llm_str.contains("SIG_CALL_002"),
+        "GATE: thoughtSignature pada functionCall harus bertahan setelah reload JSONL"
+    );
+}
+
+#[tokio::test]
+async fn gate_slash_clear_persists_context_reset_across_reload() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_slash_clear");
+
+    let (base_url, _reqs, mock_handle) = spawn_mock_llm_server(move |_idx, _req| async move {
+        (200, gemini_text_resp("Halo dari sesi sebelum clear.", 20, 10))
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-gate-clear",
+    );
+
+    let session_file = tmp.path().join("clear_session.jsonl");
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        Some(session_file.to_string_lossy().to_string()),
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server
+            .run_loop_with_input(io::BufReader::new(reader))
+            .await
+            .unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p1", "type": "prompt", "message": "RAHASIA_SEBELUM_CLEAR" }),
+    );
+    let _ = recv_response(&mut out_rx, "p1", std::time::Duration::from_millis(500)).await;
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p_clr", "type": "prompt", "message": "/clear" }),
+    );
+    let _ = recv_response(&mut out_rx, "p_clr", std::time::Duration::from_millis(500)).await;
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+
+    // Reload dari JSONL -> pesan sebelum /clear TIDAK boleh hidup lagi
+    let reloaded = load_session_from_path(&session_file);
+    let ui_str = serde_json::to_string(&reloaded.ui_messages).unwrap();
+    let llm_str = serde_json::to_string(&reloaded.llm_history).unwrap();
+    assert!(
+        !ui_str.contains("RAHASIA_SEBELUM_CLEAR") && !llm_str.contains("RAHASIA_SEBELUM_CLEAR"),
+        "GATE: /clear harus persisten di JSONL agar konteks lama tidak bangkit setelah reload"
+    );
+}
+
+#[tokio::test]
+async fn gate_wakeup_context_text_and_unknown_tool_call_survive_reload() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_wakeup_unknown_tool");
+
+    let (base_url, _reqs, mock_handle) = spawn_mock_llm_server(move |idx, _req| async move {
+        if idx == 0 {
+            (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{
+                                "functionCall": {
+                                    "id": "call_unknown_1",
+                                    "name": "tool_yang_tidak_ada",
+                                    "args": { "foo": "bar" }
+                                }
+                            }]
+                        }
+                    }]
+                }),
+            )
+        } else {
+            (200, gemini_text_resp("Oke, tool tidak dikenal ditangani.", 30, 10))
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-gate-unk",
+    );
+
+    let session_file = tmp.path().join("wakeup_unk.jsonl");
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        Some(session_file.to_string_lossy().to_string()),
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    // Simpan pesan wakeup custom dengan summary ringkas + details.contextText penuh
+    let _ = server.runtime.emit_and_persist_wakeup_message(
+        "oopbot-background-wakeup",
+        "Background #7 `build` completed dalam 4 dtk (exit 0)",
+        "[System Event] Output tail:\nBUILD_ARTIFACT_HASH_998877",
+    );
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server
+            .run_loop_with_input(io::BufReader::new(reader))
+            .await
+            .unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p_unk", "type": "prompt", "message": "uji unknown tool" }),
+    );
+    let _ = recv_response(&mut out_rx, "p_unk", std::time::Duration::from_millis(500)).await;
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+
+    let reloaded = load_session_from_path(&session_file);
+    let llm_str = serde_json::to_string(&reloaded.llm_history).unwrap();
+    assert!(
+        llm_str.contains("BUILD_ARTIFACT_HASH_998877"),
+        "GATE: contextText lengkap dari wakeup harus direplay ke LLM setelah reload"
+    );
+    assert_eq!(
+        reloaded.ui_messages[0]["content"][0]["text"],
+        "Background #7 `build` completed dalam 4 dtk (exit 0)",
+        "UI tetap menampilkan summary ringkas"
+    );
+    assert!(
+        llm_str.contains("tool_yang_tidak_ada") && llm_str.contains("tidak dikenal"),
+        "GATE: unknown tool call harus tetap berpasangan (functionCall + functionResponse) saat reload"
+    );
+}
+
+

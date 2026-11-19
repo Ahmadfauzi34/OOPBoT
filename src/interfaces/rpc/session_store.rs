@@ -134,7 +134,8 @@ impl RpcUiState {
         self.leaf_id = Some(entry_id.to_string());
 
         if let Some(path) = &self.session_file {
-            if let Ok(line) = serde_json::to_string(&payload) {
+            if let Ok(mut line) = serde_json::to_string(&payload) {
+                line.push('\n');
                 if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -143,7 +144,8 @@ impl RpcUiState {
                     .append(true)
                     .open(path)
                 {
-                    let _ = writeln!(file, "{}", line);
+                    let _ = file.write_all(line.as_bytes());
+                    let _ = file.flush();
                 }
             }
         }
@@ -434,10 +436,26 @@ pub(super) fn active_branch_entries(entries: &[Value], leaf_id: Option<&str>) ->
         path_rev.push(entry.clone());
 
         cur_opt = match entry.get("parentId") {
-            Some(Value::String(pid)) if !pid.is_empty() => Some(pid.as_str()),
+            Some(Value::String(pid)) if !pid.is_empty() => {
+                if by_id.contains_key(pid.as_str()) {
+                    Some(pid.as_str())
+                } else {
+                    // KONTRAK: bila baris parent korup/terpotong dan terlewati saat load,
+                    // sambungkan ke entry valid terdekat sebelumnya agar histori sebelum baris korup tidak hilang.
+                    entries[..idx].iter().rev().find_map(|prev| {
+                        prev["id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty() && !visited.contains(*s))
+                    })
+                }
+            }
             Some(Value::Null) => None,
             // Legacy v1 tanpa field parentId -> sambungkan ke entry sebelumnya dalam file
-            None if idx > 0 => entries[idx - 1]["id"].as_str(),
+            None if idx > 0 => entries[..idx].iter().rev().find_map(|prev| {
+                prev["id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty() && !visited.contains(*s))
+            }),
             _ => None,
         };
     }
@@ -515,6 +533,10 @@ pub(super) fn rebuild_context_from_entries(path_entries: &[Value]) -> RebuiltCon
                     context_unknown = false;
                 }
             }
+            "context_reset" => {
+                last_context_tokens = None;
+                context_unknown = false;
+            }
             "compaction" => {
                 let (u, c) = parse_usage_fields(&entry["usage"]);
                 token_totals.input += u.input;
@@ -566,26 +588,32 @@ pub(super) fn rebuild_context_from_entries(path_entries: &[Value]) -> RebuiltCon
         }
     }
 
-    let last_compact_idx = path_entries
+    let last_reset_idx = path_entries
+        .iter()
+        .rposition(|e| e["type"].as_str() == Some("context_reset"));
+    let slice_start = last_reset_idx.map(|i| i + 1).unwrap_or(0);
+    let effective_entries = &path_entries[slice_start..];
+
+    let last_compact_idx = effective_entries
         .iter()
         .rposition(|e| e["type"].as_str() == Some("compaction"));
     let previous_compaction_summary = last_compact_idx
-        .and_then(|ci| path_entries[ci]["summary"].as_str())
+        .and_then(|ci| effective_entries[ci]["summary"].as_str())
         .map(str::to_string);
 
     let mut selected_entries: Vec<&Value> = Vec::new();
     if let Some(ci) = last_compact_idx {
-        let compact_entry = &path_entries[ci];
+        let compact_entry = &effective_entries[ci];
         let compact_id = compact_entry["id"].as_str().unwrap_or("");
         let first_kept_id = compact_entry["firstKeptEntryId"].as_str().unwrap_or("");
         selected_entries.push(compact_entry);
 
         if !first_kept_id.is_empty() && first_kept_id != compact_id {
-            if let Some(pos) = path_entries[..ci]
+            if let Some(pos) = effective_entries[..ci]
                 .iter()
                 .position(|e| e["id"].as_str() == Some(first_kept_id))
             {
-                for e in &path_entries[pos..ci] {
+                for e in &effective_entries[pos..ci] {
                     if e["type"].as_str() == Some("message")
                         && e["message"]["role"].as_str() == Some("system")
                     {
@@ -595,11 +623,11 @@ pub(super) fn rebuild_context_from_entries(path_entries: &[Value]) -> RebuiltCon
                 }
             }
         }
-        for e in &path_entries[ci + 1..] {
+        for e in &effective_entries[ci + 1..] {
             selected_entries.push(e);
         }
     } else {
-        for e in path_entries {
+        for e in effective_entries {
             selected_entries.push(e);
         }
     }
@@ -748,12 +776,26 @@ pub(super) fn extract_user_message_text(msg: &Value) -> String {
 
 pub(super) fn ui_message_to_llm(msg: &Value) -> Option<Value> {
     match msg["role"].as_str()? {
-        "user" | "custom" => {
+        "user" => {
             let (text, images) = extract_message_text_and_images(msg);
             if text.is_empty() && images.is_empty() {
                 None
             } else {
                 Some(user_message_with_images(&text, &images))
+            }
+        }
+        "custom" => {
+            let (summary_text, images) = extract_message_text_and_images(msg);
+            let full_text = msg
+                .get("details")
+                .and_then(|d| d["contextText"].as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or(summary_text);
+            if full_text.is_empty() && images.is_empty() {
+                None
+            } else {
+                Some(user_message_with_images(&full_text, &images))
             }
         }
         "bashExecution" => {

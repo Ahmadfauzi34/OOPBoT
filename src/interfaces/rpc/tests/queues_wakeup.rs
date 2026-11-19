@@ -1493,3 +1493,127 @@ async fn audit_steer_command_during_compact_resumes_after_compact() {
     mock_handle.abort();
 }
 
+#[tokio::test]
+async fn gate_mid_turn_tool_and_steer_context_preserved_across_http_retry() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_retry_preserves_ctx");
+
+    let (base_url, reqs, mock_handle) = spawn_mock_llm_server(move |idx, _req| async move {
+        match idx {
+            0 => (
+                200,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{
+                                "functionCall": {
+                                    "id": "call_ls_retry",
+                                    "name": "list_dir",
+                                    "args": { "path": "." }
+                                }
+                            }]
+                        }
+                    }],
+                    "usageMetadata": { "promptTokenCount": 30, "candidatesTokenCount": 12 }
+                }),
+            ),
+            1 => (
+                503,
+                json!({ "error": { "message": "Service Unavailable (transient)" } }),
+            ),
+            _ => (
+                200,
+                gemini_text_resp("Selesai dengan hasil tool dan steer!", 60, 15),
+            ),
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-gate-retry-ctx",
+    );
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    // Antrekan pesan steer yang akan di-pop pada step 2 (tepat sebelum HTTP 503)
+    {
+        let mut m = server.runtime.mutable.lock().unwrap();
+        m.steering_queue.push_back(crate::interfaces::rpc::QueuedPrompt::user(
+            "STEER_PENTING_JANGAN_HILANG".to_string(),
+            vec![],
+        ));
+    }
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server
+            .run_loop_with_input(io::BufReader::new(reader))
+            .await
+            .unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p_retry", "type": "prompt", "message": "PROMPT_AWAL_UNIK" }),
+    );
+    let _ = recv_response(&mut out_rx, "p_retry", std::time::Duration::from_millis(500)).await;
+
+    let final_reply = recv_matching(&mut out_rx, std::time::Duration::from_secs(5), |v| {
+        v["type"] == "message_end"
+            && v["message"]["role"] == "assistant"
+            && v["message"]["content"][0]["text"]
+                .as_str()
+                .map(|t| t.contains("Selesai dengan hasil tool dan steer!"))
+                .unwrap_or(false)
+    })
+    .await;
+    assert_eq!(
+        final_reply["message"]["content"][0]["text"],
+        "Selesai dengan hasil tool dan steer!"
+    );
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled" && v["aborted"] == false
+    })
+    .await;
+
+    let captured = reqs.lock().unwrap().clone();
+    assert_eq!(captured.len(), 3, "harus 3 request: tool call, 503 gagal, retry sukses");
+    let retry_body = captured[2].body.to_string();
+    assert!(
+        retry_body.contains("call_ls_retry"),
+        "GATE: retry pasca-503 harus mempertahankan hasil tool Step 1"
+    );
+    assert!(
+        retry_body.contains("STEER_PENTING_JANGAN_HILANG"),
+        "GATE: retry pasca-503 tidak boleh menghilangkan pesan steer yang sudah ter-drain"
+    );
+    assert_eq!(
+        retry_body.matches("PROMPT_AWAL_UNIK").count(),
+        1,
+        "GATE: continue_turn_cancellable tidak boleh menduplikasi prompt user awal"
+    );
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+}
+
+

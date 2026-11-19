@@ -174,6 +174,7 @@ fn test_rpc_event_sink_text_turn() {
     sink.on_event(&AgentEvent::Thinking {
         step_index: 1,
         text: "Sedang menganalisis pertanyaan".to_string(),
+        thought_signature: None,
     });
     sink.on_event(&AgentEvent::AssistantText {
         text: "Halo! Ada yang bisa saya bantu?".to_string(),
@@ -233,6 +234,7 @@ fn test_rpc_event_sink_tool_turn_and_rejection() {
         args: json!({ "command": "echo test" }),
         preview: "$ echo test".to_string(),
         requires_confirmation: false,
+        thought_signature: None,
     });
 
     sink.on_event(&AgentEvent::ToolCallEnd {
@@ -252,6 +254,7 @@ fn test_rpc_event_sink_tool_turn_and_rejection() {
         args: json!({ "command": "rm -rf /" }),
         preview: "$ rm -rf /".to_string(),
         requires_confirmation: true,
+        thought_signature: None,
     });
 
     sink.on_event(&AgentEvent::ToolCallEnd {

@@ -25,6 +25,11 @@ Implements the asynchronous JSONL agent daemon (`oopbot --mode rpc`) used by the
 - **Output Sink Routing:** All protocol output MUST pass through `RpcRuntime::send_line` / `send_channel` so TCP host wrappers (`OUTPUT_SINK`) and test harnesses capture frames cleanly. Any unit test overriding `OUTPUT_SINK` MUST hold `output_sink_test_mutex()`.
 - **Non-Blocking UI & Approval Cleanup:** Interactive dialog futures (`request_ui_dialog`) and tool approvals (`PendingApprovals`) MUST clean up map entries on timeout/drop (`PendingUiRequestGuard`) so orphaned requests cannot leak memory or wedge turns.
 - **Config & Auth Security:** `auth.json` entries MUST be written atomically with restrictive permissions (`0o600`) via `src/config/store.rs`, and JSONL session files MUST preserve valid parent/leaf chains (`active_branch_entries`).
+- **Session Context Resilience Gates:**
+  - Mid-turn LLM errors after tool execution or steer injection MUST commit partial `history` in `AgentHarness` and retry via `continue_turn_cancellable` without duplicating the initial user prompt (`gate_mid_turn_tool_and_steer_context_preserved_across_http_retry`).
+  - JSONL appends MUST flush full lines and `active_branch_entries` MUST stitch across missing/corrupted `parentId` links without cross-branch leaks (`gate_corrupted_jsonl_line_recovers_prior_history_without_cross_branch_leak`).
+  - `build_compaction_prompt` MUST cap per-entry tool/message lengths and total prompt budget (`gate_compaction_prompt_bounds_giant_tool_outputs_and_total_budget`).
+  - `RpcEventSink` MUST preserve Gemini `thoughtSignature` on `thinking`/`toolCall` blocks, `/clear` MUST persist a `context_reset` boundary, background wakeups MUST retain `details.contextText`, and unknown tool calls MUST emit paired `ToolCallStart` + `ToolCallEnd` (`gate_thought_signature_*`, `gate_slash_clear_*`, `gate_wakeup_context_text_*`).
 
 ## Work Guidance
 - Keep JSON field names in camelCase matching Android Kotlin deserializers (`sessionFile`, `sessionId`, `isStreaming`, `isCompacting`, `extension_ui_request`, `oopbot_channel`).

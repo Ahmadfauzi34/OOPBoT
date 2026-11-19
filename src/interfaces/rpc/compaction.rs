@@ -455,25 +455,73 @@ pub(super) fn select_compaction_cut_point(active_entries: &[Value]) -> Option<Co
     })
 }
 
+const MAX_COMPACTION_TOOL_CHARS: usize = 4_000;
+const MAX_COMPACTION_MSG_CHARS: usize = 8_000;
+const MAX_COMPACTION_PROMPT_CHARS: usize = 120_000;
+
+/// Potong teks secara aman di batas UTF-8 dengan mempertahankan bagian awal dan akhir
+/// agar pesan error atau ringkasan di bagian tail tidak hilang saat compaction.
+fn truncate_head_tail_chars(text: &str, max_chars: usize) -> String {
+    let total_chars = text.chars().count();
+    if total_chars <= max_chars {
+        return text.to_string();
+    }
+    let head_len = (max_chars * 2) / 3;
+    let tail_len = max_chars.saturating_sub(head_len);
+    let head: String = text.chars().take(head_len).collect();
+    let tail: String = text
+        .chars()
+        .skip(total_chars.saturating_sub(tail_len))
+        .collect();
+    let omitted = total_chars.saturating_sub(head_len + tail_len);
+    format!(
+        "{}\n...[{} karakter dipadatkan untuk compaction]...\n{}",
+        head, omitted, tail
+    )
+}
+
 pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
     match entry["type"].as_str().unwrap_or_default() {
         "message" => {
             let msg = &entry["message"];
             let role = msg["role"].as_str().unwrap_or_default();
             match role {
-                "user" => Some(format!("[User]: {}", extract_user_message_text(msg))),
+                "user" => Some(format!(
+                    "[User]: {}",
+                    truncate_head_tail_chars(
+                        &extract_user_message_text(msg),
+                        MAX_COMPACTION_MSG_CHARS
+                    )
+                )),
+                "custom" => {
+                    let body = msg
+                        .get("details")
+                        .and_then(|d| d["contextText"].as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| extract_user_message_text(msg));
+                    Some(format!(
+                        "[Custom]: {}",
+                        truncate_head_tail_chars(&body, MAX_COMPACTION_TOOL_CHARS)
+                    ))
+                }
                 "assistant" => {
                     let mut parts = Vec::new();
                     if let Some(arr) = msg["content"].as_array() {
                         for b in arr {
                             if let Some(t) = b["text"].as_str().filter(|s| !s.trim().is_empty()) {
-                                parts.push(t.to_string());
+                                parts.push(truncate_head_tail_chars(t, MAX_COMPACTION_MSG_CHARS));
                             } else if b["type"].as_str() == Some("toolCall") {
                                 let name = b["name"].as_str().unwrap_or("");
                                 let args = b
                                     .get("arguments")
                                     .or_else(|| b.get("args"))
-                                    .map(|v| v.to_string())
+                                    .map(|v| {
+                                        truncate_head_tail_chars(
+                                            &v.to_string(),
+                                            MAX_COMPACTION_TOOL_CHARS,
+                                        )
+                                    })
                                     .unwrap_or_default();
                                 parts.push(format!("[ToolCall {}({})]", name, args));
                             }
@@ -486,7 +534,10 @@ pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
                     Some(format!(
                         "[ToolResult {}]: {}",
                         name,
-                        extract_user_message_text(msg)
+                        truncate_head_tail_chars(
+                            &extract_user_message_text(msg),
+                            MAX_COMPACTION_TOOL_CHARS
+                        )
                     ))
                 }
                 _ => None,
@@ -494,12 +545,18 @@ pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
         }
         "custom_message" => Some(format!(
             "[Custom]: {}",
-            extract_user_message_text(entry)
+            truncate_head_tail_chars(
+                &extract_user_message_text(entry),
+                MAX_COMPACTION_TOOL_CHARS
+            )
         )),
         "bashExecution" => Some(format!(
             "[Bash $ {}]: {}",
             entry["command"].as_str().unwrap_or_default(),
-            entry["output"].as_str().unwrap_or_default()
+            truncate_head_tail_chars(
+                entry["output"].as_str().unwrap_or_default(),
+                MAX_COMPACTION_TOOL_CHARS
+            )
         )),
         _ => None,
     }
@@ -515,21 +572,81 @@ pub(super) fn build_compaction_prompt(
     );
     if let Some(prev) = previous_summary.filter(|s| !s.trim().is_empty()) {
         prompt.push_str("\n<previous_summary>\n");
-        prompt.push_str(prev.trim());
+        prompt.push_str(&truncate_head_tail_chars(prev.trim(), 16_000));
         prompt.push_str("\n</previous_summary>\n");
     }
+
+    let formatted: Vec<String> = to_summarize
+        .iter()
+        .filter_map(format_entry_for_compaction)
+        .collect();
+
+    let instructions_block = custom_instructions
+        .filter(|s| !s.trim().is_empty())
+        .map(|inst| {
+            format!(
+                "\n<custom_instructions>\n{}\n</custom_instructions>\n",
+                inst.trim()
+            )
+        })
+        .unwrap_or_default();
+
+    let fixed_overhead = prompt.chars().count() + instructions_block.chars().count() + 64;
+    let conv_budget = MAX_COMPACTION_PROMPT_CHARS.saturating_sub(fixed_overhead);
+    let total_conv_chars: usize = formatted.iter().map(|l| l.chars().count() + 1).sum();
+
     prompt.push_str("\n<conversation>\n");
-    for entry in to_summarize {
-        if let Some(line) = format_entry_for_compaction(entry) {
-            prompt.push_str(&line);
+    if total_conv_chars <= conv_budget {
+        for line in &formatted {
+            prompt.push_str(line);
+            prompt.push('\n');
+        }
+    } else {
+        // Pertahankan pesan awal (tujuan/konteks awal) + pesan paling baru dalam batas budget.
+        let head_budget = conv_budget / 3;
+        let tail_budget = conv_budget.saturating_sub(head_budget);
+        let mut head_lines = Vec::new();
+        let mut head_used = 0usize;
+        for line in &formatted {
+            let cost = line.chars().count() + 1;
+            if head_used + cost > head_budget && !head_lines.is_empty() {
+                break;
+            }
+            head_used += cost;
+            head_lines.push(line.as_str());
+        }
+        let mut tail_lines_rev = Vec::new();
+        let mut tail_used = 0usize;
+        for line in formatted[head_lines.len()..].iter().rev() {
+            let cost = line.chars().count() + 1;
+            if tail_used + cost > tail_budget && !tail_lines_rev.is_empty() {
+                break;
+            }
+            tail_used += cost;
+            tail_lines_rev.push(line.as_str());
+        }
+        tail_lines_rev.reverse();
+        let omitted = formatted
+            .len()
+            .saturating_sub(head_lines.len() + tail_lines_rev.len());
+        for line in head_lines {
+            prompt.push_str(line);
+            prompt.push('\n');
+        }
+        if omitted > 0 {
+            prompt.push_str(&format!(
+                "[... {} entri pertengahan dipadatkan agar prompt compaction aman di dalam context window ...]\n",
+                omitted
+            ));
+        }
+        for line in tail_lines_rev {
+            prompt.push_str(line);
             prompt.push('\n');
         }
     }
     prompt.push_str("</conversation>\n");
-    if let Some(inst) = custom_instructions.filter(|s| !s.trim().is_empty()) {
-        prompt.push_str("\n<custom_instructions>\n");
-        prompt.push_str(inst.trim());
-        prompt.push_str("\n</custom_instructions>\n");
+    if !instructions_block.is_empty() {
+        prompt.push_str(&instructions_block);
     }
     prompt
 }

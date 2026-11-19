@@ -10,6 +10,7 @@ pub struct FunctionCall {
     pub id: Option<String>,
     pub name: String,
     pub args: Value,
+    pub thought_signature: Option<String>,
 }
 
 /// Statistik penggunaan token aktual dari satu giliran model.
@@ -50,13 +51,15 @@ impl Default for GenerationOptions {
 }
 
 /// Hasil satu giliran model: konten mentah (untuk disimpan ke memori),
-/// teks yang bisa ditampilkan, ringkasan penalaran (`thoughts`), daftar function call,
+/// teks yang bisa ditampilkan, ringkasan penalaran (`thoughts`), tanda tangan penalaran
+/// (`thought_signatures`, sejajar indeks dengan `thoughts`), daftar function call,
 /// dan penggunaan token (`usage`).
 #[derive(Debug, Clone)]
 pub struct ModelTurn {
     pub raw_content: Value,
     pub text: String,
     pub thoughts: Vec<String>,
+    pub thought_signatures: Vec<Option<String>>,
     pub function_calls: Vec<FunctionCall>,
     pub usage: Option<TokenUsage>,
 }

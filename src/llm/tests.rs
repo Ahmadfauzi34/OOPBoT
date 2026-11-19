@@ -46,6 +46,7 @@ fn function_response_keeps_id() {
         id: Some("x1".into()),
         name: "read_file".into(),
         args: json!({}),
+        thought_signature: None,
     };
     let part = function_response_part(&call, json!({ "ok": true }));
     assert_eq!(part["functionResponse"]["id"], "x1");
@@ -143,7 +144,12 @@ async fn reg006_openai_responses_routes_to_responses_endpoint_and_parses_output(
             "role": "user",
             "parts": [
                 function_response_part(
-                    &FunctionCall { id: Some("call_prev".into()), name: "list_dir".into(), args: json!({}) },
+                    &FunctionCall {
+                        id: Some("call_prev".into()),
+                        name: "list_dir".into(),
+                        args: json!({}),
+                        thought_signature: None,
+                    },
                     json!({ "files": ["Cargo.toml"] })
                 )
             ]
