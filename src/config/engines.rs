@@ -41,6 +41,8 @@ pub struct ExternalEngineManifest {
     pub installed_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authenticated: Option<bool>,
 }
 
 const BUILTIN_EXTERNAL_ENGINES: &[ExternalEngineSpec] = &[ExternalEngineSpec {
@@ -164,6 +166,7 @@ mod tests {
             args: vec!["acp".to_string()],
             installed_at: "2026-11-19T00:00:00Z".to_string(),
             sha256: Some("abc123".to_string()),
+            authenticated: Some(true),
         };
 
         save_engine_manifest(&dir, &manifest).unwrap();

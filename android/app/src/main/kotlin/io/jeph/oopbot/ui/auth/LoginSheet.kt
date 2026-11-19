@@ -1,6 +1,7 @@
 package io.jeph.oopbot.ui.auth
 
 import android.content.ActivityNotFoundException
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -245,8 +246,10 @@ private fun PromptBlock(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
 /** `text`, `secret` and `manual_code` prompts. */
 @Composable
 private fun TextPrompt(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
+  val context = LocalContext.current
   var value by rememberSaveable(prompt.reply.id) { mutableStateOf("") }
   val secret = prompt.type == "secret"
+  val isManualCode = prompt.type == "manual_code"
   OutlinedTextField(
     value = value,
     onValueChange = { value = it },
@@ -254,12 +257,20 @@ private fun TextPrompt(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
     shape = SettingsFieldShape,
     colors = settingsFieldColors(),
     placeholder = prompt.placeholder?.let { { Text(it) } },
-    supportingText =
-      if (prompt.type == "manual_code") {
-        { Text(stringResource(R.string.login_manual_code_helper)) }
-      } else {
-        null
-      },
+    trailingIcon = if (isManualCode) {
+      {
+        TextButton(onClick = { readClipboardText(context)?.let { value = it } }) {
+          Text(stringResource(R.string.terminal_key_paste))
+        }
+      }
+    } else {
+      null
+    },
+    supportingText = if (isManualCode) {
+      { Text(stringResource(R.string.login_manual_code_helper)) }
+    } else {
+      null
+    },
     visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
     keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else KeyboardType.Text),
     singleLine = true,
@@ -270,6 +281,16 @@ private fun TextPrompt(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
     enabled = value.isNotBlank(),
   )
 }
+
+private fun readClipboardText(context: Context): String? =
+  context.getSystemService(ClipboardManager::class.java)
+    ?.primaryClip
+    ?.takeIf { it.itemCount > 0 }
+    ?.getItemAt(0)
+    ?.coerceToText(context)
+    ?.toString()
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
 
 /** A 14sp line with a 16dp leading icon or spinner. */
 @Composable

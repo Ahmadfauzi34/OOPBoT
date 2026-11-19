@@ -17,7 +17,7 @@ import io.jeph.oopbot.host.TermuxBuild
  * network, a package mirror outage, a closed Termux) finishes the setup instead of breaking it.
  */
 internal object TermuxSetup {
-  const val DEFAULT_OOPBOT_VERSION = "0.5.17"
+  const val DEFAULT_OOPBOT_VERSION = "0.5.18"
   private const val RELEASE_BASE = "https://github.com/Ahmadfauzi34/OOPBoT/releases"
   private const val RELEASE_ASSET = "oopbot-aarch64-linux-android"
   internal val INTERNET_PACKAGES = listOf(

@@ -19,7 +19,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::Ordering;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const ANTIGRAVITY_STANDALONE_ASSET: &str = "antigravity-termux-standalone.tar.gz";
 
@@ -125,16 +125,23 @@ pub(super) fn check_engine_authenticated(engine_id: &str, home: &str) -> bool {
         {
             return true;
         }
-        let cli_dir = Path::new(home).join(".gemini/antigravity-cli");
-        for candidate in [
-            "oauth_creds.json",
-            "credentials.json",
-            "auth.json",
-            "token.json",
+        for rel in [
+            ".gemini/antigravity-cli",
+            ".gemini/antigravity",
+            ".antigravity",
+            ".config/antigravity",
         ] {
-            if let Ok(meta) = std::fs::metadata(cli_dir.join(candidate)) {
-                if meta.is_file() && meta.len() > 2 {
-                    return true;
+            let cli_dir = Path::new(home).join(rel);
+            for candidate in [
+                "oauth_creds.json",
+                "credentials.json",
+                "auth.json",
+                "token.json",
+            ] {
+                if let Ok(meta) = std::fs::metadata(cli_dir.join(candidate)) {
+                    if meta.is_file() && meta.len() > 2 {
+                        return true;
+                    }
                 }
             }
         }
@@ -174,7 +181,12 @@ pub(super) fn handle_engine_list(config_dir: &Path, prefix: &Path, home: &str) -
                 .as_ref()
                 .map(|m| Path::new(&m.command).is_file())
                 .unwrap_or(false);
-            let authenticated = installed && check_engine_authenticated(spec.id, home);
+            let manifest_auth = manifest
+                .as_ref()
+                .and_then(|m| m.authenticated)
+                .unwrap_or(false);
+            let authenticated =
+                installed && (manifest_auth || check_engine_authenticated(spec.id, home));
             json!({
                 "id": spec.id,
                 "selector": format!("acp:{}", spec.id),
@@ -607,6 +619,7 @@ where
         args: spec.acp_args.iter().map(|s| s.to_string()).collect(),
         installed_at: iso_now(),
         sha256: Some(digest),
+        authenticated: None,
     };
     save_engine_manifest(config_dir, &manifest)?;
     Ok(manifest)
@@ -746,13 +759,91 @@ fn extract_first_https_url(line: &str) -> Option<String> {
     let rest = &line[start..];
     let url: String = rest
         .chars()
-        .take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | '<' | '>' | ')' | ']'))
+        .take_while(|c| {
+            !c.is_whitespace()
+                && !c.is_control()
+                && !matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '\\')
+        })
         .collect();
     if url.len() > "https://".len() {
         Some(url)
     } else {
         None
     }
+}
+
+fn looks_like_code_prompt(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    let has_keyword = lower.contains("code")
+        || lower.contains("kode")
+        || lower.contains("token")
+        || lower.contains("paste");
+    has_keyword && (lower.ends_with(':') || lower.ends_with('?'))
+}
+
+fn emit_manual_code_prompt(writer: &mut BufWriter<TcpStream>, id: u64, message: &str) {
+    let prompt_msg = json!({
+        "type": "oopbot_auth_prompt",
+        "id": id,
+        "prompt": {
+            "type": "manual_code",
+            "message": message,
+            "placeholder": "4/0A..."
+        }
+    });
+    let _ = writeln!(writer, "{}", serde_json::to_string(&prompt_msg).unwrap_or_default());
+    let _ = writer.flush();
+}
+
+fn spawn_login_pipe_reader<R>(
+    mut pipe: R,
+    tx: tokio::sync::mpsc::UnboundedSender<String>,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut buf = [0u8; 2048];
+        let mut pending = Vec::<u8>::new();
+        let flush_pending = |pending: &mut Vec<u8>| {
+            if pending.is_empty() {
+                return;
+            }
+            let text = String::from_utf8_lossy(pending).trim_end_matches('\r').to_string();
+            pending.clear();
+            if !text.trim().is_empty() {
+                let _ = tx.send(text);
+            }
+        };
+        loop {
+            let read_res = tokio::time::timeout(
+                std::time::Duration::from_millis(150),
+                pipe.read(&mut buf),
+            )
+            .await;
+            match read_res {
+                Ok(Ok(0)) | Ok(Err(_)) => {
+                    flush_pending(&mut pending);
+                    break;
+                }
+                Ok(Ok(n)) => {
+                    for &b in &buf[..n] {
+                        if b == b'\n' || b == b'\r' {
+                            flush_pending(&mut pending);
+                        } else {
+                            pending.push(b);
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Flush prompt tanpa newline (mis. "Enter authorization code: ") agar UI tidak menunggu.
+                    flush_pending(&mut pending);
+                }
+            }
+        }
+    });
 }
 
 /// Host mode `engine_login`: jalankan alur login interaktif (`agy acp --login`) dengan penerusan URL OAuth & input kode.
@@ -781,7 +872,7 @@ pub(super) async fn handle_engine_login_mode(
         return Ok(());
     };
 
-    let Some(manifest) = load_engine_manifest(config_dir, spec.id) else {
+    let Some(mut manifest) = load_engine_manifest(config_dir, spec.id) else {
         let err = json!({
             "type": "oopbot_result",
             "ok": false,
@@ -822,22 +913,10 @@ pub(super) async fn handle_engine_login_mode(
 
     let (proc_tx, mut proc_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     if let Some(out) = stdout {
-        let tx = proc_tx.clone();
-        tokio::spawn(async move {
-            let mut lines = tokio::io::BufReader::new(out).lines();
-            while let Ok(Some(l)) = lines.next_line().await {
-                let _ = tx.send(l);
-            }
-        });
+        spawn_login_pipe_reader(out, proc_tx.clone());
     }
     if let Some(err) = stderr {
-        let tx = proc_tx.clone();
-        tokio::spawn(async move {
-            let mut lines = tokio::io::BufReader::new(err).lines();
-            while let Ok(Some(l)) = lines.next_line().await {
-                let _ = tx.send(l);
-            }
-        });
+        spawn_login_pipe_reader(err, proc_tx.clone());
     }
     drop(proc_tx);
 
@@ -861,6 +940,7 @@ pub(super) async fn handle_engine_login_mode(
     });
 
     let mut sent_url = false;
+    let mut prompt_id: u64 = 0;
     let mut cancelled = false;
     let mut last_lines: Vec<String> = Vec::new();
 
@@ -883,7 +963,19 @@ pub(super) async fn handle_engine_login_mode(
                                 });
                                 let _ = writeln!(writer, "{}", serde_json::to_string(&url_msg)?);
                                 let _ = writer.flush();
+                                if prompt_id == 0 {
+                                    prompt_id = 1;
+                                    emit_manual_code_prompt(
+                                        &mut writer,
+                                        prompt_id,
+                                        "Paste the authorization code from your browser",
+                                    );
+                                }
                             }
+                        }
+                        if prompt_id == 0 && looks_like_code_prompt(&l) {
+                            prompt_id = 1;
+                            emit_manual_code_prompt(&mut writer, prompt_id, l.trim());
                         }
                     }
                     None => break,
@@ -922,6 +1014,8 @@ pub(super) async fn handle_engine_login_mode(
             "data": {}
         })
     } else if status.success() {
+        manifest.authenticated = Some(true);
+        let _ = save_engine_manifest(config_dir, &manifest);
         json!({
             "type": "oopbot_result",
             "ok": true,

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.18] - 2026-11-19
+
+### Fixed
+- Fixed external ACP engine OAuth sign-in (`oopbot host engine_login`) never presenting the authorization code input box after opening the browser: `handle_engine_login_mode` now emits `oopbot_auth_prompt` (`type: "manual_code"`) alongside `oopbot_auth_url` (and flushes non-newline-terminated CLI prompts via `spawn_login_pipe_reader`), writes the pasted code to the child's stdin, and records `authenticated: true` in `~/.oopbot/engines/<id>/manifest.json` upon success.
+- Added a one-tap **Paste** button inside `TextPrompt` (`LoginSheet.kt`) for `manual_code` prompts.
+
 ## [0.5.17] - 2026-11-19
 
 ### Fixed

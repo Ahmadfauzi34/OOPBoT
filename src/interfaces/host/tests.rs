@@ -815,9 +815,9 @@ fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
 }
 
 #[tokio::test]
-async fn test_pkg_version_0517_rejects_0510_rpc_and_upgrades_0510_binary() {
+async fn test_pkg_version_0518_rejects_0510_rpc_and_upgrades_0510_binary() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(pkg_ver, "0.5.17");
+    assert_eq!(pkg_ver, "0.5.18");
 
     let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.10").unwrap();
     assert_eq!(refusal["ok"], false);
@@ -1869,6 +1869,117 @@ async fn gate_host_engine_install_supports_flat_twin_binary_archive_and_termux_p
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gate_host_engine_login_emits_auth_url_and_manual_code_prompt_and_marks_authenticated() {
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::os::unix::fs::PermissionsExt;
+
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_eng_login_{}_{}", epoch_ms(), seq));
+    let config_dir = temp_dir.join("config");
+    let prefix_dir = temp_dir.join("prefix");
+    let home_dir = temp_dir.join("home");
+    let engine_dir = crate::config::engine_dir(&config_dir, "antigravity");
+    std::fs::create_dir_all(&engine_dir).unwrap();
+    std::fs::create_dir_all(&prefix_dir).unwrap();
+    std::fs::create_dir_all(&home_dir).unwrap();
+
+    let fake_bin = engine_dir.join("agy");
+    std::fs::write(
+        &fake_bin,
+        "#!/bin/sh\necho 'Open browser: https://antigravity.google/oauth/mock'\nprintf 'Enter authorization code: '\nIFS= read -r code\n[ \"$code\" = '4/0AUn6MockCode' ] || exit 3\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let manifest = crate::config::ExternalEngineManifest {
+        id: "antigravity".to_string(),
+        protocol: crate::config::ExternalEngineProtocol::Acp,
+        display_name: "Antigravity".to_string(),
+        source_repo: "wallentx/antigravity-cli-termux".to_string(),
+        installed_version: "1.5.12".to_string(),
+        command: fake_bin.to_string_lossy().to_string(),
+        args: vec!["acp".to_string()],
+        installed_at: "2026-11-19T00:00:00Z".to_string(),
+        sha256: Some("abc".to_string()),
+        authenticated: None,
+    };
+    crate::config::save_engine_manifest(&config_dir, &manifest).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let cfg_clone = config_dir.clone();
+    let pref_clone = prefix_dir.clone();
+    let server_handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().unwrap();
+        let write_stream = stream.try_clone().unwrap();
+        handle_engine_login_mode(
+            json!({ "engineId": "antigravity", "loginArgs": ["acp", "--login"] }),
+            &cfg_clone,
+            &pref_clone,
+            BufReader::new(stream),
+            BufWriter::new(write_stream),
+        )
+        .await
+        .unwrap();
+    });
+
+    let client = TcpStream::connect(addr).unwrap();
+    let mut client_writer = BufWriter::new(client.try_clone().unwrap());
+    let mut client_reader = BufReader::new(client);
+
+    let mut saw_url = false;
+    let mut saw_prompt = false;
+    let mut saw_ok = false;
+    let mut line = String::new();
+    while client_reader.read_line(&mut line).unwrap() > 0 {
+        let msg: Value = serde_json::from_str(line.trim()).unwrap();
+        match msg["type"].as_str() {
+            Some("oopbot_auth_url") => {
+                assert_eq!(msg["url"], "https://antigravity.google/oauth/mock");
+                saw_url = true;
+            }
+            Some("oopbot_auth_prompt") => {
+                assert_eq!(msg["prompt"]["type"], "manual_code");
+                saw_prompt = true;
+                let reply = json!({
+                    "type": "oopbot_auth_response",
+                    "id": msg["id"],
+                    "value": "4/0AUn6MockCode"
+                });
+                writeln!(client_writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                client_writer.flush().unwrap();
+            }
+            Some("oopbot_result") => {
+                assert_eq!(msg["ok"], true);
+                assert_eq!(msg["data"]["authenticated"], true);
+                saw_ok = true;
+                break;
+            }
+            _ => {}
+        }
+        line.clear();
+    }
+
+    server_handle.await.unwrap();
+    assert!(saw_url && saw_prompt && saw_ok);
+
+    let list_after = handle_engine_list(&config_dir, &prefix_dir, home_dir.to_str().unwrap());
+    let agy_entry = list_after["data"]["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "antigravity")
+        .unwrap();
+    assert_eq!(agy_entry["authenticated"], true);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
 
 
 
