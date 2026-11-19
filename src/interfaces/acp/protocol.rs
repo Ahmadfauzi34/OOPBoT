@@ -126,7 +126,13 @@ pub fn build_initialize_params(client_name: &str, client_version: &str) -> Value
             "name": client_name,
             "version": client_version,
         },
-        "clientCapabilities": {}
+        "clientCapabilities": {
+            "fs": {
+                "readTextFile": true,
+                "writeTextFile": true
+            },
+            "terminal": true
+        }
     })
 }
 
@@ -371,6 +377,156 @@ pub fn parse_session_models(val: &Value) -> (Option<String>, Vec<AcpModelOption>
     (current, models)
 }
 
+/// Satu slash command yang diiklankan agen ACP via `available_commands_update`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpSlashCommand {
+    pub name: String,
+    pub description: String,
+    pub input_hint: Option<String>,
+}
+
+/// Satu mode operasi agen ACP (`session/new` `modes.availableModes` / `session/set_mode`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpSessionMode {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Ringkasan penggunaan token & biaya sesi ACP (`usage_update` atau hasil `session/prompt`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AcpUsageStats {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub total_tokens: u64,
+    pub context_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub cost_amount: f64,
+}
+
+/// Parameter `session/set_mode` untuk mengganti mode kerja agen ACP.
+pub fn build_session_set_mode_params(session_id: &str, mode_id: &str) -> Value {
+    json!({
+        "sessionId": session_id,
+        "modeId": mode_id,
+    })
+}
+
+/// Parse daftar `availableCommands` dari update `available_commands_update`.
+pub fn parse_available_commands(val: &Value) -> Vec<AcpSlashCommand> {
+    let Some(arr) = val
+        .get("availableCommands")
+        .or_else(|| val.get("commands"))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|cmd| {
+            let name = cmd["name"].as_str()?.trim().trim_start_matches('/').to_string();
+            if name.is_empty() {
+                return None;
+            }
+            let description = cmd["description"].as_str().unwrap_or_default().to_string();
+            let input_hint = cmd["input"]["hint"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            Some(AcpSlashCommand {
+                name,
+                description,
+                input_hint,
+            })
+        })
+        .collect()
+}
+
+/// Parse `(current_mode_id, available_modes)` dari `session/new` / `session/load`.
+pub fn parse_session_modes(val: &Value) -> (Option<String>, Vec<AcpSessionMode>) {
+    let current = val["modes"]["currentModeId"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let mut modes = Vec::new();
+    if let Some(arr) = val["modes"]["availableModes"].as_array() {
+        for item in arr {
+            let Some(id) = item["id"].as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let name = item["name"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(id)
+                .to_string();
+            let description = item["description"].as_str().map(str::to_string);
+            modes.push(AcpSessionMode {
+                id: id.to_string(),
+                name,
+                description,
+            });
+        }
+    }
+    (current, modes)
+}
+
+/// Sampel delta/snapshot usage dari `session/prompt` (`usage`) atau `usage_update`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AcpUsageSample {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub used_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub cost_amount: Option<f64>,
+}
+
+/// Ekstrak metadata usage dari objek `session/prompt` result (`usage`) atau `usage_update`.
+pub fn extract_usage_stats(val: &Value) -> Option<AcpUsageSample> {
+    let u = val.get("usage").unwrap_or(val);
+    let input = u["inputTokens"]
+        .as_u64()
+        .or_else(|| u["input_tokens"].as_u64())
+        .or_else(|| u["promptTokens"].as_u64())
+        .unwrap_or(0);
+    let output = u["outputTokens"]
+        .as_u64()
+        .or_else(|| u["output_tokens"].as_u64())
+        .or_else(|| u["completionTokens"].as_u64())
+        .unwrap_or(0);
+    let cache_read = u["cachedReadTokens"]
+        .as_u64()
+        .or_else(|| u["cacheReadTokens"].as_u64())
+        .unwrap_or(0);
+    let cache_write = u["cachedWriteTokens"]
+        .as_u64()
+        .or_else(|| u["cacheWriteTokens"].as_u64())
+        .unwrap_or(0);
+    let used = u["used"].as_u64().or_else(|| u["totalTokens"].as_u64());
+    let size = u["size"].as_u64().or_else(|| u["contextWindow"].as_u64());
+    let cost = u["cost"]["amount"]
+        .as_f64()
+        .or_else(|| u["cost"].as_f64());
+    if input == 0 && output == 0 && cache_read == 0 && cache_write == 0 && used.is_none() && cost.is_none() {
+        None
+    } else {
+        Some(AcpUsageSample {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_write_tokens: cache_write,
+            used_tokens: used,
+            context_window: size,
+            cost_amount: cost,
+        })
+    }
+}
+
 /// Satu entri rencana kerja dalam update ACP `plan`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpPlanEntry {
@@ -406,6 +562,20 @@ pub enum AcpSessionUpdate {
     },
     ConfigOptionUpdate {
         config_options: Vec<AcpConfigOption>,
+    },
+    AvailableCommandsUpdate {
+        commands: Vec<AcpSlashCommand>,
+    },
+    SessionInfoUpdate {
+        title: Option<String>,
+    },
+    CurrentModeUpdate {
+        current_mode_id: String,
+    },
+    UsageUpdate {
+        used_tokens: Option<u64>,
+        context_window: Option<u64>,
+        cost_amount: Option<f64>,
     },
     Unknown(Value),
 }
@@ -531,6 +701,33 @@ pub fn parse_session_update(params: &Value) -> AcpSessionUpdate {
                 .unwrap_or_default();
             AcpSessionUpdate::Plan { entries }
         }
+        "config_option_update" | "config_options_update" => AcpSessionUpdate::ConfigOptionUpdate {
+            config_options: parse_session_config_options(update),
+        },
+        "available_commands_update" => AcpSessionUpdate::AvailableCommandsUpdate {
+            commands: parse_available_commands(update),
+        },
+        "session_info_update" => AcpSessionUpdate::SessionInfoUpdate {
+            title: update["title"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        },
+        "current_mode_update" => AcpSessionUpdate::CurrentModeUpdate {
+            current_mode_id: update["currentModeId"]
+                .as_str()
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string(),
+        },
+        "usage_update" => AcpSessionUpdate::UsageUpdate {
+            used_tokens: update["used"].as_u64(),
+            context_window: update["size"].as_u64(),
+            cost_amount: update["cost"]["amount"]
+                .as_f64()
+                .or_else(|| update["cost"].as_f64()),
+        },
         _ => AcpSessionUpdate::Unknown(update.clone()),
     }
 }

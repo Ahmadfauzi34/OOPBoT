@@ -2,13 +2,19 @@
 //! dan subprocess agen eksternal berbasis Agent Client Protocol (ACP JSON-RPC 2.0).
 
 use super::client::{AcpAgentEvent, AcpClient, AcpLaunchConfig};
+use super::client_ops::{
+    handle_fs_read_text_file, handle_fs_write_text_file, render_acp_session_html,
+    AcpTerminalManager,
+};
 use super::protocol::{
     build_initialize_params, build_permission_cancelled_result, build_permission_selected_result,
     build_session_cancel_params, build_session_load_params, build_session_new_params,
     build_session_prompt_params, build_session_set_config_option_params,
-    build_session_set_model_params, map_acp_tool_kind_to_oopbot, parse_permission_request,
-    parse_session_config_options, parse_session_models, parse_session_update, AcpConfigOption,
-    AcpModelOption, AcpPermissionRequest, AcpPlanEntry, AcpSessionUpdate, JsonRpcError,
+    build_session_set_mode_params, build_session_set_model_params, extract_usage_stats,
+    map_acp_tool_kind_to_oopbot, parse_permission_request, parse_session_config_options,
+    parse_session_models, parse_session_modes, parse_session_update, AcpConfigOption,
+    AcpModelOption, AcpPermissionRequest, AcpPlanEntry, AcpSessionMode, AcpSessionUpdate,
+    AcpSlashCommand, AcpUsageSample, AcpUsageStats, JsonRpcError,
 };
 use crate::common::time::{epoch_ms, iso_now};
 use crate::common::BoxError;
@@ -72,12 +78,30 @@ impl StreamingTurnState {
 struct AcpSessionMirror {
     session_file: PathBuf,
     session_id: String,
+    session_name: Option<String>,
     acp_session_id: Option<String>,
     engine_tag: String,
     cwd: PathBuf,
     ui_messages: Vec<Value>,
+    user_entries: Vec<(String, String)>,
     entry_seq: usize,
     leaf_id: Option<String>,
+}
+
+fn extract_user_msg_text(msg: &Value) -> String {
+    if let Some(s) = msg["content"].as_str() {
+        return s.to_string();
+    }
+    if let Some(arr) = msg["content"].as_array() {
+        let mut parts = Vec::new();
+        for item in arr {
+            if let Some(t) = item["text"].as_str() {
+                parts.push(t);
+            }
+        }
+        return parts.join("\n");
+    }
+    String::new()
 }
 
 impl AcpSessionMirror {
@@ -104,8 +128,10 @@ impl AcpSessionMirror {
         });
 
         let mut session_id = default_sid;
+        let mut session_name: Option<String> = None;
         let mut acp_session_id: Option<String> = None;
         let mut ui_messages = Vec::new();
+        let mut user_entries = Vec::new();
         let mut entry_seq = 0usize;
         let mut leaf_id: Option<String> = None;
 
@@ -128,6 +154,17 @@ impl AcpSessionMirror {
                             acp_session_id = Some(aid.to_string());
                         }
                     }
+                    "session_info" => {
+                        session_name = entry["name"]
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string);
+                        if let Some(eid) = entry["id"].as_str().filter(|s| !s.is_empty()) {
+                            leaf_id = Some(eid.to_string());
+                            entry_seq += 1;
+                        }
+                    }
                     "acp_session" => {
                         if let Some(aid) = entry["acpSessionId"].as_str().filter(|s| !s.is_empty())
                         {
@@ -139,11 +176,21 @@ impl AcpSessionMirror {
                         }
                     }
                     "message" => {
+                        let eid = entry["id"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string);
                         if let Some(msg) = entry.get("message").filter(|m| !m.is_null()) {
+                            if msg["role"].as_str() == Some("user") {
+                                let id_str = eid
+                                    .clone()
+                                    .unwrap_or_else(|| format!("e{}", entry_seq));
+                                user_entries.push((id_str, extract_user_msg_text(msg)));
+                            }
                             ui_messages.push(msg.clone());
                         }
-                        if let Some(eid) = entry["id"].as_str().filter(|s| !s.is_empty()) {
-                            leaf_id = Some(eid.to_string());
+                        if let Some(id_val) = eid {
+                            leaf_id = Some(id_val);
                             entry_seq += 1;
                         }
                     }
@@ -160,10 +207,12 @@ impl AcpSessionMirror {
         Self {
             session_file,
             session_id,
+            session_name,
             acp_session_id,
             engine_tag,
             cwd: cwd.to_path_buf(),
             ui_messages,
+            user_entries,
             entry_seq,
             leaf_id,
         }
@@ -193,7 +242,7 @@ impl AcpSessionMirror {
         }
     }
 
-    fn append_entry(&mut self, entry_type: &str, mut payload: Value) {
+    fn append_entry(&mut self, entry_type: &str, mut payload: Value) -> String {
         self.ensure_header();
         let eid = format!("e{}", self.entry_seq);
         self.entry_seq += 1;
@@ -205,7 +254,7 @@ impl AcpSessionMirror {
             .map(|p| json!(p))
             .unwrap_or(Value::Null);
         payload["timestamp"] = json!(iso_now());
-        self.leaf_id = Some(eid);
+        self.leaf_id = Some(eid.clone());
 
         if let Ok(mut line) = serde_json::to_string(&payload) {
             line.push('\n');
@@ -218,6 +267,7 @@ impl AcpSessionMirror {
                 let _ = file.flush();
             }
         }
+        eid
     }
 
     fn record_acp_session_id(&mut self, acp_sid: String) {
@@ -235,8 +285,17 @@ impl AcpSessionMirror {
     }
 
     fn record_message(&mut self, msg: Value) {
+        let is_user = msg["role"].as_str() == Some("user");
+        let text = if is_user {
+            Some(extract_user_msg_text(&msg))
+        } else {
+            None
+        };
         self.ui_messages.push(msg.clone());
-        self.append_entry("message", json!({ "message": msg }));
+        let eid = self.append_entry("message", json!({ "message": msg }));
+        if let Some(t) = text {
+            self.user_entries.push((eid, t));
+        }
     }
 }
 
@@ -276,15 +335,26 @@ pub struct AcpRpcBridge {
     client: AcpClient,
     acp_events: mpsc::UnboundedReceiver<AcpAgentEvent>,
     mirror: AcpSessionMirror,
+    supports_load: bool,
     active_model_id: String,
     active_model_name: String,
     available_models: Vec<AcpModelOption>,
     config_options: Vec<AcpConfigOption>,
+    available_commands: Vec<AcpSlashCommand>,
+    available_modes: Vec<AcpSessionMode>,
+    active_mode_id: Option<String>,
+    usage: AcpUsageStats,
     thinking_level: String,
+    steering_mode: String,
+    follow_up_mode: String,
+    auto_compaction: bool,
+    auto_retry: bool,
     acp_session_id: String,
     pending_permissions: HashMap<String, PendingPermission>,
     perm_counter: u64,
-    queued_prompts: VecDeque<(String, Vec<(String, String)>)>,
+    terminals: AcpTerminalManager,
+    steering_queue: VecDeque<(String, Vec<(String, String)>)>,
+    follow_up_queue: VecDeque<(String, Vec<(String, String)>)>,
     output: Arc<Mutex<Box<dyn Write + Send + Sync>>>,
 }
 
@@ -375,6 +445,7 @@ impl AcpRpcBridge {
 
         let (parsed_current, available_models) = parse_session_models(&session_res);
         let config_options = parse_session_config_options(&session_res);
+        let (active_mode_id, available_modes) = parse_session_modes(&session_res);
         let active_model_id = parsed_current.unwrap_or_else(|| "default".to_string());
         let active_model_name = available_models
             .iter()
@@ -387,15 +458,26 @@ impl AcpRpcBridge {
             client,
             acp_events,
             mirror,
+            supports_load,
             active_model_id,
             active_model_name,
             available_models,
             config_options,
+            available_commands: Vec::new(),
+            available_modes,
+            active_mode_id,
+            usage: AcpUsageStats::default(),
             thinking_level: "medium".to_string(),
+            steering_mode: "one-at-a-time".to_string(),
+            follow_up_mode: "one-at-a-time".to_string(),
+            auto_compaction: false,
+            auto_retry: false,
             acp_session_id,
             pending_permissions: HashMap::new(),
             perm_counter: 1,
-            queued_prompts: VecDeque::new(),
+            terminals: AcpTerminalManager::new(),
+            steering_queue: VecDeque::new(),
+            follow_up_queue: VecDeque::new(),
             output,
         };
         bridge.sync_thinking_level_from_state();
@@ -772,16 +854,295 @@ impl AcpRpcBridge {
             "thinkingLevel": self.thinking_level,
             "isStreaming": is_streaming,
             "isCompacting": false,
-            "steeringMode": "one-at-a-time",
-            "followUpMode": "one-at-a-time",
+            "steeringMode": self.steering_mode,
+            "followUpMode": self.follow_up_mode,
             "sessionFile": self.mirror.session_file.to_string_lossy(),
             "sessionId": self.mirror.session_id,
-            "sessionName": Value::Null,
-            "autoCompactionEnabled": false,
-            "autoRetryEnabled": false,
+            "sessionName": self.mirror.session_name,
+            "autoCompactionEnabled": self.auto_compaction,
+            "autoRetryEnabled": self.auto_retry,
             "messageCount": self.mirror.ui_messages.len(),
-            "pendingMessageCount": self.queued_prompts.len(),
+            "pendingMessageCount": self.steering_queue.len() + self.follow_up_queue.len(),
         })
+    }
+
+    fn emit_queue_update(&self) {
+        let steering: Vec<&str> = self
+            .steering_queue
+            .iter()
+            .map(|(m, _)| m.as_str())
+            .collect();
+        let follow_up: Vec<&str> = self
+            .follow_up_queue
+            .iter()
+            .map(|(m, _)| m.as_str())
+            .collect();
+        self.send_line(&json!({
+            "type": "queue_update",
+            "steering": steering,
+            "followUp": follow_up,
+        }));
+    }
+
+    fn pop_next_queued_prompt(&mut self) -> Option<(String, Vec<(String, String)>)> {
+        let next = if !self.steering_queue.is_empty() {
+            if self.steering_mode == "all" && self.steering_queue.len() > 1 {
+                let mut texts = Vec::new();
+                let mut imgs = Vec::new();
+                while let Some((m, i)) = self.steering_queue.pop_front() {
+                    if !m.is_empty() {
+                        texts.push(m);
+                    }
+                    imgs.extend(i);
+                }
+                Some((texts.join("\n\n"), imgs))
+            } else {
+                self.steering_queue.pop_front()
+            }
+        } else if !self.follow_up_queue.is_empty() {
+            if self.follow_up_mode == "all" && self.follow_up_queue.len() > 1 {
+                let mut texts = Vec::new();
+                let mut imgs = Vec::new();
+                while let Some((m, i)) = self.follow_up_queue.pop_front() {
+                    if !m.is_empty() {
+                        texts.push(m);
+                    }
+                    imgs.extend(i);
+                }
+                Some((texts.join("\n\n"), imgs))
+            } else {
+                self.follow_up_queue.pop_front()
+            }
+        } else {
+            None
+        };
+        if next.is_some() {
+            self.emit_queue_update();
+        }
+        next
+    }
+
+    fn record_usage(&mut self, sample: AcpUsageSample) {
+        if sample.input_tokens > 0
+            || sample.output_tokens > 0
+            || sample.cache_read_tokens > 0
+            || sample.cache_write_tokens > 0
+        {
+            self.usage.input_tokens = self.usage.input_tokens.saturating_add(sample.input_tokens);
+            self.usage.output_tokens = self
+                .usage
+                .output_tokens
+                .saturating_add(sample.output_tokens);
+            self.usage.cache_read_tokens = self
+                .usage
+                .cache_read_tokens
+                .saturating_add(sample.cache_read_tokens);
+            self.usage.cache_write_tokens = self
+                .usage
+                .cache_write_tokens
+                .saturating_add(sample.cache_write_tokens);
+            self.usage.total_tokens = self
+                .usage
+                .input_tokens
+                .saturating_add(self.usage.output_tokens)
+                .saturating_add(self.usage.cache_read_tokens)
+                .saturating_add(self.usage.cache_write_tokens);
+        }
+        if let Some(u) = sample.used_tokens {
+            self.usage.context_tokens = Some(u);
+        }
+        if let Some(s) = sample.context_window.filter(|&v| v > 0) {
+            self.usage.context_window = Some(s);
+        }
+        if let Some(c) = sample.cost_amount {
+            if sample.used_tokens.is_some() {
+                // `usage_update` menyertakan snapshot biaya kumulatif sesi
+                self.usage.cost_amount = c;
+            } else {
+                self.usage.cost_amount += c;
+            }
+        }
+    }
+
+    fn session_stats_json(&self) -> Value {
+        let mut user_messages = 0usize;
+        let mut assistant_messages = 0usize;
+        let mut tool_calls = 0usize;
+        let mut tool_results = 0usize;
+        for msg in &self.mirror.ui_messages {
+            match msg["role"].as_str().unwrap_or_default() {
+                "user" => user_messages += 1,
+                "assistant" => {
+                    assistant_messages += 1;
+                    if let Some(blocks) = msg["content"].as_array() {
+                        tool_calls += blocks
+                            .iter()
+                            .filter(|b| b["type"].as_str() == Some("toolCall"))
+                            .count();
+                    }
+                }
+                "toolResult" => tool_results += 1,
+                _ => {}
+            }
+        }
+        let total_tokens = if self.usage.total_tokens > 0 {
+            self.usage.total_tokens
+        } else {
+            self.usage.context_tokens.unwrap_or(0)
+        };
+        let context_usage = match (self.usage.context_tokens, self.usage.context_window) {
+            (Some(tokens), Some(win)) if win > 0 => json!({
+                "tokens": tokens,
+                "contextWindow": win,
+                "percent": (tokens as f64 / win as f64) * 100.0,
+            }),
+            (Some(tokens), _) => json!({
+                "tokens": tokens,
+                "contextWindow": Value::Null,
+                "percent": Value::Null,
+            }),
+            _ => Value::Null,
+        };
+        json!({
+            "sessionFile": self.mirror.session_file.to_string_lossy(),
+            "sessionId": self.mirror.session_id,
+            "userMessages": user_messages,
+            "assistantMessages": assistant_messages,
+            "toolCalls": tool_calls,
+            "toolResults": tool_results,
+            "totalMessages": self.mirror.ui_messages.len(),
+            "tokens": {
+                "input": self.usage.input_tokens,
+                "output": self.usage.output_tokens,
+                "cacheRead": self.usage.cache_read_tokens,
+                "cacheWrite": self.usage.cache_write_tokens,
+                "total": total_tokens,
+            },
+            "cost": self.usage.cost_amount,
+            "contextUsage": context_usage,
+        })
+    }
+
+    fn export_html(&self, requested_path: Option<&str>) -> Result<String, String> {
+        let out_path = match requested_path.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(p) => {
+                let pb = PathBuf::from(p);
+                if pb.is_absolute() {
+                    pb
+                } else {
+                    self.config.cwd.join(pb)
+                }
+            }
+            None => self.mirror.session_file.with_extension("html"),
+        };
+        if let Some(parent) = out_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let html = render_acp_session_html(
+            &self.mirror.session_id,
+            self.mirror.session_name.as_deref(),
+            &self.config.cwd,
+            &self.active_model_name,
+            &self.mirror.ui_messages,
+        );
+        std::fs::write(&out_path, html)
+            .map_err(|e| format!("Gagal menulis file HTML '{}': {}", out_path.display(), e))?;
+        Ok(out_path.to_string_lossy().to_string())
+    }
+
+    async fn reset_to_acp_session(&mut self, session_path: Option<PathBuf>) -> Result<(), String> {
+        let mut next_mirror = AcpSessionMirror::open_or_new(
+            &self.config.config_dir,
+            &self.config.cwd,
+            &self.config.engine_id,
+            session_path,
+        );
+        let cwd_str = self.config.cwd.to_string_lossy().to_string();
+        let session_res = if self.supports_load {
+            if let Some(prev_sid) = next_mirror.acp_session_id.clone() {
+                match self
+                    .client
+                    .request_with_timeout(
+                        "session/load",
+                        build_session_load_params(&prev_sid, &cwd_str),
+                        Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                    )
+                    .await
+                {
+                    Ok(mut v) => {
+                        if v.get("sessionId").and_then(|s| s.as_str()).is_none() {
+                            v["sessionId"] = json!(prev_sid);
+                        }
+                        v
+                    }
+                    Err(_) => self
+                        .client
+                        .request_with_timeout(
+                            "session/new",
+                            build_session_new_params(&cwd_str),
+                            Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                        )
+                        .await
+                        .map_err(|e| format!("Gagal membuat sesi ACP baru: {}", e))?,
+                }
+            } else {
+                self.client
+                    .request_with_timeout(
+                        "session/new",
+                        build_session_new_params(&cwd_str),
+                        Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                    )
+                    .await
+                    .map_err(|e| format!("Gagal membuat sesi ACP baru: {}", e))?
+            }
+        } else {
+            self.client
+                .request_with_timeout(
+                    "session/new",
+                    build_session_new_params(&cwd_str),
+                    Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                )
+                .await
+                .map_err(|e| format!("Gagal membuat sesi ACP baru: {}", e))?
+        };
+
+        let acp_session_id = session_res["sessionId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("acp-{}", epoch_ms()));
+        next_mirror.record_acp_session_id(acp_session_id.clone());
+
+        let (parsed_current, available_models) = parse_session_models(&session_res);
+        let config_options = parse_session_config_options(&session_res);
+        let (active_mode_id, available_modes) = parse_session_modes(&session_res);
+
+        self.mirror = next_mirror;
+        self.acp_session_id = acp_session_id;
+        if !available_models.is_empty() {
+            self.available_models = available_models;
+        }
+        if let Some(mid) = parsed_current {
+            self.active_model_id = mid.clone();
+            self.active_model_name = self
+                .available_models
+                .iter()
+                .find(|m| m.model_id == mid)
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| format!("{} ({})", self.config.display_name, mid));
+        }
+        if !config_options.is_empty() {
+            self.apply_config_options(config_options);
+        }
+        if !available_modes.is_empty() {
+            self.available_modes = available_modes;
+        }
+        self.active_mode_id = active_mode_id;
+        self.usage = AcpUsageStats::default();
+        self.steering_queue.clear();
+        self.follow_up_queue.clear();
+        self.emit_queue_update();
+        Ok(())
     }
 
     fn close_open_block(&self, turn: &mut StreamingTurnState) {
@@ -1083,53 +1444,179 @@ impl AcpRpcBridge {
                     self.apply_config_options(config_options);
                 }
             }
+            AcpSessionUpdate::AvailableCommandsUpdate { commands } => {
+                self.available_commands = commands;
+            }
+            AcpSessionUpdate::SessionInfoUpdate { title } => {
+                if let Some(name) = title
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                {
+                    if self.mirror.session_name.as_deref() != Some(name.as_str()) {
+                        self.mirror.session_name = Some(name.clone());
+                        self.mirror
+                            .append_entry("session_info", json!({ "name": name }));
+                        self.send_line(&json!({
+                            "type": "session_info_changed",
+                            "name": name,
+                        }));
+                    }
+                }
+            }
+            AcpSessionUpdate::CurrentModeUpdate { current_mode_id } => {
+                let trimmed = current_mode_id.trim();
+                if !trimmed.is_empty() {
+                    self.active_mode_id = Some(trimmed.to_string());
+                }
+            }
+            AcpSessionUpdate::UsageUpdate {
+                used_tokens,
+                context_window,
+                cost_amount,
+            } => {
+                self.record_usage(AcpUsageSample {
+                    used_tokens,
+                    context_window,
+                    cost_amount,
+                    ..Default::default()
+                });
+            }
             AcpSessionUpdate::Unknown(_) => {}
         }
     }
 
     async fn handle_agent_request(&mut self, id: Value, method: &str, params: &Value) {
-        if method == "session/request_permission" {
-            let perm = parse_permission_request(params);
-            let req_id = format!("acp-perm-{}", self.perm_counter);
-            self.perm_counter += 1;
+        match method {
+            "session/request_permission" => {
+                let perm = parse_permission_request(params);
+                let req_id = format!("acp-perm-{}", self.perm_counter);
+                self.perm_counter += 1;
 
-            let ui_tool_name = map_acp_tool_kind_to_oopbot(&perm.kind);
-            let options_json: Vec<Value> = perm
-                .options
-                .iter()
-                .map(|o| {
-                    json!({
-                        "optionId": o.option_id,
-                        "name": o.name,
-                        "kind": o.kind,
+                let ui_tool_name = map_acp_tool_kind_to_oopbot(&perm.kind);
+                let options_json: Vec<Value> = perm
+                    .options
+                    .iter()
+                    .map(|o| {
+                        json!({
+                            "optionId": o.option_id,
+                            "name": o.name,
+                            "kind": o.kind,
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            self.send_channel(
-                "tool_approval",
-                json!({
-                    "requestId": req_id,
-                    "toolCallId": perm.tool_call_id,
-                    "toolName": ui_tool_name,
-                    "preview": perm.title,
-                    "args": perm.raw_input,
-                    "options": options_json,
-                }),
-            );
+                self.send_channel(
+                    "tool_approval",
+                    json!({
+                        "requestId": req_id,
+                        "toolCallId": perm.tool_call_id,
+                        "toolName": ui_tool_name,
+                        "preview": perm.title,
+                        "args": perm.raw_input,
+                        "options": options_json,
+                    }),
+                );
 
-            self.pending_permissions.insert(
-                req_id,
-                PendingPermission {
-                    rpc_id: id,
-                    request: perm,
-                },
-            );
-        } else {
-            let _ = self
-                .client
-                .respond_error(id, -32601, &format!("Method '{}' tidak didukung", method))
-                .await;
+                self.pending_permissions.insert(
+                    req_id,
+                    PendingPermission {
+                        rpc_id: id,
+                        request: perm,
+                    },
+                );
+            }
+            "fs/read_text_file" => {
+                match handle_fs_read_text_file(&self.config.cwd, params) {
+                    Ok(res) => {
+                        let _ = self.client.respond_result(id, res).await;
+                    }
+                    Err((code, msg)) => {
+                        let _ = self.client.respond_error(id, code, &msg).await;
+                    }
+                }
+            }
+            "fs/write_text_file" => {
+                match handle_fs_write_text_file(&self.config.cwd, params) {
+                    Ok(res) => {
+                        let _ = self.client.respond_result(id, res).await;
+                    }
+                    Err((code, msg)) => {
+                        let _ = self.client.respond_error(id, code, &msg).await;
+                    }
+                }
+            }
+            "terminal/create" => {
+                match self.terminals.create(&self.config.cwd, params) {
+                    Ok(tid) => {
+                        let _ = self
+                            .client
+                            .respond_result(id, json!({ "terminalId": tid }))
+                            .await;
+                    }
+                    Err((code, msg)) => {
+                        let _ = self.client.respond_error(id, code, &msg).await;
+                    }
+                }
+            }
+            "terminal/output" => match self.terminals.output(params) {
+                Ok(res) => {
+                    let _ = self.client.respond_result(id, res).await;
+                }
+                Err((code, msg)) => {
+                    let _ = self.client.respond_error(id, code, &msg).await;
+                }
+            },
+            "terminal/wait_for_exit" => match self.terminals.exit_watcher(params) {
+                Ok(mut rx) => {
+                    let responder = self.client.responder();
+                    tokio::spawn(async move {
+                        let outcome = match rx.wait_for(|v| v.is_some()).await {
+                            Ok(guard) => Ok(guard.as_ref().map(|exit| exit.to_json())),
+                            Err(_) => Err(()),
+                        };
+                        match outcome {
+                            Ok(Some(res)) => {
+                                let _ = responder.respond_result(id, res).await;
+                            }
+                            Ok(None) => {
+                                let _ = responder
+                                    .respond_error(id, -32000, "Terminal ditutup sebelum keluar")
+                                    .await;
+                            }
+                            Err(()) => {
+                                let _ = responder
+                                    .respond_error(id, -32000, "Terminal dilepas sebelum keluar")
+                                    .await;
+                            }
+                        }
+                    });
+                }
+                Err((code, msg)) => {
+                    let _ = self.client.respond_error(id, code, &msg).await;
+                }
+            },
+            "terminal/kill" => match self.terminals.kill(params) {
+                Ok(res) => {
+                    let _ = self.client.respond_result(id, res).await;
+                }
+                Err((code, msg)) => {
+                    let _ = self.client.respond_error(id, code, &msg).await;
+                }
+            },
+            "terminal/release" => match self.terminals.release(params) {
+                Ok(res) => {
+                    let _ = self.client.respond_result(id, res).await;
+                }
+                Err((code, msg)) => {
+                    let _ = self.client.respond_error(id, code, &msg).await;
+                }
+            },
+            _ => {
+                let _ = self
+                    .client
+                    .respond_error(id, -32601, &format!("Method '{}' tidak didukung", method))
+                    .await;
+            }
         }
     }
 
@@ -1212,6 +1699,9 @@ impl AcpRpcBridge {
     ) {
         match outcome {
             Ok(res) => {
+                if let Some(sample) = extract_usage_stats(&res) {
+                    self.record_usage(sample);
+                }
                 let stop_reason_raw = res["stopReason"].as_str().unwrap_or("end_turn");
                 let aborted = turn.aborted
                     || stop_reason_raw.eq_ignore_ascii_case("cancelled")
@@ -1347,7 +1837,7 @@ impl AcpRpcBridge {
                         self.finish_turn(turn, outcome);
                     }
                     // Proses antrean prompt berikutnya jika ada
-                    if let Some((next_msg, next_imgs)) = self.queued_prompts.pop_front() {
+                    if let Some((next_msg, next_imgs)) = self.pop_next_queued_prompt() {
                         match self.start_prompt_turn(next_msg, next_imgs).await {
                             Ok((turn, rx)) => {
                                 active_turn = Some(turn);
@@ -1389,7 +1879,22 @@ impl AcpRpcBridge {
                             );
                         }
                         "get_commands" => {
-                            self.send_response(&id, "get_commands", json!({ "commands": [] }));
+                            let cmds: Vec<Value> = self
+                                .available_commands
+                                .iter()
+                                .map(|c| {
+                                    let mut obj = json!({
+                                        "name": c.name,
+                                        "description": c.description,
+                                        "source": "acp",
+                                    });
+                                    if let Some(ref hint) = c.input_hint {
+                                        obj["inputHint"] = json!(hint);
+                                    }
+                                    obj
+                                })
+                                .collect();
+                            self.send_response(&id, "get_commands", json!({ "commands": cmds }));
                         }
                         "get_available_models" => {
                             let models = self.available_models_json();
@@ -1409,6 +1914,25 @@ impl AcpRpcBridge {
                                 Err(err) => self.send_error(&id, "set_model", &err),
                             }
                         }
+                        "cycle_model" => {
+                            if self.available_models.len() <= 1 {
+                                self.send_response(&id, "cycle_model", Value::Null);
+                            } else {
+                                let cur_idx = self
+                                    .available_models
+                                    .iter()
+                                    .position(|m| m.model_id == self.active_model_id)
+                                    .unwrap_or(0);
+                                let next_id = self.available_models
+                                    [(cur_idx + 1) % self.available_models.len()]
+                                .model_id
+                                .clone();
+                                match self.switch_acp_model(&next_id, true).await {
+                                    Ok(model) => self.send_response(&id, "cycle_model", model),
+                                    Err(err) => self.send_error(&id, "cycle_model", &err),
+                                }
+                            }
+                        }
                         "get_available_thinking_levels" => {
                             let levels = self.available_thinking_levels();
                             self.send_response(
@@ -1424,27 +1948,236 @@ impl AcpRpcBridge {
                                 Err(err) => self.send_error(&id, "set_thinking_level", &err),
                             }
                         }
-                        "get_session_stats" => {
+                        "cycle_thinking_level" => {
+                            let levels = self.available_thinking_levels();
+                            if levels.len() <= 1 {
+                                self.send_response(&id, "cycle_thinking_level", Value::Null);
+                            } else {
+                                let cur_idx = levels
+                                    .iter()
+                                    .position(|l| l.eq_ignore_ascii_case(&self.thinking_level))
+                                    .unwrap_or(0);
+                                let next_lvl = levels[(cur_idx + 1) % levels.len()].clone();
+                                match self.switch_acp_thinking_level(&next_lvl, true).await {
+                                    Ok(lvl) => self.send_response(
+                                        &id,
+                                        "cycle_thinking_level",
+                                        json!({ "level": lvl }),
+                                    ),
+                                    Err(err) => self.send_error(&id, "cycle_thinking_level", &err),
+                                }
+                            }
+                        }
+                        "get_modes" => {
+                            let modes: Vec<Value> = self
+                                .available_modes
+                                .iter()
+                                .map(|m| {
+                                    json!({
+                                        "id": m.id,
+                                        "name": m.name,
+                                        "description": m.description,
+                                    })
+                                })
+                                .collect();
                             self.send_response(
                                 &id,
-                                "get_session_stats",
+                                "get_modes",
                                 json!({
-                                    "sessionFile": self.mirror.session_file.to_string_lossy(),
-                                    "sessionId": self.mirror.session_id,
-                                    "totalMessages": self.mirror.ui_messages.len(),
-                                    "tokens": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 },
-                                    "cost": 0.0,
+                                    "currentModeId": self.active_mode_id,
+                                    "modes": modes,
                                 }),
                             );
                         }
-                        "prompt" => {
+                        "set_mode" => {
+                            let mode_id = cmd["modeId"].as_str().unwrap_or_default().trim().to_string();
+                            if mode_id.is_empty() {
+                                self.send_error(&id, "set_mode", "modeId wajib diisi");
+                            } else {
+                                match self
+                                    .client
+                                    .request_with_timeout(
+                                        "session/set_mode",
+                                        build_session_set_mode_params(&self.acp_session_id, &mode_id),
+                                        Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        self.active_mode_id = Some(mode_id);
+                                        self.send_response(&id, "set_mode", json!({}));
+                                    }
+                                    Err(e) => self.send_error(
+                                        &id,
+                                        "set_mode",
+                                        &format!("Gagal mengganti mode ACP: {}", e),
+                                    ),
+                                }
+                            }
+                        }
+                        "get_session_stats" => {
+                            let stats = self.session_stats_json();
+                            self.send_response(&id, "get_session_stats", stats);
+                        }
+                        "get_last_assistant_text" => {
+                            let text = self
+                                .mirror
+                                .ui_messages
+                                .iter()
+                                .rev()
+                                .find(|m| m["role"].as_str() == Some("assistant"))
+                                .and_then(|m| {
+                                    if let Some(s) = m["content"].as_str() {
+                                        return Some(s.to_string());
+                                    }
+                                    let parts: Vec<&str> = m["content"]
+                                        .as_array()?
+                                        .iter()
+                                        .filter(|b| b["type"].as_str() == Some("text"))
+                                        .filter_map(|b| b["text"].as_str())
+                                        .collect();
+                                    if parts.is_empty() {
+                                        None
+                                    } else {
+                                        Some(parts.join("\n"))
+                                    }
+                                });
+                            self.send_response(
+                                &id,
+                                "get_last_assistant_text",
+                                json!({ "text": text }),
+                            );
+                        }
+                        "get_fork_messages" => {
+                            let messages: Vec<Value> = self
+                                .mirror
+                                .user_entries
+                                .iter()
+                                .map(|(eid, text)| json!({ "entryId": eid, "text": text }))
+                                .collect();
+                            self.send_response(
+                                &id,
+                                "get_fork_messages",
+                                json!({ "messages": messages }),
+                            );
+                        }
+                        "set_session_name" => {
+                            let name = cmd["name"].as_str().unwrap_or_default().trim().to_string();
+                            if name.is_empty() {
+                                self.send_error(
+                                    &id,
+                                    "set_session_name",
+                                    "Nama sesi tidak boleh kosong",
+                                );
+                            } else {
+                                self.mirror.session_name = Some(name.clone());
+                                self.mirror
+                                    .append_entry("session_info", json!({ "name": name }));
+                                self.send_line(&json!({
+                                    "type": "session_info_changed",
+                                    "name": name,
+                                }));
+                                self.send_response(&id, "set_session_name", json!({}));
+                            }
+                        }
+                        "export_html" => {
+                            let req_path = cmd["path"].as_str();
+                            match self.export_html(req_path) {
+                                Ok(path) => {
+                                    self.send_response(&id, "export_html", json!({ "path": path }));
+                                }
+                                Err(err) => self.send_error(&id, "export_html", &err),
+                            }
+                        }
+                        "new_session" => {
+                            self.cancel_all_pending_permissions().await;
+                            active_prompt_rx.take();
+                            if let Some(mut turn) = active_turn.take() {
+                                turn.aborted = true;
+                                let _ = self
+                                    .client
+                                    .notify(
+                                        "session/cancel",
+                                        build_session_cancel_params(&self.acp_session_id),
+                                    )
+                                    .await;
+                                self.finish_turn(
+                                    turn,
+                                    Ok(json!({ "stopReason": "cancelled" })),
+                                );
+                            }
+                            match self.reset_to_acp_session(None).await {
+                                Ok(()) => {
+                                    self.send_response(
+                                        &id,
+                                        "new_session",
+                                        json!({ "cancelled": false }),
+                                    );
+                                }
+                                Err(err) => self.send_error(&id, "new_session", &err),
+                            }
+                        }
+                        "switch_session" => {
+                            let sp = cmd["sessionPath"].as_str().unwrap_or_default().trim();
+                            if sp.is_empty() {
+                                self.send_error(
+                                    &id,
+                                    "switch_session",
+                                    "sessionPath wajib diisi",
+                                );
+                            } else {
+                                self.cancel_all_pending_permissions().await;
+                                active_prompt_rx.take();
+                                if let Some(mut turn) = active_turn.take() {
+                                    turn.aborted = true;
+                                    let _ = self
+                                        .client
+                                        .notify(
+                                            "session/cancel",
+                                            build_session_cancel_params(&self.acp_session_id),
+                                        )
+                                        .await;
+                                    self.finish_turn(
+                                        turn,
+                                        Ok(json!({ "stopReason": "cancelled" })),
+                                    );
+                                }
+                                match self.reset_to_acp_session(Some(PathBuf::from(sp))).await {
+                                    Ok(()) => {
+                                        self.send_response(
+                                            &id,
+                                            "switch_session",
+                                            json!({ "cancelled": false }),
+                                        );
+                                    }
+                                    Err(err) => self.send_error(&id, "switch_session", &err),
+                                }
+                            }
+                        }
+                        "prompt" | "steer" | "follow_up" => {
                             let message = cmd["message"].as_str().unwrap_or_default().to_string();
                             let images = extract_prompt_images(&cmd["images"]);
                             if active_turn.is_some() {
-                                self.queued_prompts.push_back((message, images));
-                                self.send_response(&id, "prompt", json!({ "disposition": "queued" }));
+                                let is_steer = cmd_type == "steer"
+                                    || (cmd_type == "prompt"
+                                        && cmd["streamingBehavior"].as_str() == Some("steer"));
+                                if is_steer {
+                                    self.steering_queue.push_back((message, images));
+                                } else {
+                                    self.follow_up_queue.push_back((message, images));
+                                }
+                                self.emit_queue_update();
+                                self.send_response(
+                                    &id,
+                                    cmd_type,
+                                    json!({ "disposition": "queued" }),
+                                );
                             } else {
-                                self.send_response(&id, "prompt", json!({ "disposition": "started" }));
+                                self.send_response(
+                                    &id,
+                                    cmd_type,
+                                    json!({ "disposition": "started" }),
+                                );
                                 match self.start_prompt_turn(message, images).await {
                                     Ok((turn, rx)) => {
                                         active_turn = Some(turn);
@@ -1461,8 +2194,53 @@ impl AcpRpcBridge {
                                 }
                             }
                         }
+                        "set_steering_mode" => {
+                            let mode = cmd["mode"].as_str().unwrap_or_default().trim();
+                            if mode == "all" || mode == "one-at-a-time" {
+                                self.steering_mode = mode.to_string();
+                                self.send_response(&id, "set_steering_mode", json!({}));
+                            } else {
+                                self.send_error(
+                                    &id,
+                                    "set_steering_mode",
+                                    "mode harus 'all' atau 'one-at-a-time'",
+                                );
+                            }
+                        }
+                        "set_follow_up_mode" => {
+                            let mode = cmd["mode"].as_str().unwrap_or_default().trim();
+                            if mode == "all" || mode == "one-at-a-time" {
+                                self.follow_up_mode = mode.to_string();
+                                self.send_response(&id, "set_follow_up_mode", json!({}));
+                            } else {
+                                self.send_error(
+                                    &id,
+                                    "set_follow_up_mode",
+                                    "mode harus 'all' atau 'one-at-a-time'",
+                                );
+                            }
+                        }
+                        "set_auto_compaction" => {
+                            self.auto_compaction = cmd["enabled"].as_bool().unwrap_or(false);
+                            self.send_response(&id, "set_auto_compaction", json!({}));
+                        }
+                        "set_auto_retry" => {
+                            self.auto_retry = cmd["enabled"].as_bool().unwrap_or(false);
+                            self.send_response(&id, "set_auto_retry", json!({}));
+                        }
+                        "extension_ui_response" => {
+                            if !id.is_empty() {
+                                self.send_response(&id, "extension_ui_response", json!({}));
+                            }
+                        }
                         "abort" => {
-                            self.queued_prompts.clear();
+                            let had_queued = !self.steering_queue.is_empty()
+                                || !self.follow_up_queue.is_empty();
+                            self.steering_queue.clear();
+                            self.follow_up_queue.clear();
+                            if had_queued {
+                                self.emit_queue_update();
+                            }
                             self.cancel_all_pending_permissions().await;
                             if let Some(turn) = active_turn.as_mut() {
                                 turn.aborted = true;
@@ -1492,20 +2270,21 @@ impl AcpRpcBridge {
                             }
                         }
                         "clear_queue" => {
-                            let drained: Vec<String> = self
-                                .queued_prompts
+                            let steering: Vec<String> = self
+                                .steering_queue
                                 .drain(..)
                                 .map(|(m, _)| m)
                                 .collect();
-                            self.send_line(&json!({
-                                "type": "queue_update",
-                                "steering": [],
-                                "followUp": [],
-                            }));
+                            let follow_up: Vec<String> = self
+                                .follow_up_queue
+                                .drain(..)
+                                .map(|(m, _)| m)
+                                .collect();
+                            self.emit_queue_update();
                             self.send_response(
                                 &id,
                                 "clear_queue",
-                                json!({ "steering": [], "followUp": drained }),
+                                json!({ "steering": steering, "followUp": follow_up }),
                             );
                         }
                         other => {
@@ -1522,6 +2301,7 @@ impl AcpRpcBridge {
             }
         }
 
+        self.terminals.shutdown_all();
         self.client.shutdown().await;
         Ok(())
     }

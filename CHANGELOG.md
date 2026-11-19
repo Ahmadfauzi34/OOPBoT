@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.20] - 2026-11-19
+
+### Added
+- Full ACP capability & OOPBoT JSONL RPC parity in `src/interfaces/acp/`:
+  - Advertised ACP client capabilities (`fs.readTextFile`, `fs.writeTextFile`, `terminal: true`) and implemented Agent → Client handlers (`fs/read_text_file`, `fs/write_text_file`, `terminal/create`, `terminal/output`, non-blocking `terminal/wait_for_exit` via `AcpResponder`, `terminal/kill`, `terminal/release`) in `client_ops.rs` with process-tree cleanup on shutdown/drop.
+  - Handled extended ACP `session/update` notifications (`available_commands_update`, `session_info_update`, `current_mode_update`, `usage_update`) and `session/prompt` `usage` metadata.
+  - Implemented remaining JSONL RPC commands in `AcpRpcBridge`: `steer`, `follow_up`, `prompt` `streamingBehavior`, priority `clear_queue` + `queue_update`, `set_session_name` (persisted via `session_info`), `get_commands`, `get_session_stats` (live token/cost/contextUsage metrics), `get_last_assistant_text`, `get_fork_messages`, `export_html`, `new_session`, `switch_session`, `get_modes`, `set_mode`, `cycle_model`, `cycle_thinking_level`, `set_steering_mode`, `set_follow_up_mode`, `set_auto_compaction`, `set_auto_retry`, and `extension_ui_response`.
+
 ## [0.5.19] - 2026-11-19
 
 ### Added

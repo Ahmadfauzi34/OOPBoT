@@ -243,6 +243,13 @@ impl AcpClient {
         self.write_frame(&frame).await
     }
 
+    /// Cloneable handle ringan untuk membalas request Agent dari task background (mis. `terminal/wait_for_exit`).
+    pub fn responder(&self) -> AcpResponder {
+        AcpResponder {
+            stdin: Arc::clone(&self.stdin),
+        }
+    }
+
     /// Balas JSON-RPC Request dari Agent (mis. `session/request_permission`) dengan hasil sukses.
     pub async fn respond_result(&self, id: Value, result: Value) -> Result<(), BoxError> {
         let frame = build_response_ok(id, result);
@@ -275,5 +282,36 @@ impl AcpClient {
         let mut child = self.child.lock().await;
         let _ = child.start_kill();
         let _ = tokio::time::timeout(Duration::from_millis(500), child.wait()).await;
+    }
+}
+
+/// Handle ringan (Send + Clone) untuk membalas JSON-RPC request Agent tanpa menahan `&AcpClient`.
+#[derive(Clone)]
+pub struct AcpResponder {
+    stdin: Arc<AsyncMutex<tokio::process::ChildStdin>>,
+}
+
+impl AcpResponder {
+    async fn write_frame(&self, frame: &Value) -> Result<(), BoxError> {
+        let mut line = serde_json::to_string(frame)?;
+        line.push('\n');
+        let mut stdin = self.stdin.lock().await;
+        stdin.write_all(line.as_bytes()).await?;
+        stdin.flush().await?;
+        Ok(())
+    }
+
+    pub async fn respond_result(&self, id: Value, result: Value) -> Result<(), BoxError> {
+        self.write_frame(&build_response_ok(id, result)).await
+    }
+
+    pub async fn respond_error(
+        &self,
+        id: Value,
+        code: i64,
+        message: &str,
+    ) -> Result<(), BoxError> {
+        self.write_frame(&build_response_error(id, code, message))
+            .await
     }
 }
