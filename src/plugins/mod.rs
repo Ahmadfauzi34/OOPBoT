@@ -23,7 +23,7 @@ pub use todo::{
 };
 pub use web_access::{FetchPageTool, WebAccessPlugin, WebSearchTool};
 
-use crate::gemini::BoxError;
+use crate::common::BoxError;
 use crate::tools::ToolRegistry;
 use async_trait::async_trait;
 use serde_json::Value;
@@ -352,5 +352,68 @@ mod tests {
             plugin.system_prompt_append().is_none(),
             "SubagentsPlugin must not advertise delegation tools while none are registered"
         );
+    }
+
+    #[test]
+    fn all_default_tool_and_plugin_schemas_are_gemini_compatible() {
+        fn assert_schema_node_clean(tool_name: &str, schema: &Value) {
+            const UNSUPPORTED: &[&str] = &[
+                "additionalProperties",
+                "$schema",
+                "$id",
+                "$defs",
+                "definitions",
+                "default",
+                "examples",
+                "patternProperties",
+                "const",
+                "minLength",
+                "maxLength",
+                "minimum",
+                "maximum",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "multipleOf",
+                "uniqueItems",
+                "oneOf",
+                "anyOf",
+                "allOf",
+                "not",
+            ];
+            let Some(obj) = schema.as_object() else {
+                return;
+            };
+            for key in UNSUPPORTED {
+                assert!(
+                    !obj.contains_key(*key),
+                    "tool `{}` schema contains unsupported Gemini field `{}`: {}",
+                    tool_name,
+                    key,
+                    schema
+                );
+            }
+            if let Some(Value::Object(props)) = obj.get("properties") {
+                for prop_schema in props.values() {
+                    assert_schema_node_clean(tool_name, prop_schema);
+                }
+            }
+            if let Some(items) = obj.get("items") {
+                assert_schema_node_clean(tool_name, items);
+            }
+        }
+
+        let mut tools = ToolRegistry::with_defaults();
+        let mut plugins = PluginRegistry::with_defaults();
+        for id in ["todo", "web-access", "background", "subagents", "interact"] {
+            assert!(plugins.activate(id), "failed to activate plugin {}", id);
+        }
+        plugins.register_active_tools(&mut tools);
+
+        let decls = tools.declarations();
+        assert!(!decls.is_empty());
+        for decl in &decls {
+            let name = decl["name"].as_str().unwrap_or("<unknown>");
+            assert_schema_node_clean(name, &decl["parameters"]);
+        }
     }
 }

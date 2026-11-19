@@ -5,10 +5,10 @@ Modular `Plugin` & `PluginRegistry` layer decoupling high-level agent capabiliti
 
 ## Ownership
 - **Registry & Built-in Subagent Plugin:** `src/plugins/mod.rs` (`Plugin` trait, `PluginRegistry`, `SubagentsPlugin`).
-- **Web Search & Fetch Plugin:** `src/plugins/web_access/` (`mod.rs`, `providers.rs`, `html.rs`, `tests.rs`) — `WebAccessPlugin`, `WebSearchTool` (auto Google Search grounding via Gemini API when `google` provider auth is connected, Tavily, Brave, Serper, SearXNG, DuckDuckGo + automatic public JSON API fallback: DDG Instant, Wikipedia, GitHub, Hacker News), and `FetchPageTool`.
+- **Web Search & Fetch Plugin:** `src/plugins/web_access/` (`mod.rs`, `engines.rs`, `html.rs`, `tests.rs`) — `WebAccessPlugin`, `WebSearchTool` (auto Google Search grounding via Gemini API when `google` provider auth is connected, Tavily, Brave, Serper, SearXNG, DuckDuckGo + automatic public JSON API fallback: DDG Instant, Wikipedia, GitHub, Hacker News), and `FetchPageTool`.
 - **Background Process Runner:** `src/plugins/background/` (`mod.rs`, `buffer.rs`, `process.rs`, `tests.rs`) — `BackgroundPlugin`, `BackgroundTool`, bounded output buffers, completion callbacks (`BgCompletionEvent`).
 - **User Interaction Tools:** `src/plugins/interact.rs` (`InteractPlugin`, `notify_user`, `ask_user`, `UiDialogRequest` / `UiDialogAnswer`).
-- **Todo Checklist Plugin:** `src/plugins/todo.rs` (`TodoPlugin`, `TodoTool`, `TODO_STATE_ENTRY`, `TODO_WIDGET_KEY`).
+- **Todo Checklist Plugin:** `src/plugins/todo/` (`mod.rs`, `state.rs`, `actions.rs`, `format.rs`, `tests.rs`) — `TodoPlugin`, `TodoTool`, `TODO_STATE_ENTRY`, `TODO_WIDGET_KEY`.
 
 ## Local Contracts
 - **Strict Modularity:** Every new high-level capability MUST live under `src/plugins/` implementing `Plugin` (not hardcoded directly inside `src/agent.rs` or `src/main.rs`). Complex plugins with multiple concerns should use a subfolder (`src/plugins/<name>/mod.rs`).
@@ -28,4 +28,4 @@ Modular `Plugin` & `PluginRegistry` layer decoupling high-level agent capabiliti
 - Full crate regression: `cargo clippy --all-targets --locked -- -D warnings && cargo test --locked -- --test-threads=2`
 
 ## Child graph Index
-- None (leaf domain; `src/plugins/background/` and `src/plugins/web_access/` are governed by this contract).
+- None (leaf domain; `src/plugins/background/`, `src/plugins/web_access/`, and `src/plugins/todo/` are governed by this contract).

@@ -16,7 +16,7 @@ This repository follows the **graph (Documentation-as-Contract)** hierarchical s
   - **Child graph Index:** Linking child files/directories that have independent contracts.
 
 ### Top-Level Verification & Cross-Cutting Version Contract
-- **Version Lockstep:** Any bump to `package.version` in `Cargo.toml` MUST update `Cargo.lock`, `android/app/src/main/kotlin/io/jeph/oopbot/termux/TermuxSetup.kt` (`DEFAULT_OOPBOT_VERSION`), and `src/host/tests.rs` together.
+- **Version Lockstep:** Any bump to `package.version` in `Cargo.toml` MUST update `Cargo.lock`, `android/app/src/main/kotlin/io/jeph/oopbot/termux/TermuxSetup.kt` (`DEFAULT_OOPBOT_VERSION`), and `src/interfaces/host/tests.rs` together.
 - **Verification Suites:**
   - Rust Core/RPC/Host: `cargo clippy --all-targets --locked -- -D warnings && cargo test --locked -- --test-threads=2`
   - Android & Host TS: see `android/AGENTS.md` and `.github/workflows/android-test.yml`.
