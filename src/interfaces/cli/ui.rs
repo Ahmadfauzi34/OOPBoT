@@ -53,7 +53,9 @@ impl EventSink for CliEventSink {
             AgentEvent::TurnStart { model, .. } => {
                 println!("┌─ 🤖 Turn dimulai (model: {})", model);
             }
-            AgentEvent::Thinking { step_index, text } => {
+            AgentEvent::Thinking {
+                step_index, text, ..
+            } => {
                 if !text.is_empty() {
                     println!("├─ 💭 [step {}] {}", step_index, text);
                 }

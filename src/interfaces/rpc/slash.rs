@@ -450,9 +450,13 @@ impl RpcRuntime {
                 ))
             }
             "/clear" => {
+                self.ensure_session_header();
                 {
                     let mut state = self.ui_state.lock().unwrap_or_else(|e| e.into_inner());
                     state.ui_messages.clear();
+                    state.last_context_tokens = None;
+                    state.context_unknown = false;
+                    state.append_session_entry("context_reset", json!({ "reason": "clear" }));
                 }
                 self.agent.clear_memory_silent();
                 Some("Memori percakapan sesi ini telah dibersihkan.".to_string())

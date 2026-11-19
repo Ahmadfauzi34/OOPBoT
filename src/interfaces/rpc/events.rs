@@ -247,6 +247,7 @@ impl EventSink for RpcEventSink {
             AgentEvent::Thinking {
                 step_index: _,
                 text,
+                thought_signature,
             } => {
                 if text.trim().is_empty() {
                     return;
@@ -279,10 +280,18 @@ impl EventSink for RpcEventSink {
                         "content": text
                     }
                 }));
-                internal.content_blocks.push(json!({
+                let mut thinking_block = json!({
                     "type": "thinking",
                     "thinking": text
-                }));
+                });
+                if let Some(sig) = thought_signature
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    thinking_block["thoughtSignature"] = json!(sig);
+                }
+                internal.content_blocks.push(thinking_block);
                 internal.current_content_idx += 1;
             }
             AgentEvent::ToolCallStart {
@@ -292,6 +301,7 @@ impl EventSink for RpcEventSink {
                 args,
                 preview: _,
                 requires_confirmation: _,
+                thought_signature,
             } => {
                 let (ui_tool_name, ui_args) = map_tool_for_oopbot_ui(tool_name, args);
                 let mut internal = self.internal.lock().unwrap_or_else(|e| e.into_inner());
@@ -328,12 +338,20 @@ impl EventSink for RpcEventSink {
                         }
                     }
                 }));
-                internal.content_blocks.push(json!({
+                let mut tool_block = json!({
                     "type": "toolCall",
                     "id": call_id,
                     "name": ui_tool_name,
                     "arguments": ui_args
-                }));
+                });
+                if let Some(sig) = thought_signature
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    tool_block["thoughtSignature"] = json!(sig);
+                }
+                internal.content_blocks.push(tool_block);
                 internal.current_content_idx += 1;
                 internal
                     .pending_tool_calls

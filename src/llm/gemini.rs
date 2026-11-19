@@ -270,13 +270,20 @@ pub fn parse_model_turn(res_json: &Value) -> Result<ModelTurn, BoxError> {
 
     let mut text = String::new();
     let mut thoughts = Vec::new();
+    let mut thought_signatures = Vec::new();
     let mut function_calls = Vec::new();
     if let Some(parts) = content["parts"].as_array() {
         for part in parts {
+            let part_sig = part["thoughtSignature"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
             // Simpan "thought summary" ke `thoughts` untuk ditampilkan di StepFigure aplikasi.
             if part["thought"].as_bool() == Some(true) {
                 if let Some(t) = part["text"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
                     thoughts.push(t.to_string());
+                    thought_signatures.push(part_sig);
                 }
                 continue;
             }
@@ -288,6 +295,7 @@ pub fn parse_model_turn(res_json: &Value) -> Result<ModelTurn, BoxError> {
                     id: fc["id"].as_str().map(str::to_string),
                     name: fc["name"].as_str().unwrap_or_default().to_string(),
                     args: fc.get("args").cloned().unwrap_or_else(|| json!({})),
+                    thought_signature: part_sig,
                 });
             }
         }
@@ -313,6 +321,7 @@ pub fn parse_model_turn(res_json: &Value) -> Result<ModelTurn, BoxError> {
         raw_content,
         text: text.trim().to_string(),
         thoughts,
+        thought_signatures,
         function_calls,
         usage,
     })

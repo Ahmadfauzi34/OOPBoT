@@ -170,7 +170,12 @@ impl LlmClient {
                     raw_parts.push(json!({
                         "functionCall": { "id": id, "name": name, "args": args }
                     }));
-                    function_calls.push(FunctionCall { id, name, args });
+                    function_calls.push(FunctionCall {
+                        id,
+                        name,
+                        args,
+                        thought_signature: None,
+                    });
                 }
                 _ => {}
             }
@@ -185,10 +190,12 @@ impl LlmClient {
             })
         });
 
+        let thought_signatures = vec![None; thoughts.len()];
         Ok(ModelTurn {
             raw_content: json!({ "role": "model", "parts": raw_parts }),
             text: text.trim().to_string(),
             thoughts,
+            thought_signatures,
             function_calls,
             usage,
         })

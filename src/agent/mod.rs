@@ -431,6 +431,15 @@ impl AgentHarness {
         self.persist_tabs(&tabs);
     }
 
+    pub fn active_history_len(&self) -> usize {
+        self.tabs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .active()
+            .history
+            .len()
+    }
+
     pub fn tool_names(&self) -> Vec<&'static str> {
         self.tools.names()
     }

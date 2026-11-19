@@ -44,6 +44,8 @@ pub enum AgentEvent {
     Thinking {
         step_index: usize,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     /// Model meminta eksekusi tool.
     ToolCallStart {
@@ -53,6 +55,8 @@ pub enum AgentEvent {
         args: Value,
         preview: String,
         requires_confirmation: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     /// Tool selesai (atau ditolak/error).
     ToolCallEnd {
@@ -218,6 +222,7 @@ mod tests {
         collector.on_event(&AgentEvent::Thinking {
             step_index: 1,
             text: "Cek direktori kerja dulu.".into(),
+            thought_signature: None,
         });
         collector.on_event(&AgentEvent::ToolCallStart {
             step_index: 1,
@@ -226,6 +231,7 @@ mod tests {
             args: json!({"path": "."}),
             preview: ".".into(),
             requires_confirmation: false,
+            thought_signature: None,
         });
         collector.on_event(&AgentEvent::ToolCallEnd {
             step_index: 1,

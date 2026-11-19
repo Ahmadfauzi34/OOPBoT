@@ -94,15 +94,19 @@ impl RpcRuntime {
         &self,
         custom_type: &str,
         summary: &str,
+        context_text: &str,
     ) -> u64 {
         let started_ms = epoch_ms();
-        let custom_msg = json!({
+        let mut custom_msg = json!({
             "role": "custom",
             "customType": custom_type,
             "display": true,
             "content": [{ "type": "text", "text": summary }],
             "timestamp": started_ms,
         });
+        if !context_text.trim().is_empty() && context_text != summary {
+            custom_msg["details"] = json!({ "contextText": context_text });
+        }
         Self::send_line(&json!({ "type": "message_start", "message": custom_msg }));
         Self::send_line(&json!({ "type": "message_end", "message": custom_msg }));
         {
@@ -116,7 +120,9 @@ impl RpcRuntime {
 
     pub(super) fn emit_and_persist_queued_prompt(&self, q: &QueuedPrompt) -> u64 {
         match &q.custom_notice {
-            Some(meta) => self.emit_and_persist_wakeup_message(&meta.custom_type, &meta.summary),
+            Some(meta) => {
+                self.emit_and_persist_wakeup_message(&meta.custom_type, &meta.summary, &q.message)
+            }
             None => self.emit_and_persist_user_message(&q.message, &q.images),
         }
     }
@@ -280,7 +286,9 @@ impl RpcRuntime {
         self.refresh_credentials();
         self.sync_thinking_level_for_active_model();
         let started_ms = match custom_notice {
-            Some(meta) => self.emit_and_persist_wakeup_message(&meta.custom_type, &meta.summary),
+            Some(meta) => {
+                self.emit_and_persist_wakeup_message(&meta.custom_type, &meta.summary, prompt)
+            }
             None => self.emit_and_persist_user_message(prompt, images),
         };
 
@@ -318,17 +326,23 @@ impl RpcRuntime {
         }
 
         let input = ChatInput::with_images(prompt.to_string(), images.to_vec());
+        let history_len_before = self.agent.active_history_len();
         let max_attempts = if auto_retry_enabled { 3usize } else { 1usize };
         let mut attempt = 0usize;
         let mut retry_started = false;
 
         loop {
             attempt += 1;
-            match self
-                .agent
-                .chat_turn_cancellable(&input, cancel_rx.clone(), Some(Arc::clone(steer_hook)))
-                .await
-            {
+            let turn_call = if attempt > 1 && self.agent.active_history_len() > history_len_before {
+                self.agent
+                    .continue_turn_cancellable(&input, cancel_rx.clone(), Some(Arc::clone(steer_hook)))
+                    .await
+            } else {
+                self.agent
+                    .chat_turn_cancellable(&input, cancel_rx.clone(), Some(Arc::clone(steer_hook)))
+                    .await
+            };
+            match turn_call {
                 Ok(outcome) => {
                     if retry_started {
                         Self::send_line(&json!({
