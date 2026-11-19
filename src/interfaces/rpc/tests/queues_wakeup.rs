@@ -1085,18 +1085,44 @@ async fn background_completion_queues_followup_when_streaming() {
         .await
         .unwrap();
 
-    // 3. Tunggu queue_update berisi ringkasan wakeup di followUp
-    let qu = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
-        v["type"] == "queue_update"
-            && v["followUp"]
-                .as_array()
-                .map(|a| !a.is_empty())
-                .unwrap_or(false)
-    })
-    .await;
-    assert!(qu["followUp"][0].as_str().unwrap_or("").contains("stream-job"));
+    // 3. Tunggu task background selesai (oopbot_channel background active=0) lalu pastikan
+    //    wakeup internal TIDAK bocor ke `queue_update` (kartu STEERING Android) atau `clear_queue`.
+    let mut leaked_queue_update = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let rem = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if rem.is_zero() {
+            panic!("timeout menunggu oopbot_channel background active=0");
+        }
+        let ev = tokio::time::timeout(rem, out_rx.recv())
+            .await
+            .expect("timeout menerima event")
+            .expect("output sink ditutup");
+        if ev["type"] == "queue_update" {
+            let s = ev.to_string();
+            if s.contains("stream-job") || s.contains("Background #") {
+                leaked_queue_update = true;
+            }
+        }
+        if ev["type"] == "oopbot_channel"
+            && ev["topic"] == "background"
+            && ev["data"]["active"] == 0
+        {
+            break;
+        }
+    }
+    assert!(
+        !leaked_queue_update,
+        "GATE: background wakeup tidak boleh bocor ke queue_update (STEERING UI)"
+    );
 
-    // 4. Lepas gate HTTP -> coordinator langsung memproses follow-up wakeup otomatis
+    // clear_queue milik user tidak boleh menghapus atau membocorkan background wakeup ke composer
+    send_cmd(&cmd_tx, json!({ "id": "cq_bg", "type": "clear_queue" }));
+    let cq_resp = recv_response(&mut out_rx, "cq_bg", std::time::Duration::from_secs(1)).await;
+    assert_eq!(cq_resp["data"]["steering"], json!([]));
+    assert_eq!(cq_resp["data"]["followUp"], json!([]));
+
+    // 4. Lepas gate HTTP -> coordinator tetap memproses wakeup internal otomatis (tanpa silent failure)
     gate.notify_one();
 
     let custom_ev = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
@@ -1126,6 +1152,236 @@ async fn background_completion_queues_followup_when_streaming() {
     drop(cmd_tx);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
     mock_handle.abort();
+}
+
+#[tokio::test]
+async fn gate_instant_failed_background_observed_or_cleared_suppresses_ghost_wakeup() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_no_ghost_wakeup");
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gate_srv = Arc::clone(&gate);
+    let (http_blocked_tx, http_blocked_rx) = tokio::sync::oneshot::channel::<()>();
+    let http_blocked_tx = Arc::new(Mutex::new(Some(http_blocked_tx)));
+
+    let (base_url, reqs, mock_handle) = spawn_mock_llm_server(move |idx, _req| {
+        let gate_srv = Arc::clone(&gate_srv);
+        let http_blocked_tx = Arc::clone(&http_blocked_tx);
+        async move {
+            if idx == 0 {
+                if let Some(tx) = http_blocked_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+                gate_srv.notified().await;
+                (200, gemini_text_resp("Server pengganti sudah jalan.", 25, 10))
+            } else {
+                (200, gemini_text_resp("GHOST_WAKEUP_SHOULD_NOT_HAPPEN", 20, 10))
+            }
+        }
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-gate-ghost",
+    );
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["oopbot-background".to_string()],
+    )
+    .unwrap();
+
+    let mut tool_reg = crate::tools::ToolRegistry::new();
+    server
+        .runtime
+        .plugins
+        .get_plugin("oopbot-background")
+        .unwrap()
+        .register_tools(&mut tool_reg);
+    let bg_tool = tool_reg.get("background").unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server
+            .run_loop_with_input(io::BufReader::new(reader))
+            .await
+            .unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    // 1. Mulai turn streaming (tertahan di HTTP gate)
+    send_cmd(
+        &cmd_tx,
+        json!({ "id": "p_ghost", "type": "prompt", "message": "nyalakan server bun" }),
+    );
+    let _ = recv_response(&mut out_rx, "p_ghost", std::time::Duration::from_millis(500)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), http_blocked_rx)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // 2. Reproduksi screenshot: dua task gagal instan (`exit 1` / `exit 2`) saat Streaming
+    let t1 = bg_tool
+        .execute(&json!({
+            "action": "start",
+            "label": "Bun Web Server (Sed Upgrade)",
+            "command": "echo EADDRINUSE >&2; exit 1"
+        }))
+        .await
+        .unwrap();
+    let t1_id = t1["id"].as_u64().unwrap();
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "oopbot_channel" && v["topic"] == "background" && v["data"]["active"] == 0
+    })
+    .await;
+
+    let t2 = bg_tool
+        .execute(&json!({
+            "action": "start",
+            "label": "Bun Retry",
+            "command": "exit 2"
+        }))
+        .await
+        .unwrap();
+    let _t2_id = t2["id"].as_u64().unwrap();
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(3), |v| {
+        v["type"] == "oopbot_channel" && v["topic"] == "background" && v["data"]["active"] == 0
+    })
+    .await;
+
+    // 3. Agen sudah mengobservasi t1 lewat `output` dan membersihkan t2 lewat `clear`
+    let out1 = bg_tool
+        .execute(&json!({ "action": "output", "id": t1_id }))
+        .await
+        .unwrap();
+    assert_eq!(out1["status"], "failed");
+    let cleared = bg_tool.execute(&json!({ "action": "clear" })).await.unwrap();
+    assert_eq!(cleared["removed"], 2);
+
+    // 4. Lepas gate HTTP -> turn selesai, MUST NOT memicu ghost wakeup atau LLM turn kedua!
+    gate.notify_one();
+
+    let mut saw_wakeup_custom = false;
+    let mut saw_leaked_queue_update = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let rem = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if rem.is_zero() {
+            panic!("timeout menunggu agent_settled");
+        }
+        let ev = tokio::time::timeout(rem, out_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("sink closed");
+        if ev["type"] == "queue_update" {
+            let s = ev.to_string();
+            if s.contains("Bun Web Server") || s.contains("Bun Retry") {
+                saw_leaked_queue_update = true;
+            }
+        }
+        if ev["type"] == "message_end"
+            && ev["message"]["customType"] == "oopbot-background-wakeup"
+        {
+            saw_wakeup_custom = true;
+        }
+        if ev["type"] == "agent_settled" && ev["aborted"] == false {
+            break;
+        }
+    }
+
+    // Tunggu jendela singkat memastikan tidak ada turn wakeup susulan
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    while let Ok(ev) = out_rx.try_recv() {
+        if ev["type"] == "message_end"
+            && ev["message"]["customType"] == "oopbot-background-wakeup"
+        {
+            saw_wakeup_custom = true;
+        }
+    }
+
+    assert!(
+        !saw_leaked_queue_update,
+        "GATE: failed background task tidak boleh bocor ke queue_update (STEERING)"
+    );
+    assert!(
+        !saw_wakeup_custom,
+        "GATE: task yang sudah diobservasi/di-clear tidak boleh memicu ghost wakeup"
+    );
+    assert_eq!(
+        reqs.lock().unwrap().len(),
+        1,
+        "GATE: harus tepat 1 LLM call (tidak ada delayed wakeup turn susulan)"
+    );
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+}
+
+#[tokio::test]
+async fn gate_dismiss_before_completion_callback_race_is_suppressed() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, _out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_dismiss_race");
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        "http://127.0.0.1:9/v1beta",
+        "k-gate-race",
+    );
+
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec!["oopbot-background".to_string()],
+    )
+    .unwrap();
+
+    // Simulasikan race: dismiss tiba SEBELUM callback completion dari thread monitor selesai
+    {
+        let mut m = server.runtime.mutable.lock().unwrap();
+        let (tx, _rx) = tokio::sync::watch::channel(false);
+        m.active_op = ActiveOp::Streaming { cancel_tx: tx };
+    }
+    server.runtime.dismiss_background_wakeups(&[42]);
+    server
+        .runtime
+        .trigger_background_wakeup(crate::plugins::BgCompletionEvent {
+            id: 42,
+            label: Some("race-task".to_string()),
+            command: "exit 1".to_string(),
+            status: "failed".to_string(),
+            exit_code: Some(1),
+            elapsed_secs: 0,
+            output_tail: "EADDRINUSE".to_string(),
+        });
+
+    let m = server.runtime.mutable.lock().unwrap();
+    assert!(
+        m.wakeup_queue.is_empty(),
+        "GATE: completion yang tiba setelah dismiss harus langsung dibuang"
+    );
+    assert!(
+        m.follow_up_queue.is_empty() && m.steering_queue.is_empty(),
+        "GATE: antrean user harus tetap bersih"
+    );
 }
 
 

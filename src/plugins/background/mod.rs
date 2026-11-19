@@ -19,8 +19,9 @@ pub use buffer::{
     DEFAULT_OUTPUT_RETURN_BYTES, MAX_LIST_PREVIEW_BYTES, MAX_OUTPUT_BUFFER_BYTES,
 };
 pub use process::{
+    BgCompletionEvent, CompletionNotifier, StatusNotifier, WakeupDismissNotifier,
     DEFAULT_WAIT_TIMEOUT_SECS, MAX_RETAINED_TASKS, MAX_RUNNING_TASKS, MAX_TIMEOUT_SECS,
-    MAX_WAIT_TIMEOUT_SECS, BgCompletionEvent, CompletionNotifier, StatusNotifier,
+    MAX_WAIT_TIMEOUT_SECS,
 };
 
 use super::Plugin;
@@ -85,6 +86,12 @@ impl BackgroundPlugin {
         self.state.set_completion_notifier(notifier);
     }
 
+    /// Daftarkan callback untuk membatalkan pending auto-wakeup ketika agen sudah mengobservasi
+    /// hasil akhir task (`output`/`wait`/`list`) atau menghentikan/membersihkannya (`kill`/`clear`/`shutdown_all`).
+    pub fn set_wakeup_dismiss_notifier(&self, notifier: WakeupDismissNotifier) {
+        self.state.set_wakeup_dismiss_notifier(notifier);
+    }
+
     /// Hentikan seluruh proses background yang sedang aktif (termasuk process group anaknya).
     pub fn shutdown_all(&self) {
         self.state.shutdown_all();
@@ -118,8 +125,8 @@ impl Plugin for BackgroundPlugin {
     fn system_prompt_append(&self) -> Option<String> {
         Some(
             "## Background Process Guidelines\n\
-            - Gunakan tool `background` untuk tugas berdurasi lama (server dev, build panjang, watcher, unduhan besar).\n\
-            - Aksi `start`: wajib `command`, opsional `label`, `cwd`, `env`, `timeout_secs`, dan `notify_on_complete` (default `true` untuk auto-wakeup agen saat tugas selesai mandiri).\n\
+            - Gunakan tool `background` HANYA untuk tugas berdurasi lama (server dev, build panjang, watcher, unduhan besar). Untuk perintah shell singkat/one-off, gunakan `run_shell`.\n\
+            - Aksi `start`: wajib `command`, opsional `label`, `cwd`, `env`, `timeout_secs`, dan `notify_on_complete` (default `true` untuk auto-wakeup agen saat tugas selesai mandiri; set `false` untuk proses sementara/fire-and-forget yang tidak perlu membangunkan agen).\n\
             - Aksi `wait`: tunggu proses selesai atau kemunculan `pattern` di log secara efisien (event-driven) dengan `wait_timeout_secs` (default 15 dtk, maks 60 dtk) daripada polling berulang.\n\
             - Aksi `output`: baca log inkremental menggunakan cursor `since_byte` -> `next_byte`, atau saring dengan `tail_lines`, `tail_bytes`, dan `filter`.\n\
             - Aksi `list`, `kill`, dan `clear`: pantau daftar task, hentikan proses beserta turunannya, atau bersihkan riwayat task selesai."

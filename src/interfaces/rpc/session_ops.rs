@@ -25,6 +25,7 @@ impl RpcRuntime {
             m.session_name = new_name.clone();
             m.steering_queue.clear();
             m.follow_up_queue.clear();
+            m.wakeup_queue.clear();
             m.resume_queues_after_compact = false;
         }
         {
@@ -393,6 +394,7 @@ impl RpcRuntime {
                                 bg.shutdown_all();
                             }
                         }
+                        self.clear_all_background_wakeups();
                         Self::send_channel("background", json!({ "active": 0 }));
                     }
                 }

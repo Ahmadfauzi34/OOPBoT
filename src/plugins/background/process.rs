@@ -45,6 +45,7 @@ pub struct BgCompletionEvent {
 
 pub type StatusNotifier = Arc<dyn Fn(usize) + Send + Sync>;
 pub type CompletionNotifier = Arc<dyn Fn(BgCompletionEvent) + Send + Sync>;
+pub type WakeupDismissNotifier = Arc<dyn Fn(&[u32]) + Send + Sync>;
 
 pub(super) struct TaskRecord {
     pub(super) id: u32,
@@ -110,6 +111,7 @@ pub(super) struct BgState {
     pub(super) next_id: AtomicU32,
     pub(super) status_notifier: Mutex<Option<StatusNotifier>>,
     pub(super) completion_notifier: Mutex<Option<CompletionNotifier>>,
+    pub(super) wakeup_dismiss_notifier: Mutex<Option<WakeupDismissNotifier>>,
 }
 
 impl BgState {
@@ -120,6 +122,7 @@ impl BgState {
             next_id: AtomicU32::new(1),
             status_notifier: Mutex::new(None),
             completion_notifier: Mutex::new(None),
+            wakeup_dismiss_notifier: Mutex::new(None),
         }
     }
 
@@ -139,6 +142,14 @@ impl BgState {
     pub(super) fn set_completion_notifier(&self, notifier: CompletionNotifier) {
         let mut lock = self
             .completion_notifier
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *lock = Some(notifier);
+    }
+
+    pub(super) fn set_wakeup_dismiss_notifier(&self, notifier: WakeupDismissNotifier) {
+        let mut lock = self
+            .wakeup_dismiss_notifier
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *lock = Some(notifier);
@@ -166,6 +177,20 @@ impl BgState {
         }
     }
 
+    pub(super) fn emit_wakeup_dismiss(&self, task_ids: &[u32]) {
+        if task_ids.is_empty() {
+            return;
+        }
+        let cb = self
+            .wakeup_dismiss_notifier
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(f) = cb {
+            f(task_ids);
+        }
+    }
+
     pub(super) fn shutdown_all(&self) {
         let senders: Vec<tokio::sync::oneshot::Sender<()>> = {
             let mut k_lock = self.kill_handles.lock().unwrap_or_else(|e| e.into_inner());
@@ -175,11 +200,14 @@ impl BgState {
             let _ = tx.send(());
         }
 
-        let (pids, waiters): (Vec<u32>, Vec<tokio::sync::watch::Sender<u64>>) = {
+        let (pids, waiters, all_ids): (Vec<u32>, Vec<tokio::sync::watch::Sender<u64>>, Vec<u32>) = {
             let mut lock = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
             let mut active_pids = Vec::new();
             let mut senders = Vec::new();
+            let mut ids = Vec::with_capacity(lock.len());
             for item in lock.values_mut() {
+                ids.push(item.id);
+                item.notify_on_complete = false;
                 if item.is_running() {
                     item.status = "killed".to_string();
                     item.finished_at = Some(Instant::now());
@@ -190,7 +218,7 @@ impl BgState {
                     senders.push(item.update_tx.clone());
                 }
             }
-            (active_pids, senders)
+            (active_pids, senders, ids)
         };
 
         for tx in waiters {
@@ -199,6 +227,7 @@ impl BgState {
         for pid in pids {
             signal_process_group(pid, true);
         }
+        self.emit_wakeup_dismiss(&all_ids);
     }
 }
 
@@ -570,11 +599,20 @@ pub(super) async fn start_task(state: &Arc<BgState>, args: &Value) -> Result<Val
 }
 
 pub(super) fn list_tasks(state: &BgState) -> Value {
-    let lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list: Vec<BgTaskInfo> = lock
-        .values()
-        .map(|r| r.to_info(MAX_LIST_PREVIEW_BYTES))
-        .collect();
+    let (mut list, observed_finished_ids) = {
+        let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let mut finished_ids = Vec::new();
+        let mut items = Vec::with_capacity(lock.len());
+        for r in lock.values_mut() {
+            if !r.is_running() {
+                r.notify_on_complete = false;
+                finished_ids.push(r.id);
+            }
+            items.push(r.to_info(MAX_LIST_PREVIEW_BYTES));
+        }
+        (items, finished_ids)
+    };
+    state.emit_wakeup_dismiss(&observed_finished_ids);
     list.sort_by_key(|t| t.id);
     let active = list.iter().filter(|t| t.status == "running").count();
     json!({
@@ -591,37 +629,47 @@ pub(super) fn query_output(state: &BgState, args: &Value) -> Result<Value, Strin
     let tail_lines = parse_tail_lines(args)?;
     let filter = optional_str_arg(args, "filter")?;
 
-    let lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
-    let item = lock
-        .get(&id)
-        .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
+    let (payload, observed_finished) = {
+        let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let item = lock
+            .get_mut(&id)
+            .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
 
-    let slice = item.buffer.query(OutputQuery {
-        since_byte,
-        tail_bytes,
-        tail_lines,
-        filter,
-    });
-    let output = if item.is_running() {
-        slice.text
-    } else {
-        attach_status_note(slice.text, item.status_note.as_deref())
+        let slice = item.buffer.query(OutputQuery {
+            since_byte,
+            tail_bytes,
+            tail_lines,
+            filter,
+        });
+        let running = item.is_running();
+        let output = if running {
+            slice.text
+        } else {
+            item.notify_on_complete = false;
+            attach_status_note(slice.text, item.status_note.as_deref())
+        };
+
+        let payload = json!({
+            "id": id,
+            "label": item.label,
+            "status": item.status,
+            "pid": item.pid,
+            "exit_code": item.exit_code,
+            "elapsed_secs": item.elapsed_secs(),
+            "total_output_bytes": item.buffer.total_bytes,
+            "window_start_byte": slice.window_start_byte,
+            "next_byte": slice.next_byte,
+            "cursor_reset": slice.cursor_reset,
+            "truncated": slice.truncated,
+            "output": output
+        });
+        (payload, !running)
     };
 
-    Ok(json!({
-        "id": id,
-        "label": item.label,
-        "status": item.status,
-        "pid": item.pid,
-        "exit_code": item.exit_code,
-        "elapsed_secs": item.elapsed_secs(),
-        "total_output_bytes": item.buffer.total_bytes,
-        "window_start_byte": slice.window_start_byte,
-        "next_byte": slice.next_byte,
-        "cursor_reset": slice.cursor_reset,
-        "truncated": slice.truncated,
-        "output": output
-    }))
+    if observed_finished {
+        state.emit_wakeup_dismiss(&[id]);
+    }
+    Ok(payload)
 }
 
 struct WaiterGuard {
@@ -673,10 +721,10 @@ pub(super) async fn wait_for_task(state: &Arc<BgState>, args: &Value) -> Result<
         // Tandai snapshot watch SEBELUM memeriksa tasks lock agar perubahan antara cek & await tidak hilang.
         let _ = rx.borrow_and_update();
 
-        {
-            let lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let ready = {
+            let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
             let item = lock
-                .get(&id)
+                .get_mut(&id)
                 .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
 
             let matched = pattern
@@ -684,36 +732,71 @@ pub(super) async fn wait_for_task(state: &Arc<BgState>, args: &Value) -> Result<
                 .unwrap_or(false);
 
             if !item.is_running() || matched {
-                return Ok(build_wait_payload(item, tail_bytes, matched, false));
+                let finished = !item.is_running();
+                if finished {
+                    item.notify_on_complete = false;
+                }
+                Some((build_wait_payload(item, tail_bytes, matched, false), finished))
+            } else {
+                None
             }
+        };
+        if let Some((payload, finished)) = ready {
+            if finished {
+                state.emit_wakeup_dismiss(&[id]);
+            }
+            return Ok(payload);
         }
 
         match tokio::time::timeout_at(deadline, rx.changed()).await {
             Err(_) => {
-                let lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
-                let item = lock
-                    .get(&id)
-                    .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
-                let matched = pattern
-                    .map(|pat| item.buffer.contains_pattern(pat))
-                    .unwrap_or(false);
-                return Ok(build_wait_payload(
-                    item,
-                    tail_bytes,
-                    matched,
-                    item.is_running() && !matched,
-                ));
+                let (payload, finished) = {
+                    let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                    let item = lock
+                        .get_mut(&id)
+                        .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
+                    let matched = pattern
+                        .map(|pat| item.buffer.contains_pattern(pat))
+                        .unwrap_or(false);
+                    let finished = !item.is_running();
+                    if finished {
+                        item.notify_on_complete = false;
+                    }
+                    (
+                        build_wait_payload(
+                            item,
+                            tail_bytes,
+                            matched,
+                            item.is_running() && !matched,
+                        ),
+                        finished,
+                    )
+                };
+                if finished {
+                    state.emit_wakeup_dismiss(&[id]);
+                }
+                return Ok(payload);
             }
             Ok(Err(_)) => {
                 // Sender selesai/dropped; loop sekali lagi untuk membaca status akhir.
-                let lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
-                let item = lock
-                    .get(&id)
-                    .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
-                let matched = pattern
-                    .map(|pat| item.buffer.contains_pattern(pat))
-                    .unwrap_or(false);
-                return Ok(build_wait_payload(item, tail_bytes, matched, false));
+                let (payload, finished) = {
+                    let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
+                    let item = lock
+                        .get_mut(&id)
+                        .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
+                    let matched = pattern
+                        .map(|pat| item.buffer.contains_pattern(pat))
+                        .unwrap_or(false);
+                    let finished = !item.is_running();
+                    if finished {
+                        item.notify_on_complete = false;
+                    }
+                    (build_wait_payload(item, tail_bytes, matched, false), finished)
+                };
+                if finished {
+                    state.emit_wakeup_dismiss(&[id]);
+                }
+                return Ok(payload);
             }
             Ok(Ok(())) => continue,
         }
@@ -760,6 +843,7 @@ pub(super) fn kill_task(state: &BgState, args: &Value) -> Result<Value, String> 
             .get_mut(&id)
             .ok_or_else(|| format!("Task background #{} tidak ditemukan", id))?;
 
+        item.notify_on_complete = false;
         if !item.is_running() {
             (true, item.status.clone(), item.pid)
         } else {
@@ -770,6 +854,8 @@ pub(super) fn kill_task(state: &BgState, args: &Value) -> Result<Value, String> 
             (false, "killed".to_string(), item.pid)
         }
     };
+
+    state.emit_wakeup_dismiss(&[id]);
 
     if already_finished {
         return Ok(json!({
@@ -798,13 +884,22 @@ pub(super) fn kill_task(state: &BgState, args: &Value) -> Result<Value, String> 
 }
 
 pub(super) fn clear_finished(state: &BgState) -> Value {
-    let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
-    let before = lock.len();
-    lock.retain(|_, item| item.is_running());
-    let removed = before.saturating_sub(lock.len());
+    let (removed, remaining, removed_ids) = {
+        let mut lock = state.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let removed_ids: Vec<u32> = lock
+            .iter()
+            .filter(|(_, item)| !item.is_running())
+            .map(|(&id, _)| id)
+            .collect();
+        let before = lock.len();
+        lock.retain(|_, item| item.is_running());
+        let removed = before.saturating_sub(lock.len());
+        (removed, lock.len(), removed_ids)
+    };
+    state.emit_wakeup_dismiss(&removed_ids);
     json!({
         "removed": removed,
-        "remaining": lock.len()
+        "remaining": remaining
     })
 }
 

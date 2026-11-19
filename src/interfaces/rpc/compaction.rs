@@ -262,27 +262,24 @@ impl RpcRuntime {
             let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
             let should_resume = std::mem::take(&mut m.resume_queues_after_compact);
             if !aborted_by_cancel && should_resume {
-                let next_prompt = m
-                    .steering_queue
-                    .pop_front()
-                    .or_else(|| m.follow_up_queue.pop_front());
+                let (next_prompt, from_user_queue) =
+                    if let Some(p) = m.steering_queue.pop_front() {
+                        (Some(p), true)
+                    } else if let Some(p) = m.follow_up_queue.pop_front() {
+                        (Some(p), true)
+                    } else if let Some(p) = m.wakeup_queue.pop_front() {
+                        (Some(p), false)
+                    } else {
+                        (None, false)
+                    };
                 if let Some(first) = next_prompt {
                     let (cancel_tx, next_cancel_rx) = tokio::sync::watch::channel(false);
                     let seq = m.next_op_seq;
                     m.next_op_seq += 1;
                     m.current_op_seq = seq;
                     m.active_op = ActiveOp::Streaming { cancel_tx };
-                    let rs: Vec<String> = m
-                        .steering_queue
-                        .iter()
-                        .map(QueuedPrompt::queue_display_text)
-                        .collect();
-                    let rf: Vec<String> = m
-                        .follow_up_queue
-                        .iter()
-                        .map(QueuedPrompt::queue_display_text)
-                        .collect();
-                    Some((first, next_cancel_rx, seq, rs, rf))
+                    let queue_update = from_user_queue.then(|| m.user_queue_snapshot());
+                    Some((first, next_cancel_rx, seq, queue_update))
                 } else {
                     m.active_op = ActiveOp::Idle;
                     None
@@ -300,12 +297,14 @@ impl RpcRuntime {
         finish_guard.armed = false;
         rt.publish_completed_seq(op_seq);
 
-        if let Some((first, next_cancel_rx, seq, rs, rf)) = resumed {
-            Self::send_line(&json!({
-                "type": "queue_update",
-                "steering": rs,
-                "followUp": rf,
-            }));
+        if let Some((first, next_cancel_rx, seq, queue_update)) = resumed {
+            if let Some((rs, rf)) = queue_update {
+                Self::send_line(&json!({
+                    "type": "queue_update",
+                    "steering": rs,
+                    "followUp": rf,
+                }));
+            }
             if resume_tx.send((first, next_cancel_rx, seq)).is_err() {
                 let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 if matches!(m.active_op, ActiveOp::Streaming { .. }) && m.current_op_seq == seq {

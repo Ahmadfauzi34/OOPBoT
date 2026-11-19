@@ -632,3 +632,103 @@ async fn bash_features_work_in_background_start() {
     let out = waited["output"].as_str().unwrap_or("");
     assert!(out.contains("BG_BASH:1 2 3"), "unexpected output: {}", out);
 }
+
+#[tokio::test]
+async fn gate_background_plugin_dismiss_notifier_semantics() {
+    let (plugin, reg) = setup_bg_tool();
+    let dismissed = Arc::new(Mutex::new(Vec::<u32>::new()));
+    let dismissed_cb = Arc::clone(&dismissed);
+    plugin.set_wakeup_dismiss_notifier(Arc::new(move |ids| {
+        dismissed_cb.lock().unwrap().extend_from_slice(ids);
+    }));
+    let tool = reg.get("background").unwrap();
+
+    // 1. Running task inspected via `output` & pattern-matched `wait` MUST NOT be dismissed yet
+    let srv = tool
+        .execute(&json!({
+            "action": "start",
+            "command": "echo SERVER_READY; sleep 30"
+        }))
+        .await
+        .unwrap();
+    let srv_id = srv["id"].as_u64().unwrap() as u32;
+    let w = tool
+        .execute(&json!({
+            "action": "wait",
+            "id": srv_id,
+            "pattern": "SERVER_READY",
+            "wait_timeout_secs": 5
+        }))
+        .await
+        .unwrap();
+    assert_eq!(w["status"], "running");
+    assert_eq!(w["matched"], true);
+    let _ = tool
+        .execute(&json!({ "action": "output", "id": srv_id }))
+        .await
+        .unwrap();
+    assert!(
+        !dismissed.lock().unwrap().contains(&srv_id),
+        "running task must not dismiss future completion wakeup"
+    );
+
+    // 2. Instant failed task observed via `output` MUST dismiss its pending wakeup
+    let failed = tool
+        .execute(&json!({
+            "action": "start",
+            "command": "echo EADDRINUSE >&2; exit 1"
+        }))
+        .await
+        .unwrap();
+    let failed_id = failed["id"].as_u64().unwrap() as u32;
+    for _ in 0..40 {
+        let st = tool
+            .execute(&json!({ "action": "output", "id": failed_id }))
+            .await
+            .unwrap();
+        if st["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        dismissed.lock().unwrap().contains(&failed_id),
+        "observing finished task via output must dismiss wakeup"
+    );
+
+    // 3. Finished task observed via `list` MUST dismiss its pending wakeup (while running srv_id is untouched)
+    dismissed.lock().unwrap().clear();
+    let failed2 = tool
+        .execute(&json!({ "action": "start", "command": "exit 2" }))
+        .await
+        .unwrap();
+    let failed2_id = failed2["id"].as_u64().unwrap() as u32;
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    let listed = tool.execute(&json!({ "action": "list" })).await.unwrap();
+    assert!(listed["count"].as_u64().unwrap() >= 2);
+    {
+        let d = dismissed.lock().unwrap();
+        assert!(d.contains(&failed2_id), "list must dismiss finished task wakeup");
+        assert!(!d.contains(&srv_id), "list must NOT dismiss running task wakeup");
+    }
+
+    // 4. `clear` MUST emit dismiss for removed finished tasks
+    dismissed.lock().unwrap().clear();
+    let cleared = tool.execute(&json!({ "action": "clear" })).await.unwrap();
+    assert!(cleared["removed"].as_u64().unwrap() >= 2);
+    {
+        let d = dismissed.lock().unwrap();
+        assert!(d.contains(&failed_id));
+        assert!(d.contains(&failed2_id));
+        assert!(!d.contains(&srv_id));
+    }
+
+    // 5. `kill` on running task MUST emit dismiss
+    dismissed.lock().unwrap().clear();
+    let killed = tool
+        .execute(&json!({ "action": "kill", "id": srv_id }))
+        .await
+        .unwrap();
+    assert_eq!(killed["status"], "killed");
+    assert!(dismissed.lock().unwrap().contains(&srv_id));
+}

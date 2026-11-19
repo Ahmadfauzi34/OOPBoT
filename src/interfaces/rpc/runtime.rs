@@ -16,7 +16,7 @@ use crate::plugins::{
 };
 use crate::tools::ToolRegistry;
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -57,6 +57,7 @@ impl QueueMode {
 pub(super) struct CustomWakeupMeta {
     pub(super) custom_type: String,
     pub(super) summary: String,
+    pub(super) background_task_id: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,15 +76,27 @@ impl QueuedPrompt {
         }
     }
 
-    pub(super) fn wakeup(message: String, custom_type: String, summary: String) -> Self {
+    pub(super) fn wakeup(
+        message: String,
+        custom_type: String,
+        summary: String,
+        background_task_id: Option<u32>,
+    ) -> Self {
         Self {
             message,
             images: Vec::new(),
             custom_notice: Some(CustomWakeupMeta {
                 custom_type,
                 summary,
+                background_task_id,
             }),
         }
+    }
+
+    pub(super) fn background_task_id(&self) -> Option<u32> {
+        self.custom_notice
+            .as_ref()
+            .and_then(|meta| meta.background_task_id)
     }
 
     pub(super) fn queue_display_text(&self) -> String {
@@ -146,12 +159,52 @@ pub(super) struct RpcMutableState {
     pub(super) next_op_seq: u64,
     pub(super) steering_mode: QueueMode,
     pub(super) follow_up_mode: QueueMode,
+    /// Antrean steer yang diketik user (ditampilkan di kartu `STEERING` Android).
     pub(super) steering_queue: VecDeque<QueuedPrompt>,
+    /// Antrean follow-up yang diketik user (ditampilkan di kartu `STEERING` Android).
     pub(super) follow_up_queue: VecDeque<QueuedPrompt>,
+    /// Antrean internal auto-wakeup sistem (mis. background task selesai).
+    /// KONTRAK: TIDAK BOLEH pernah dibocorkan ke `queue_update` atau `clear_queue`!
+    pub(super) wakeup_queue: VecDeque<QueuedPrompt>,
+    /// ID task background yang wakeup-nya sudah dibatalkan (diobservasi lewat `output`/`wait`/`list`,
+    /// atau dibatalkan lewat `kill`/`clear`/`shutdown_all`/`abort`) agar race callback tetap terfilter.
+    pub(super) dismissed_bg_wakeups: HashSet<u32>,
     pub(super) resume_queues_after_compact: bool,
     pub(super) auto_compaction_enabled: bool,
     pub(super) auto_retry_enabled: bool,
     pub(super) retry_cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+impl RpcMutableState {
+    /// Snapshot kanonis antrean user (`steering`, `followUp`) untuk frame `queue_update`.
+    /// Gate struktural: antrean user tidak boleh pernah berisi wakeup sistem (`custom_notice.is_some()`).
+    pub(super) fn user_queue_snapshot(&self) -> (Vec<String>, Vec<String>) {
+        debug_assert!(
+            self.steering_queue
+                .iter()
+                .all(|q| q.custom_notice.is_none()),
+            "steering_queue tidak boleh berisi system wakeup"
+        );
+        debug_assert!(
+            self.follow_up_queue
+                .iter()
+                .all(|q| q.custom_notice.is_none()),
+            "follow_up_queue tidak boleh berisi system wakeup"
+        );
+        let steering = self
+            .steering_queue
+            .iter()
+            .filter(|q| q.custom_notice.is_none())
+            .map(QueuedPrompt::queue_display_text)
+            .collect();
+        let follow_up = self
+            .follow_up_queue
+            .iter()
+            .filter(|q| q.custom_notice.is_none())
+            .map(QueuedPrompt::queue_display_text)
+            .collect();
+        (steering, follow_up)
+    }
 }
 
 pub(super) struct CoordinatorFinishGuard {
@@ -359,6 +412,8 @@ impl RpcRuntime {
             follow_up_mode: QueueMode::OneAtATime,
             steering_queue: VecDeque::new(),
             follow_up_queue: VecDeque::new(),
+            wakeup_queue: VecDeque::new(),
+            dismissed_bg_wakeups: HashSet::new(),
             resume_queues_after_compact: false,
             auto_compaction_enabled,
             auto_retry_enabled,
@@ -407,6 +462,13 @@ impl RpcRuntime {
                 bg.set_completion_notifier(Arc::new(move |evt| {
                     if let Some(rt) = weak_rt.upgrade() {
                         rt.trigger_background_wakeup(evt);
+                    }
+                }));
+
+                let weak_rt_dismiss = Arc::downgrade(self);
+                bg.set_wakeup_dismiss_notifier(Arc::new(move |ids| {
+                    if let Some(rt) = weak_rt_dismiss.upgrade() {
+                        rt.dismiss_background_wakeups(ids);
                     }
                 }));
             }

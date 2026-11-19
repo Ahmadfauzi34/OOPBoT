@@ -717,7 +717,15 @@ impl RpcRuntime {
                 "abort" => {
                     let mut completed_rx = self.completed_seq_tx.subscribe();
                     let wait_target = {
-                        let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut guard = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+                        let m = &mut *guard;
+                        for q in &m.wakeup_queue {
+                            if let Some(task_id) = q.background_task_id() {
+                                m.dismissed_bg_wakeups.insert(task_id);
+                            }
+                        }
+                        m.wakeup_queue
+                            .retain(|q| q.background_task_id().is_none());
                         if let Some(ref rtx) = m.retry_cancel_tx {
                             let _ = rtx.send(true);
                         }

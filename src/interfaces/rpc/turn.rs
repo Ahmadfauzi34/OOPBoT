@@ -17,23 +17,40 @@ impl RpcRuntime {
     pub(super) fn emit_queue_update(&self) {
         let (steering, follow_up) = {
             let m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
-            let s: Vec<String> = m
-                .steering_queue
-                .iter()
-                .map(QueuedPrompt::queue_display_text)
-                .collect();
-            let f: Vec<String> = m
-                .follow_up_queue
-                .iter()
-                .map(QueuedPrompt::queue_display_text)
-                .collect();
-            (s, f)
+            m.user_queue_snapshot()
         };
         Self::send_line(&json!({
             "type": "queue_update",
             "steering": steering,
             "followUp": follow_up,
         }));
+    }
+
+    /// Batalkan pending auto-wakeup background untuk `task_ids` tertentu dan catat ke
+    /// `dismissed_bg_wakeups` agar callback completion yang terlambat tiba (race thread) ikut dibuang.
+    pub(super) fn dismiss_background_wakeups(&self, task_ids: &[u32]) {
+        if task_ids.is_empty() {
+            return;
+        }
+        let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+        for &id in task_ids {
+            m.dismissed_bg_wakeups.insert(id);
+        }
+        m.wakeup_queue
+            .retain(|q| !q.background_task_id().is_some_and(|id| task_ids.contains(&id)));
+    }
+
+    /// Bersihkan seluruh pending auto-wakeup background (mis. saat `background: stop` atau `abort`).
+    pub(super) fn clear_all_background_wakeups(&self) {
+        let mut guard = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
+        let m = &mut *guard;
+        for q in &m.wakeup_queue {
+            if let Some(id) = q.background_task_id() {
+                m.dismissed_bg_wakeups.insert(id);
+            }
+        }
+        m.wakeup_queue
+            .retain(|q| q.background_task_id().is_none());
     }
 
     pub(super) fn emit_and_persist_user_message(
@@ -104,9 +121,11 @@ impl RpcRuntime {
         }
     }
 
-    /// Bangunkan agen otomatis (jika Idle) atau antrekan sebagai `followUp` (jika sedang aktif)
+    /// Bangunkan agen otomatis (jika Idle) atau antrekan ke `wakeup_queue` internal (jika sedang aktif)
     /// ketika proses background selesai, gagal, atau melewati batas waktu secara mandiri.
+    /// KONTRAK: tidak pernah masuk `follow_up_queue`/`queue_update` agar tidak muncul sebagai `STEERING` UI.
     pub(super) fn trigger_background_wakeup(&self, evt: BgCompletionEvent) {
+        let task_id = evt.id;
         let task_name = evt
             .label
             .as_deref()
@@ -157,6 +176,7 @@ impl RpcRuntime {
             prompt_msg,
             "oopbot-background-wakeup".to_string(),
             summary,
+            Some(task_id),
         );
 
         let rtx_opt = self
@@ -172,32 +192,41 @@ impl RpcRuntime {
                 seq: u64,
             },
             Queued,
+            Dismissed,
             NoLoop,
         }
 
         let dispatch = {
             let mut m = self.mutable.lock().unwrap_or_else(|e| e.into_inner());
-            match m.active_op {
-                ActiveOp::Idle => {
-                    if let Some(rtx) = rtx_opt {
-                        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-                        let seq = m.next_op_seq;
-                        m.next_op_seq += 1;
-                        m.current_op_seq = seq;
-                        m.active_op = ActiveOp::Streaming { cancel_tx };
-                        WakeupDispatch::Start { rtx, cancel_rx, seq }
-                    } else {
-                        WakeupDispatch::NoLoop
+            if m.dismissed_bg_wakeups.contains(&task_id) {
+                WakeupDispatch::Dismissed
+            } else {
+                match m.active_op {
+                    ActiveOp::Idle => {
+                        if let Some(rtx) = rtx_opt {
+                            let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                            let seq = m.next_op_seq;
+                            m.next_op_seq += 1;
+                            m.current_op_seq = seq;
+                            m.active_op = ActiveOp::Streaming { cancel_tx };
+                            WakeupDispatch::Start { rtx, cancel_rx, seq }
+                        } else {
+                            WakeupDispatch::NoLoop
+                        }
                     }
-                }
-                ActiveOp::Streaming { .. } => {
-                    m.follow_up_queue.push_back(queued.clone());
-                    WakeupDispatch::Queued
-                }
-                ActiveOp::Compacting { .. } => {
-                    m.follow_up_queue.push_back(queued.clone());
-                    m.resume_queues_after_compact = true;
-                    WakeupDispatch::Queued
+                    ActiveOp::Streaming { .. } => {
+                        m.wakeup_queue
+                            .retain(|q| q.background_task_id() != Some(task_id));
+                        m.wakeup_queue.push_back(queued.clone());
+                        WakeupDispatch::Queued
+                    }
+                    ActiveOp::Compacting { .. } => {
+                        m.wakeup_queue
+                            .retain(|q| q.background_task_id() != Some(task_id));
+                        m.wakeup_queue.push_back(queued.clone());
+                        m.resume_queues_after_compact = true;
+                        WakeupDispatch::Queued
+                    }
                 }
             }
         };
@@ -213,10 +242,7 @@ impl RpcRuntime {
                     }
                 }
             }
-            WakeupDispatch::Queued => {
-                self.emit_queue_update();
-            }
-            WakeupDispatch::NoLoop => {}
+            WakeupDispatch::Queued | WakeupDispatch::Dismissed | WakeupDispatch::NoLoop => {}
         }
     }
 
@@ -520,16 +546,7 @@ impl RpcRuntime {
                         out.push(q);
                     }
                 }
-                let rs: Vec<String> = m
-                    .steering_queue
-                    .iter()
-                    .map(QueuedPrompt::queue_display_text)
-                    .collect();
-                let rf: Vec<String> = m
-                    .follow_up_queue
-                    .iter()
-                    .map(QueuedPrompt::queue_display_text)
-                    .collect();
+                let (rs, rf) = m.user_queue_snapshot();
                 (out, rs, rf)
             };
             if !drained.is_empty() {
@@ -612,7 +629,7 @@ impl RpcRuntime {
                 }
             }
 
-            let (next_batch, rem_s, rem_f) = {
+            let (next_batch, queue_update_opt) = {
                 let mut m = rt.mutable.lock().unwrap_or_else(|e| e.into_inner());
                 if !m.steering_queue.is_empty() {
                     let n = match m.steering_mode {
@@ -621,17 +638,8 @@ impl RpcRuntime {
                     };
                     let batch: Vec<_> =
                         (0..n).filter_map(|_| m.steering_queue.pop_front()).collect();
-                    let rs: Vec<String> = m
-                        .steering_queue
-                        .iter()
-                        .map(QueuedPrompt::queue_display_text)
-                        .collect();
-                    let rf: Vec<String> = m
-                        .follow_up_queue
-                        .iter()
-                        .map(QueuedPrompt::queue_display_text)
-                        .collect();
-                    (Some(batch), rs, rf)
+                    let snapshot = m.user_queue_snapshot();
+                    (Some(batch), Some(snapshot))
                 } else if !m.follow_up_queue.is_empty() {
                     let n = match m.follow_up_mode {
                         QueueMode::OneAtATime => 1,
@@ -640,28 +648,30 @@ impl RpcRuntime {
                     let batch: Vec<_> = (0..n)
                         .filter_map(|_| m.follow_up_queue.pop_front())
                         .collect();
-                    let rs: Vec<String> = m
-                        .steering_queue
-                        .iter()
-                        .map(QueuedPrompt::queue_display_text)
+                    let snapshot = m.user_queue_snapshot();
+                    (Some(batch), Some(snapshot))
+                } else if !m.wakeup_queue.is_empty() {
+                    let n = match m.follow_up_mode {
+                        QueueMode::OneAtATime => 1,
+                        QueueMode::All => m.wakeup_queue.len(),
+                    };
+                    let batch: Vec<_> = (0..n)
+                        .filter_map(|_| m.wakeup_queue.pop_front())
                         .collect();
-                    let rf: Vec<String> = m
-                        .follow_up_queue
-                        .iter()
-                        .map(QueuedPrompt::queue_display_text)
-                        .collect();
-                    (Some(batch), rs, rf)
+                    (Some(batch), None)
                 } else {
-                    (None, Vec::new(), Vec::new())
+                    (None, None)
                 }
             };
             match next_batch {
                 Some(batch) if !batch.is_empty() => {
-                    Self::send_line(&json!({
-                        "type": "queue_update",
-                        "steering": rem_s,
-                        "followUp": rem_f,
-                    }));
+                    if let Some((rem_s, rem_f)) = queue_update_opt {
+                        Self::send_line(&json!({
+                            "type": "queue_update",
+                            "steering": rem_s,
+                            "followUp": rem_f,
+                        }));
+                    }
                     current_inputs = batch;
                 }
                 _ => break,
