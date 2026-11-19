@@ -511,3 +511,263 @@ for line in sys.stdin:
     let _ = tokio::time::timeout(Duration::from_secs(2), loop_handle).await;
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn gate_acp_bridge_model_and_thinking_switching_via_variant_and_config_options() {
+    // Kasus 1: Agen ACP hanya mengiklankan `models.availableModels` dengan varian level `(Low)/(Medium)/(High)`
+    let dir = std::env::temp_dir().join(format!("oopbot_acp_models_{}", epoch_ms()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script1 = write_mock_acp_script(
+        &dir,
+        "mock_acp_models.py",
+        r#"
+import sys, json
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+sid = "acp-mod-1"
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    req_id = msg.get("id")
+    params = msg.get("params", {})
+
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {
+            "sessionId": sid,
+            "models": {
+                "currentModelId": "neon-high",
+                "availableModels": [
+                    {"modelId": "neon-low", "name": "Gemini 4 Neon (Low)"},
+                    {"modelId": "neon-medium", "name": "Gemini 4 Neon (Medium)"},
+                    {"modelId": "neon-high", "name": "Gemini 4 Neon (High)"},
+                    {"modelId": "carbon-medium", "name": "Gemini 4 Carbon (Medium)"}
+                ]
+            }
+        }})
+    elif method == "session/set_model":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"modelId": params.get("modelId")}})
+"#,
+    );
+
+    let (writer, mut out_rx) = ChannelWriter::pair();
+    let cfg = AcpBridgeConfig {
+        engine_id: "antigravity".to_string(),
+        display_name: "Antigravity".to_string(),
+        config_dir: dir.clone(),
+        cwd: dir.clone(),
+        session_path: None,
+        launch: AcpLaunchConfig {
+            command: PathBuf::from("python3"),
+            args: vec![script1.to_string_lossy().to_string()],
+            cwd: dir.clone(),
+            env: vec![],
+        },
+    };
+
+    let bridge = AcpRpcBridge::start(cfg, writer).await.unwrap();
+    let (cmd_tx, reader) = LinePipeReader::new();
+    let loop_handle = tokio::spawn(async move { bridge.run_loop_with_input(reader).await.unwrap() });
+    let _ = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    // 1. State awal inferred dari `Gemini 4 Neon (High)` -> thinkingLevel == "high"
+    cmd_tx
+        .send(json!({ "id": "st1", "type": "get_state" }).to_string())
+        .unwrap();
+    let st1 = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "st1"
+    })
+    .await;
+    assert_eq!(st1["data"]["model"]["id"], "neon-high");
+    assert_eq!(st1["data"]["model"]["api"], "acp");
+    assert_eq!(st1["data"]["thinkingLevel"], "high");
+
+    // 2. `get_available_models` mengembalikan semua 4 model dari `availableModels`
+    cmd_tx
+        .send(json!({ "id": "gm1", "type": "get_available_models" }).to_string())
+        .unwrap();
+    let gm1 = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "gm1"
+    })
+    .await;
+    assert_eq!(gm1["success"], true);
+    assert_eq!(gm1["data"]["models"].as_array().unwrap().len(), 4);
+
+    // 3. `get_available_thinking_levels` mendeteksi varian sibling Neon (`low`, `medium`, `high`)
+    cmd_tx
+        .send(json!({ "id": "gt1", "type": "get_available_thinking_levels" }).to_string())
+        .unwrap();
+    let gt1 = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "gt1"
+    })
+    .await;
+    assert_eq!(gt1["success"], true);
+    assert_eq!(gt1["data"]["levels"], json!(["low", "medium", "high"]));
+
+    // 4. `set_thinking_level("low")` otomatis memanggil `session/set_model("neon-low")`
+    cmd_tx
+        .send(json!({ "id": "stl1", "type": "set_thinking_level", "level": "low" }).to_string())
+        .unwrap();
+    let stl1 = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "stl1"
+    })
+    .await;
+    assert_eq!(stl1["success"], true);
+
+    cmd_tx
+        .send(json!({ "id": "st2", "type": "get_state" }).to_string())
+        .unwrap();
+    let st2 = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "st2"
+    })
+    .await;
+    assert_eq!(st2["data"]["model"]["id"], "neon-low");
+    assert_eq!(st2["data"]["thinkingLevel"], "low");
+
+    // 5. `set_model("carbon-medium")` mengganti model via `session/set_model` dan sync thinking level
+    cmd_tx
+        .send(
+            json!({
+                "id": "sm1",
+                "type": "set_model",
+                "provider": "acp:antigravity",
+                "modelId": "carbon-medium"
+            })
+            .to_string(),
+        )
+        .unwrap();
+    let sm1 = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "sm1"
+    })
+    .await;
+    assert_eq!(sm1["success"], true);
+    assert_eq!(sm1["data"]["id"], "carbon-medium");
+    assert_eq!(sm1["data"]["name"], "Gemini 4 Carbon (Medium)");
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(Duration::from_secs(2), loop_handle).await;
+
+    // Kasus 2: Agen ACP mengekspos `configOptions` dengan category `thought_level` -> `session/set_config_option`
+    let script2 = write_mock_acp_script(
+        &dir,
+        "mock_acp_cfg.py",
+        r#"
+import sys, json
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    method = msg.get("method")
+    req_id = msg.get("id")
+    params = msg.get("params", {})
+
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {
+            "sessionId": "acp-cfg-1",
+            "models": {
+                "currentModelId": "gemini-4-pro",
+                "availableModels": [{"modelId": "gemini-4-pro", "name": "Gemini 4 Pro"}]
+            },
+            "configOptions": [{
+                "id": "thought",
+                "name": "Thinking Level",
+                "category": "thought_level",
+                "type": "select",
+                "currentValue": "medium",
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "medium", "name": "Medium"},
+                    {"value": "high", "name": "High"}
+                ]
+            }]
+        }})
+    elif method == "session/set_config_option":
+        val = params.get("value")
+        send({"jsonrpc": "2.0", "id": req_id, "result": {
+            "configOptions": [{
+                "id": "thought",
+                "name": "Thinking Level",
+                "category": "thought_level",
+                "type": "select",
+                "currentValue": val,
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "medium", "name": "Medium"},
+                    {"value": "high", "name": "High"}
+                ]
+            }]
+        }})
+"#,
+    );
+
+    let (writer2, mut out_rx2) = ChannelWriter::pair();
+    let cfg2 = AcpBridgeConfig {
+        engine_id: "antigravity".to_string(),
+        display_name: "Antigravity".to_string(),
+        config_dir: dir.clone(),
+        cwd: dir.clone(),
+        session_path: None,
+        launch: AcpLaunchConfig {
+            command: PathBuf::from("python3"),
+            args: vec![script2.to_string_lossy().to_string()],
+            cwd: dir.clone(),
+            env: vec![],
+        },
+    };
+
+    let bridge2 = AcpRpcBridge::start(cfg2, writer2).await.unwrap();
+    let (cmd_tx2, reader2) = LinePipeReader::new();
+    let loop_handle2 =
+        tokio::spawn(async move { bridge2.run_loop_with_input(reader2).await.unwrap() });
+    let _ = recv_until(&mut out_rx2, Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    cmd_tx2
+        .send(json!({ "id": "gt2", "type": "get_available_thinking_levels" }).to_string())
+        .unwrap();
+    let gt2 = recv_until(&mut out_rx2, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "gt2"
+    })
+    .await;
+    assert_eq!(gt2["data"]["levels"], json!(["low", "medium", "high"]));
+
+    cmd_tx2
+        .send(json!({ "id": "stl2", "type": "set_thinking_level", "level": "high" }).to_string())
+        .unwrap();
+    let changed = recv_until(&mut out_rx2, Duration::from_secs(2), |v| {
+        v["type"] == "thinking_level_changed"
+    })
+    .await;
+    assert_eq!(changed["level"], "high");
+
+    let stl2 = recv_until(&mut out_rx2, Duration::from_secs(2), |v| {
+        v["type"] == "response" && v["id"] == "stl2"
+    })
+    .await;
+    assert_eq!(stl2["success"], true);
+
+    drop(cmd_tx2);
+    let _ = tokio::time::timeout(Duration::from_secs(2), loop_handle2).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+

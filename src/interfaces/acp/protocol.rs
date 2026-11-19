@@ -185,6 +185,27 @@ pub fn build_session_cancel_params(session_id: &str) -> Value {
     })
 }
 
+/// Parameter `session/set_model` untuk mengganti model aktif pada sesi ACP.
+pub fn build_session_set_model_params(session_id: &str, model_id: &str) -> Value {
+    json!({
+        "sessionId": session_id,
+        "modelId": model_id,
+    })
+}
+
+/// Parameter `session/set_config_option` (mis. `thought_level` atau `model`).
+pub fn build_session_set_config_option_params(
+    session_id: &str,
+    config_id: &str,
+    value: &str,
+) -> Value {
+    json!({
+        "sessionId": session_id,
+        "configId": config_id,
+        "value": value,
+    })
+}
+
 /// Hasil `session/request_permission` ketika user memilih salah satu opsi.
 pub fn build_permission_selected_result(option_id: &str) -> Value {
     json!({
@@ -202,6 +223,152 @@ pub fn build_permission_cancelled_result() -> Value {
             "outcome": "cancelled",
         }
     })
+}
+
+/// Deskripsi satu model yang diiklankan agen ACP di `models.availableModels`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpModelOption {
+    pub model_id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Satu pilihan nilai di dalam `SessionConfigOption` (`select`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpConfigChoice {
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Opsi konfigurasi sesi ACP (`session/new`, `session/load`, `config_option_update`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpConfigOption {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub current_value: String,
+    pub options: Vec<AcpConfigChoice>,
+}
+
+fn push_select_choice(out: &mut Vec<AcpConfigChoice>, item: &Value) {
+    let Some(val) = item["value"]
+        .as_str()
+        .or_else(|| item["id"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let name = item["name"]
+        .as_str()
+        .or_else(|| item["label"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(val)
+        .to_string();
+    let description = item["description"].as_str().map(str::to_string);
+    out.push(AcpConfigChoice {
+        value: val.to_string(),
+        name,
+        description,
+    });
+}
+
+/// Parse daftar `configOptions` dari hasil `session/new`, `session/load`, atau `session/set_config_option`.
+pub fn parse_session_config_options(val: &Value) -> Vec<AcpConfigOption> {
+    let Some(arr) = val.get("configOptions").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|opt| {
+            let id = opt["id"].as_str().map(str::trim).filter(|s| !s.is_empty())?;
+            let name = opt["name"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(id)
+                .to_string();
+            let category = opt["category"].as_str().map(str::to_string);
+            let current_value = opt["currentValue"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let mut choices = Vec::new();
+            if let Some(raw_opts) = opt.get("options").and_then(|v| v.as_array()) {
+                for entry in raw_opts {
+                    if let Some(group_opts) = entry.get("options").and_then(|v| v.as_array()) {
+                        for sub in group_opts {
+                            push_select_choice(&mut choices, sub);
+                        }
+                    } else {
+                        push_select_choice(&mut choices, entry);
+                    }
+                }
+            }
+            Some(AcpConfigOption {
+                id: id.to_string(),
+                name,
+                category,
+                current_value,
+                options: choices,
+            })
+        })
+        .collect()
+}
+
+/// Parse `(current_model_id, available_models)` dari hasil `session/new` atau `session/load`.
+pub fn parse_session_models(val: &Value) -> (Option<String>, Vec<AcpModelOption>) {
+    let mut current = val["models"]["currentModelId"]
+        .as_str()
+        .or_else(|| val["model"].as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let mut models = Vec::new();
+    if let Some(arr) = val["models"]["availableModels"].as_array() {
+        for item in arr {
+            let Some(mid) = item["modelId"]
+                .as_str()
+                .or_else(|| item["id"].as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let name = item["name"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(mid)
+                .to_string();
+            let description = item["description"].as_str().map(str::to_string);
+            models.push(AcpModelOption {
+                model_id: mid.to_string(),
+                name,
+                description,
+            });
+        }
+    }
+    if models.is_empty() {
+        let cfgs = parse_session_config_options(val);
+        if let Some(model_cfg) = cfgs
+            .into_iter()
+            .find(|c| c.category.as_deref() == Some("model"))
+        {
+            if current.is_none() && !model_cfg.current_value.trim().is_empty() {
+                current = Some(model_cfg.current_value);
+            }
+            for ch in model_cfg.options {
+                models.push(AcpModelOption {
+                    model_id: ch.value,
+                    name: ch.name,
+                    description: ch.description,
+                });
+            }
+        }
+    }
+    (current, models)
 }
 
 /// Satu entri rencana kerja dalam update ACP `plan`.
@@ -236,6 +403,9 @@ pub enum AcpSessionUpdate {
     },
     Plan {
         entries: Vec<AcpPlanEntry>,
+    },
+    ConfigOptionUpdate {
+        config_options: Vec<AcpConfigOption>,
     },
     Unknown(Value),
 }

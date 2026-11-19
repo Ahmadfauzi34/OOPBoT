@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.19] - 2026-11-19
+
+### Added
+- Model and thinking-level selection in external ACP mode (`get_available_models`, `set_model`, `get_available_thinking_levels`, `set_thinking_level` in `AcpRpcBridge`):
+  - Exposes ACP `models.availableModels` and `configOptions` (`model` / `thought_level`) plus `config_option_update` notifications.
+  - Supports both explicit `session/set_config_option` thinking controls and sibling `(Low)/(Medium)/(High)/(XHigh)` model variants via `session/set_model`, infers initial thinking level from the active model name, and persists per-engine defaults in `~/.oopbot/engines/<id>/manifest.json`.
+  - Updated `ModelSheet.kt` so ACP models bypass Pi's `enabledModels` filter and `ChatController.kt` so ACP switches do not overwrite Pi's native `settings.json` defaults.
+
 ## [0.5.18] - 2026-11-19
 
 ### Fixed

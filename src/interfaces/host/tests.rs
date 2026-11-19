@@ -815,9 +815,9 @@ fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
 }
 
 #[tokio::test]
-async fn test_pkg_version_0518_rejects_0510_rpc_and_upgrades_0510_binary() {
+async fn test_pkg_version_0519_rejects_0510_rpc_and_upgrades_0510_binary() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(pkg_ver, "0.5.18");
+    assert_eq!(pkg_ver, "0.5.19");
 
     let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.10").unwrap();
     assert_eq!(refusal["ok"], false);
@@ -1906,6 +1906,8 @@ async fn gate_host_engine_login_emits_auth_url_and_manual_code_prompt_and_marks_
         installed_at: "2026-11-19T00:00:00Z".to_string(),
         sha256: Some("abc".to_string()),
         authenticated: None,
+        default_model: None,
+        default_thinking_level: None,
     };
     crate::config::save_engine_manifest(&config_dir, &manifest).unwrap();
 

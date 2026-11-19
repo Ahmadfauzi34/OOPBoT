@@ -88,4 +88,20 @@ class ModelSheetTest {
     assertEquals("gemini-custom", modelLabel(unnamed))
     assertNull(modelLabel(null))
   }
+
+  @Test
+  fun `acp models bypass pi enabledModels scope even before account status loads`() {
+    val acpModels = listOf(
+      model("acp:antigravity", "gemini-4-neon-high", "Gemini 4 Neon (High)").put("api", "acp"),
+      model("acp:antigravity", "gemini-4-neon-low", "Gemini 4 Neon (Low)").put("api", "acp"),
+    )
+
+    val filtered = filterScopedModels(
+      models = acpModels,
+      scope = setOf("google/gemini-2.5-flash"),
+      hasAccountState = false,
+    )
+
+    assertEquals(2, filtered?.size)
+  }
 }

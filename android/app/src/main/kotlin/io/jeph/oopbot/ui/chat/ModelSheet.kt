@@ -86,13 +86,9 @@ internal fun ModelSheet(
   LaunchedEffect(controller) { models = controller.query { availableModels() }.orEmpty() }
   LaunchedEffect(accounts) { accounts.refresh() }
   // Pi's RPC lists every model with credentials; settings.json `enabledModels` picks the ones shown.
+  // External ACP engines manage their own catalog and don't wait on Pi account scope.
   val scoped = remember(models, status, refreshError) {
-    val scope = status?.scope
-    when {
-      models == null || (status == null && refreshError == null) -> null
-      scope == null -> models
-      else -> models?.filter { "${it.optString("provider")}/${it.optString("id")}" in scope }
-    }
+    filterScopedModels(models, status?.scope, status != null || refreshError != null)
   }
   OopbotSheet(onDismissRequest = onDismiss, maxHeightFraction = PICKER_MAX_HEIGHT) { dismiss ->
     // The sheet shows the pick at once and switches Pi once it has slid away, so Pi's answer can't reshape it on the
@@ -181,6 +177,18 @@ internal data class ModelSheetEntry(
 
 /** One provider heading and its visible [entries] in [ModelList]. */
 internal data class ModelSheetGroup(val provider: String, val entries: List<ModelSheetEntry>)
+
+internal fun filterScopedModels(
+  models: List<JSONObject>?,
+  scope: Set<String>?,
+  hasAccountState: Boolean,
+): List<JSONObject>? = when {
+  models == null -> null
+  models.any { it.optString("api") == "acp" } -> models
+  !hasAccountState -> null
+  scope == null -> models
+  else -> models.filter { "${it.optString("provider")}/${it.optString("id")}" in scope }
+}
 
 /**
  * Deduplicates [models] by `(provider, id)`, checks per-provider display-name collisions across the full scoped list,

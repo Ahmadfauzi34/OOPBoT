@@ -5,11 +5,14 @@ use super::client::{AcpAgentEvent, AcpClient, AcpLaunchConfig};
 use super::protocol::{
     build_initialize_params, build_permission_cancelled_result, build_permission_selected_result,
     build_session_cancel_params, build_session_load_params, build_session_new_params,
-    build_session_prompt_params, map_acp_tool_kind_to_oopbot, parse_permission_request,
-    parse_session_update, AcpPermissionRequest, AcpPlanEntry, AcpSessionUpdate, JsonRpcError,
+    build_session_prompt_params, build_session_set_config_option_params,
+    build_session_set_model_params, map_acp_tool_kind_to_oopbot, parse_permission_request,
+    parse_session_config_options, parse_session_models, parse_session_update, AcpConfigOption,
+    AcpModelOption, AcpPermissionRequest, AcpPlanEntry, AcpSessionUpdate, JsonRpcError,
 };
 use crate::common::time::{epoch_ms, iso_now};
 use crate::common::BoxError;
+use crate::config::{load_engine_manifest, save_engine_manifest};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, Write};
@@ -237,6 +240,36 @@ impl AcpSessionMirror {
     }
 }
 
+fn normalize_thinking_level_token(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "off" => Some("off"),
+        "minimal" | "min" => Some("minimal"),
+        "low" => Some("low"),
+        "medium" | "med" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" | "extra_high" | "extra-high" => Some("xhigh"),
+        "max" => Some("max"),
+        _ => None,
+    }
+}
+
+/// Ekstrak `(base_name, normalized_level)` dari nama varian seperti `"Gemini 4 Neon (High)"`.
+fn infer_model_base_and_level(name: &str) -> Option<(&str, &'static str)> {
+    let trimmed = name.trim();
+    let open = trimmed.rfind('(')?;
+    if !trimmed.ends_with(')') || open == 0 {
+        return None;
+    }
+    let inside = &trimmed[open + 1..trimmed.len() - 1];
+    let level = normalize_thinking_level_token(inside)?;
+    let base = trimmed[..open].trim();
+    if base.is_empty() {
+        None
+    } else {
+        Some((base, level))
+    }
+}
+
 /// Bridge ACP <-> OOPBoT JSONL RPC.
 pub struct AcpRpcBridge {
     config: AcpBridgeConfig,
@@ -245,6 +278,9 @@ pub struct AcpRpcBridge {
     mirror: AcpSessionMirror,
     active_model_id: String,
     active_model_name: String,
+    available_models: Vec<AcpModelOption>,
+    config_options: Vec<AcpConfigOption>,
+    thinking_level: String,
     acp_session_id: String,
     pending_permissions: HashMap<String, PendingPermission>,
     perm_counter: u64,
@@ -283,6 +319,7 @@ impl AcpRpcBridge {
         let cwd_str = config.cwd.to_string_lossy().to_string();
 
         // 2. Pulihkan sesi ACP lama bila tersedia dan didukung; jika gagal fallback ke `session/new`.
+        let mut loaded_from_existing = false;
         let session_res = if supports_load {
             if let Some(prev_sid) = mirror.acp_session_id.clone() {
                 match client
@@ -294,6 +331,7 @@ impl AcpRpcBridge {
                     .await
                 {
                     Ok(mut v) => {
+                        loaded_from_existing = true;
                         if v.get("sessionId").and_then(|s| s.as_str()).is_none() {
                             v["sessionId"] = json!(prev_sid);
                         }
@@ -335,36 +373,57 @@ impl AcpRpcBridge {
             .unwrap_or_else(|| format!("acp-{}", epoch_ms()));
         mirror.record_acp_session_id(acp_session_id.clone());
 
-        let active_model_id = session_res["models"]["currentModelId"]
-            .as_str()
-            .or_else(|| session_res["model"].as_str())
-            .unwrap_or("default")
-            .to_string();
-        let active_model_name = session_res["models"]["availableModels"]
-            .as_array()
-            .and_then(|arr| {
-                arr.iter().find(|m| {
-                    m["modelId"].as_str() == Some(active_model_id.as_str())
-                        || m["id"].as_str() == Some(active_model_id.as_str())
-                })
-            })
-            .and_then(|m| m["name"].as_str())
-            .map(str::to_string)
+        let (parsed_current, available_models) = parse_session_models(&session_res);
+        let config_options = parse_session_config_options(&session_res);
+        let active_model_id = parsed_current.unwrap_or_else(|| "default".to_string());
+        let active_model_name = available_models
+            .iter()
+            .find(|m| m.model_id == active_model_id)
+            .map(|m| m.name.clone())
             .unwrap_or_else(|| format!("{} ({})", config.display_name, active_model_id));
 
-        Ok(Self {
+        let mut bridge = Self {
             config,
             client,
             acp_events,
             mirror,
             active_model_id,
             active_model_name,
+            available_models,
+            config_options,
+            thinking_level: "medium".to_string(),
             acp_session_id,
             pending_permissions: HashMap::new(),
             perm_counter: 1,
             queued_prompts: VecDeque::new(),
             output,
-        })
+        };
+        bridge.sync_thinking_level_from_state();
+
+        // Terapkan pilihan model/thinking tersimpan saat memulai sesi baru.
+        if !loaded_from_existing {
+            if let Some(manifest) =
+                load_engine_manifest(&bridge.config.config_dir, &bridge.config.engine_id)
+            {
+                if let Some(ref pref_model) = manifest.default_model {
+                    let allowed = bridge.available_models.is_empty()
+                        || bridge
+                            .available_models
+                            .iter()
+                            .any(|m| &m.model_id == pref_model);
+                    if allowed && pref_model != &bridge.active_model_id {
+                        let _ = bridge.switch_acp_model(pref_model, false).await;
+                    }
+                }
+                if let Some(ref pref_level) = manifest.default_thinking_level {
+                    if !pref_level.eq_ignore_ascii_case(&bridge.thinking_level) {
+                        let _ = bridge.switch_acp_thinking_level(pref_level, false).await;
+                    }
+                }
+            }
+        }
+
+        Ok(bridge)
     }
 
     fn send_line(&self, val: &Value) {
@@ -404,20 +463,313 @@ impl AcpRpcBridge {
         }));
     }
 
-    fn state_json(&self, is_streaming: bool) -> Value {
+    fn model_json(&self, id: &str, name: &str) -> Value {
         let provider_id = format!("acp:{}", self.config.engine_id);
         json!({
-            "model": {
-                "id": self.active_model_id,
-                "name": self.active_model_name,
-                "provider": provider_id,
-                "api": "acp",
-                "reasoning": true,
-                "input": ["text", "image"],
-                "contextWindow": 200000,
-                "maxTokens": 32768,
-            },
-            "thinkingLevel": "medium",
+            "id": id,
+            "name": name,
+            "provider": provider_id,
+            "api": "acp",
+            "reasoning": true,
+            "input": ["text", "image"],
+            "contextWindow": 200000,
+            "maxTokens": 32768,
+        })
+    }
+
+    fn active_model_json(&self) -> Value {
+        self.model_json(&self.active_model_id, &self.active_model_name)
+    }
+
+    fn available_models_json(&self) -> Vec<Value> {
+        if self.available_models.is_empty() {
+            return vec![self.active_model_json()];
+        }
+        self.available_models
+            .iter()
+            .map(|m| self.model_json(&m.model_id, &m.name))
+            .collect()
+    }
+
+    fn thought_config_option(&self) -> Option<&AcpConfigOption> {
+        self.config_options.iter().find(|opt| {
+            opt.category.as_deref() == Some("thought_level")
+                || opt.id.to_ascii_lowercase().contains("thought")
+                || opt.id.to_ascii_lowercase().contains("thinking")
+                || opt.id.to_ascii_lowercase().contains("reasoning")
+                || opt.name.to_ascii_lowercase().contains("thinking")
+        })
+    }
+
+    fn model_config_option(&self) -> Option<&AcpConfigOption> {
+        self.config_options
+            .iter()
+            .find(|opt| opt.category.as_deref() == Some("model"))
+    }
+
+    fn sibling_thinking_variants(&self) -> Vec<(&'static str, String)> {
+        let Some((active_base, _)) = infer_model_base_and_level(&self.active_model_name) else {
+            return Vec::new();
+        };
+        let mut variants = Vec::new();
+        for m in &self.available_models {
+            if let Some((base, lvl)) = infer_model_base_and_level(&m.name) {
+                if base.eq_ignore_ascii_case(active_base)
+                    && !variants.iter().any(|(existing, _)| *existing == lvl)
+                {
+                    variants.push((lvl, m.model_id.clone()));
+                }
+            }
+        }
+        variants
+    }
+
+    fn available_thinking_levels(&self) -> Vec<String> {
+        if let Some(cfg) = self.thought_config_option() {
+            if !cfg.options.is_empty() {
+                return cfg.options.iter().map(|o| o.value.clone()).collect();
+            }
+        }
+        let variants = self.sibling_thinking_variants();
+        if !variants.is_empty() {
+            return variants
+                .into_iter()
+                .map(|(lvl, _)| lvl.to_string())
+                .collect();
+        }
+        vec![self.thinking_level.clone()]
+    }
+
+    fn sync_thinking_level_from_state(&mut self) -> bool {
+        let next = if let Some(cfg) = self.thought_config_option() {
+            let trimmed = cfg.current_value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(
+                    normalize_thinking_level_token(trimmed)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| trimmed.to_string()),
+                )
+            }
+        } else {
+            infer_model_base_and_level(&self.active_model_name).map(|(_, lvl)| lvl.to_string())
+        };
+        if let Some(lvl) = next {
+            if lvl != self.thinking_level {
+                self.thinking_level = lvl;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn apply_config_options(&mut self, next_options: Vec<AcpConfigOption>) {
+        self.config_options = next_options;
+        if let Some(model_cfg) = self.model_config_option().cloned() {
+            let mid = model_cfg.current_value.trim();
+            if !mid.is_empty() {
+                self.active_model_id = mid.to_string();
+                self.active_model_name = model_cfg
+                    .options
+                    .iter()
+                    .find(|o| o.value == mid)
+                    .map(|o| o.name.clone())
+                    .or_else(|| {
+                        self.available_models
+                            .iter()
+                            .find(|m| m.model_id == mid)
+                            .map(|m| m.name.clone())
+                    })
+                    .unwrap_or_else(|| format!("{} ({})", self.config.display_name, mid));
+            }
+        }
+        if self.sync_thinking_level_from_state() {
+            self.send_line(&json!({
+                "type": "thinking_level_changed",
+                "level": self.thinking_level,
+            }));
+        }
+    }
+
+    fn persist_engine_defaults(&self) {
+        if let Some(mut manifest) =
+            load_engine_manifest(&self.config.config_dir, &self.config.engine_id)
+        {
+            manifest.default_model = Some(self.active_model_id.clone());
+            manifest.default_thinking_level = Some(self.thinking_level.clone());
+            let _ = save_engine_manifest(&self.config.config_dir, &manifest);
+        }
+    }
+
+    async fn switch_acp_model(
+        &mut self,
+        model_id: &str,
+        record_history: bool,
+    ) -> Result<Value, String> {
+        let trimmed = model_id.trim();
+        if trimmed.is_empty() {
+            return Err("modelId wajib diisi".to_string());
+        }
+
+        let model_cfg_id = self.model_config_option().map(|c| c.id.clone());
+        let res = match self
+            .client
+            .request_with_timeout(
+                "session/set_model",
+                build_session_set_model_params(&self.acp_session_id, trimmed),
+                Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(first_err) => {
+                if let Some(cfg_id) = model_cfg_id {
+                    self.client
+                        .request_with_timeout(
+                            "session/set_config_option",
+                            build_session_set_config_option_params(
+                                &self.acp_session_id,
+                                &cfg_id,
+                                trimmed,
+                            ),
+                            Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                        )
+                        .await
+                        .map_err(|e| format!("Gagal mengganti model ACP '{}': {}", trimmed, e))?
+                } else {
+                    return Err(format!(
+                        "Gagal mengganti model ACP '{}': {}",
+                        trimmed, first_err
+                    ));
+                }
+            }
+        };
+
+        self.active_model_id = trimmed.to_string();
+        self.active_model_name = self
+            .available_models
+            .iter()
+            .find(|m| m.model_id == trimmed)
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| format!("{} ({})", self.config.display_name, trimmed));
+
+        let next_cfgs = parse_session_config_options(&res);
+        if !next_cfgs.is_empty() {
+            self.apply_config_options(next_cfgs);
+        } else if self.sync_thinking_level_from_state() {
+            self.send_line(&json!({
+                "type": "thinking_level_changed",
+                "level": self.thinking_level,
+            }));
+        }
+
+        if record_history {
+            self.mirror.append_entry(
+                "model_change",
+                json!({
+                    "provider": format!("acp:{}", self.config.engine_id),
+                    "modelId": self.active_model_id,
+                }),
+            );
+            self.persist_engine_defaults();
+        }
+        Ok(self.active_model_json())
+    }
+
+    async fn switch_acp_thinking_level(
+        &mut self,
+        level: &str,
+        record_history: bool,
+    ) -> Result<String, String> {
+        let trimmed = level.trim();
+        if trimmed.is_empty() {
+            return Err("Thinking level wajib diisi".to_string());
+        }
+
+        if let Some(cfg) = self.thought_config_option().cloned() {
+            let matched = cfg
+                .options
+                .iter()
+                .find(|o| {
+                    o.value.eq_ignore_ascii_case(trimmed) || o.name.eq_ignore_ascii_case(trimmed)
+                })
+                .map(|o| o.value.clone());
+            let target_val = match matched {
+                Some(v) => v,
+                None if cfg.options.is_empty() => trimmed.to_ascii_lowercase(),
+                None => {
+                    return Err(format!(
+                        "Thinking level '{}' tidak tersedia (pilihan: {})",
+                        trimmed,
+                        cfg.options
+                            .iter()
+                            .map(|o| o.value.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            };
+
+            let res = self
+                .client
+                .request_with_timeout(
+                    "session/set_config_option",
+                    build_session_set_config_option_params(
+                        &self.acp_session_id,
+                        &cfg.id,
+                        &target_val,
+                    ),
+                    Duration::from_secs(ACP_INIT_TIMEOUT_SECS),
+                )
+                .await
+                .map_err(|e| format!("Gagal mengatur thinking level ACP: {}", e))?;
+
+            let next_cfgs = parse_session_config_options(&res);
+            if !next_cfgs.is_empty() {
+                self.config_options = next_cfgs;
+            }
+            self.thinking_level = normalize_thinking_level_token(&target_val)
+                .map(str::to_string)
+                .unwrap_or(target_val);
+        } else {
+            let target_norm = normalize_thinking_level_token(trimmed).unwrap_or(trimmed);
+            let sibling_id = self
+                .sibling_thinking_variants()
+                .into_iter()
+                .find(|(lvl, _)| lvl.eq_ignore_ascii_case(target_norm))
+                .map(|(_, id)| id);
+            if let Some(model_id) = sibling_id {
+                self.switch_acp_model(&model_id, record_history).await?;
+                self.thinking_level = target_norm.to_string();
+            } else if trimmed.eq_ignore_ascii_case(&self.thinking_level) {
+                return Ok(self.thinking_level.clone());
+            } else {
+                return Err(format!(
+                    "Thinking level '{}' tidak didukung oleh model ACP '{}'",
+                    trimmed, self.active_model_name
+                ));
+            }
+        }
+
+        if record_history {
+            self.mirror.append_entry(
+                "thinking_level_change",
+                json!({ "thinkingLevel": self.thinking_level }),
+            );
+            self.persist_engine_defaults();
+        }
+        self.send_line(&json!({
+            "type": "thinking_level_changed",
+            "level": self.thinking_level,
+        }));
+        Ok(self.thinking_level.clone())
+    }
+
+    fn state_json(&self, is_streaming: bool) -> Value {
+        json!({
+            "model": self.active_model_json(),
+            "thinkingLevel": self.thinking_level,
             "isStreaming": is_streaming,
             "isCompacting": false,
             "steeringMode": "one-at-a-time",
@@ -726,6 +1078,11 @@ impl AcpRpcBridge {
                 }));
                 self.mirror.record_message(tool_result_msg);
             }
+            AcpSessionUpdate::ConfigOptionUpdate { config_options } => {
+                if !config_options.is_empty() {
+                    self.apply_config_options(config_options);
+                }
+            }
             AcpSessionUpdate::Unknown(_) => {}
         }
     }
@@ -1033,6 +1390,39 @@ impl AcpRpcBridge {
                         }
                         "get_commands" => {
                             self.send_response(&id, "get_commands", json!({ "commands": [] }));
+                        }
+                        "get_available_models" => {
+                            let models = self.available_models_json();
+                            self.send_response(
+                                &id,
+                                "get_available_models",
+                                json!({ "models": models }),
+                            );
+                        }
+                        "set_model" => {
+                            let model_id = cmd["modelId"]
+                                .as_str()
+                                .or_else(|| cmd["id"].as_str())
+                                .unwrap_or_default();
+                            match self.switch_acp_model(model_id, true).await {
+                                Ok(model) => self.send_response(&id, "set_model", model),
+                                Err(err) => self.send_error(&id, "set_model", &err),
+                            }
+                        }
+                        "get_available_thinking_levels" => {
+                            let levels = self.available_thinking_levels();
+                            self.send_response(
+                                &id,
+                                "get_available_thinking_levels",
+                                json!({ "levels": levels }),
+                            );
+                        }
+                        "set_thinking_level" => {
+                            let level = cmd["level"].as_str().unwrap_or_default();
+                            match self.switch_acp_thinking_level(level, true).await {
+                                Ok(_) => self.send_response(&id, "set_thinking_level", json!({})),
+                                Err(err) => self.send_error(&id, "set_thinking_level", &err),
+                            }
                         }
                         "get_session_stats" => {
                             self.send_response(

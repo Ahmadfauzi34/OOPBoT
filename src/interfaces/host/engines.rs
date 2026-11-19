@@ -620,6 +620,8 @@ where
         installed_at: iso_now(),
         sha256: Some(digest),
         authenticated: None,
+        default_model: None,
+        default_thinking_level: None,
     };
     save_engine_manifest(config_dir, &manifest)?;
     Ok(manifest)

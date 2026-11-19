@@ -43,6 +43,10 @@ pub struct ExternalEngineManifest {
     pub sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authenticated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_thinking_level: Option<String>,
 }
 
 const BUILTIN_EXTERNAL_ENGINES: &[ExternalEngineSpec] = &[ExternalEngineSpec {
@@ -167,6 +171,8 @@ mod tests {
             installed_at: "2026-11-19T00:00:00Z".to_string(),
             sha256: Some("abc123".to_string()),
             authenticated: Some(true),
+            default_model: Some("gemini-4-neon-high".to_string()),
+            default_thinking_level: Some("high".to_string()),
         };
 
         save_engine_manifest(&dir, &manifest).unwrap();

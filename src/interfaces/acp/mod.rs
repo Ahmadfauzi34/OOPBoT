@@ -14,6 +14,6 @@ mod tests;
 pub use bridge::{AcpBridgeConfig, AcpRpcBridge};
 pub use client::{AcpAgentEvent, AcpClient, AcpLaunchConfig};
 pub use protocol::{
-    AcpPermissionOption, AcpPermissionRequest, AcpPlanEntry, AcpSessionUpdate, IncomingJsonRpc,
-    JsonRpcError, ACP_PROTOCOL_VERSION,
+    AcpConfigChoice, AcpConfigOption, AcpModelOption, AcpPermissionOption, AcpPermissionRequest,
+    AcpPlanEntry, AcpSessionUpdate, IncomingJsonRpc, JsonRpcError, ACP_PROTOCOL_VERSION,
 };
