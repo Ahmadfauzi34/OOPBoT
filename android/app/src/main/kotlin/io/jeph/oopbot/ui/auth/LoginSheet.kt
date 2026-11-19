@@ -282,15 +282,14 @@ private fun TextPrompt(prompt: PendingPrompt, onAnswer: (String) -> Unit) {
   )
 }
 
-private fun readClipboardText(context: Context): String? =
-  context.getSystemService(ClipboardManager::class.java)
-    ?.primaryClip
-    ?.takeIf { it.itemCount > 0 }
-    ?.getItemAt(0)
-    ?.coerceToText(context)
-    ?.toString()
-    ?.trim()
-    ?.takeIf { it.isNotEmpty() }
+private fun readClipboardText(context: Context): String? = context.getSystemService(ClipboardManager::class.java)
+  ?.primaryClip
+  ?.takeIf { it.itemCount > 0 }
+  ?.getItemAt(0)
+  ?.coerceToText(context)
+  ?.toString()
+  ?.trim()
+  ?.takeIf { it.isNotEmpty() }
 
 /** A 14sp line with a 16dp leading icon or spinner. */
 @Composable
