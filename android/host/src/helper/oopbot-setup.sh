@@ -60,8 +60,9 @@ write_file() {
   fi
 }
 
-# 2. Termux prerequisites & OOPBoT Native Engine.
+# 2. Termux prerequisites, internet CLI tools & OOPBoT Native Engine.
 dpkg --configure -a || true
+upgraded=false
 missing_pkgs=()
 command -v curl >/dev/null 2>&1 || missing_pkgs+=(curl)
 command -v node >/dev/null 2>&1 || missing_pkgs+=(nodejs)
@@ -69,9 +70,40 @@ if [ "${#missing_pkgs[@]}" -gt 0 ]; then
   say "Installing Termux packages (${missing_pkgs[*]})..."
   { yes | pkg upgrade -y && pkg install -y "${missing_pkgs[@]}"; } ||
     fail "Couldn't install Termux packages (${missing_pkgs[*]}). Check your internet connection, then paste the command again."
+  upgraded=true
 fi
 command -v curl >/dev/null 2>&1 || fail "curl is missing after installation."
 command -v node >/dev/null 2>&1 || fail "Node.js is missing after installation."
+
+extra_net_pkgs=()
+for spec in aria2:aria2c wget:wget jq:jq dnsutils:dig netcat-openbsd:nc openssh:ssh git:git; do
+  pkg_name=${spec%:*}
+  bin_name=${spec#*:}
+  command -v "$bin_name" >/dev/null 2>&1 || extra_net_pkgs+=("$pkg_name")
+done
+if [ "${#extra_net_pkgs[@]}" -gt 0 ]; then
+  say "Installing internet CLI tools (${extra_net_pkgs[*]})..."
+  if [ "$upgraded" != true ]; then
+    yes | pkg upgrade -y >/dev/null 2>&1 || true
+  fi
+  if ! pkg install -y "${extra_net_pkgs[@]}"; then
+    for pkg_name in "${extra_net_pkgs[@]}"; do
+      pkg install -y "$pkg_name" || say "Optional package $pkg_name skipped."
+    done
+  fi
+fi
+
+download_release_binary() {
+  local url=$1 dest=$2
+  rm -f "$dest" "${dest}.aria2"
+  if command -v aria2c >/dev/null 2>&1; then
+    aria2c -x 8 -s 8 -k 1M --connect-timeout=15 --timeout=60 --max-tries=2 \
+      --allow-overwrite=true --auto-file-renaming=false --summary-interval=0 \
+      -d "${dest%/*}" -o "${dest##*/}" "$url" && return 0
+    rm -f "$dest" "${dest}.aria2"
+  fi
+  curl -fsSL -m 120 "$url" -o "$dest"
+}
 
 installed_ver=""
 if [ -x "$PREFIX/bin/oopbot" ]; then
@@ -92,15 +124,17 @@ if [ "$need_oopbot" = true ]; then
   say "Installing OOPBoT Rust engine${expected_ver:+ v$expected_ver}..."
   mkdir -p "$PREFIX/bin" || fail "Couldn't create $PREFIX/bin."
   tmp_bin="$PREFIX/bin/oopbot.$$.tmp"
-  rm -f "$tmp_bin"
+  rm -f "$tmp_bin" "${tmp_bin}.aria2"
   downloaded=false
   if [ -n "$expected_ver" ]; then
-    curl -fsSL -m 120 "https://github.com/Ahmadfauzi34/OOPBoT/releases/download/v${expected_ver}/oopbot-aarch64-linux-android" \
-      -o "$tmp_bin" && downloaded=true || rm -f "$tmp_bin"
+    download_release_binary \
+      "https://github.com/Ahmadfauzi34/OOPBoT/releases/download/v${expected_ver}/oopbot-aarch64-linux-android" \
+      "$tmp_bin" && downloaded=true || rm -f "$tmp_bin" "${tmp_bin}.aria2"
   fi
   if [ "$downloaded" != true ]; then
-    curl -fsSL -m 120 "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android" \
-      -o "$tmp_bin" && downloaded=true || rm -f "$tmp_bin"
+    download_release_binary \
+      "https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android" \
+      "$tmp_bin" && downloaded=true || rm -f "$tmp_bin" "${tmp_bin}.aria2"
   fi
   [ "$downloaded" = true ] || fail "Couldn't download OOPBoT engine. Check your internet connection, then paste the command again."
   chmod 755 "$tmp_bin" || { rm -f "$tmp_bin"; fail "Couldn't mark oopbot executable."; }

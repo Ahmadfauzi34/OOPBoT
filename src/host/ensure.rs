@@ -157,6 +157,115 @@ pub(super) fn sync_secondary_targets(
     }
 }
 
+pub(super) fn is_loopback_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("http://127.0.0.1")
+        || lower.starts_with("https://127.0.0.1")
+        || lower.starts_with("http://localhost")
+        || lower.starts_with("https://localhost")
+        || lower.starts_with("http://[::1]")
+        || lower.starts_with("https://[::1]")
+}
+
+pub(super) fn find_aria2c_bin_with<F>(
+    env_prefix: Option<&str>,
+    env_path: Option<&str>,
+    exists: F,
+) -> Option<PathBuf>
+where
+    F: Fn(&Path) -> bool,
+{
+    if let Some(prefix) = env_prefix
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_end_matches('/'))
+    {
+        let candidate = PathBuf::from(prefix).join("bin").join("aria2c");
+        if exists(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    let termux_default = PathBuf::from("/data/data/com.termux/files/usr/bin/aria2c");
+    if exists(&termux_default) {
+        return Some(termux_default);
+    }
+
+    if let Some(path_var) = env_path {
+        for dir in std::env::split_paths(path_var) {
+            let candidate = dir.join("aria2c");
+            if exists(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn find_aria2c_bin() -> Option<PathBuf> {
+    let env_prefix = std::env::var("PREFIX").ok();
+    let env_path = std::env::var("PATH").ok();
+    find_aria2c_bin_with(env_prefix.as_deref(), env_path.as_deref(), |p| p.is_file())
+}
+
+pub(super) async fn download_via_aria2c_at(
+    aria2c_bin: &Path,
+    url: &str,
+    dest_dir: &Path,
+    file_name: &str,
+) -> Option<Vec<u8>> {
+    if url.trim().is_empty() || url.starts_with('-') || file_name.is_empty() {
+        return None;
+    }
+    let stage_path = dest_dir.join(file_name);
+    let control_path = dest_dir.join(format!("{}.aria2", file_name));
+    let _ = std::fs::remove_file(&stage_path);
+    let _ = std::fs::remove_file(&control_path);
+
+    let child = tokio::process::Command::new(aria2c_bin)
+        .args([
+            "-x",
+            "8",
+            "-s",
+            "8",
+            "-k",
+            "1M",
+            "--connect-timeout=15",
+            "--timeout=60",
+            "--max-tries=2",
+            "--allow-overwrite=true",
+            "--auto-file-renaming=false",
+            "--summary-interval=0",
+            "-d",
+        ])
+        .arg(dest_dir)
+        .arg("-o")
+        .arg(file_name)
+        .arg("--")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(120), child.wait_with_output()).await {
+        Ok(Ok(o)) if o.status.success() => o,
+        _ => {
+            let _ = std::fs::remove_file(&stage_path);
+            let _ = std::fs::remove_file(&control_path);
+            return None;
+        }
+    };
+    let _ = out;
+
+    let bytes = std::fs::read(&stage_path).ok().filter(|b| !b.is_empty());
+    let _ = std::fs::remove_file(&stage_path);
+    let _ = std::fs::remove_file(&control_path);
+    bytes
+}
+
 pub(super) async fn ensure_oopbot_binary_with<F>(
     current_version: &str,
     expected_version: &str,
@@ -207,28 +316,45 @@ where
         })?;
     }
 
+    let aria2c_bin = find_aria2c_bin();
     let mut last_status: Option<u16> = None;
     let mut mismatch_msg: Option<String> = None;
     let mut saw_network_error = false;
 
     for url in release_urls {
-        on_progress(&format!("Downloading {}", url));
-        let resp = match client.get(url).send().await {
-            Ok(r) => r,
-            Err(_) => {
-                saw_network_error = true;
+        let mut downloaded_bytes: Option<Vec<u8>> = None;
+        if !is_loopback_url(url) {
+            if let Some(ref aria2c) = aria2c_bin {
+                on_progress(&format!("Downloading {} (aria2c 8x)...", url));
+                if let Some(parent) = primary_target.parent() {
+                    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let stage_name = format!(".oopbot-aria2.{}.{}.tmp", std::process::id(), seq);
+                    downloaded_bytes = download_via_aria2c_at(aria2c, url, parent, &stage_name).await;
+                }
+            }
+        }
+
+        let bytes = if let Some(b) = downloaded_bytes {
+            b
+        } else {
+            on_progress(&format!("Downloading {}", url));
+            let resp = match client.get(url).send().await {
+                Ok(r) => r,
+                Err(_) => {
+                    saw_network_error = true;
+                    continue;
+                }
+            };
+            if !resp.status().is_success() {
+                last_status = Some(resp.status().as_u16());
                 continue;
             }
-        };
-        if !resp.status().is_success() {
-            last_status = Some(resp.status().as_u16());
-            continue;
-        }
-        let bytes = match resp.bytes().await {
-            Ok(b) => b,
-            Err(_) => {
-                saw_network_error = true;
-                continue;
+            match resp.bytes().await {
+                Ok(b) => b.to_vec(),
+                Err(_) => {
+                    saw_network_error = true;
+                    continue;
+                }
             }
         };
         if bytes.is_empty() {

@@ -21,7 +21,7 @@ Every feature has a strict home—do NOT place code in unrelated packages or dum
 - **Main-Thread Scope Discipline:** `AppGraph.scope` uses `SupervisorJob() + Dispatchers.Main.immediate`. Blocking disk/SQLite/network/JNI work inside `data/`, `host/`, or `syntax/` must switch to `Dispatchers.IO`, `OopbotDatabase.writer`, or `Dispatchers.Default` cleanly.
 - **Process Keep-Alive & Lease Invariants:** `AppGraph.holdWhileWorking()` owns the single `KeepAlive` token driven by active chats or terminal commands; `AppGraph.endLocalModelLeases()` releases local model reservations as soon as a chat turn finishes.
 - **Data Security (`data/`):** Encrypted/protected credentials (`RemotePasswords.kt`) and user notices (`NoticeStore.kt` / `session_notices`) must remain isolated in app-private storage; never log API keys or SSH passwords.
-- **Termux Version Lockstep (`termux/`):** `TermuxSetup.DEFAULT_OOPBOT_VERSION` MUST always match root `Cargo.toml` `version`.
+- **Termux Version Lockstep & Internet CLI Bundle (`termux/`):** `TermuxSetup.DEFAULT_OOPBOT_VERSION` MUST always match root `Cargo.toml` `version`. `TermuxSetup.fdroidCommand` (and `android/host/src/helper/oopbot-setup.sh`) installs required `curl` plus best-effort internet CLI packages (`aria2`, `wget`, `jq`, `dnsutils`, `netcat-openbsd`, `openssh`, `git`), prefers multi-connection `aria2c` with `curl` fallback for GitHub Release downloads, and keeps `inBash` free of `'`, `\`, and `\n`.
 
 ## Work Guidance
 - Business state and repositories belong in `agent/`, `data/`, `host/`, `localmodel/`, `workspace/`, `files/`, or `git/`—never inside `@Composable` UI files under `ui/`.

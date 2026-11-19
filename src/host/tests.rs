@@ -1533,3 +1533,81 @@ fn reg_err_browse_and_files_report_missing_non_dir_fifo_and_name_taken() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn ensure_aria2c_discovery_loopback_bypass_and_download_cleanup() {
+    assert!(is_loopback_url("http://127.0.0.1:8080/oopbot"));
+    assert!(is_loopback_url("http://localhost:3000/bin"));
+    assert!(is_loopback_url("https://[::1]:8443/bin"));
+    assert!(!is_loopback_url("https://github.com/Ahmadfauzi34/OOPBoT/releases/latest/download/oopbot-aarch64-linux-android"));
+
+    let found_prefix = find_aria2c_bin_with(
+        Some("/data/data/com.termux/files/usr"),
+        Some("/usr/bin"),
+        |p| p == std::path::Path::new("/data/data/com.termux/files/usr/bin/aria2c"),
+    );
+    assert_eq!(
+        found_prefix.as_deref(),
+        Some(std::path::Path::new("/data/data/com.termux/files/usr/bin/aria2c"))
+    );
+    let found_path = find_aria2c_bin_with(None, Some("/custom/net/bin:/bin"), |p| {
+        p == std::path::Path::new("/custom/net/bin/aria2c")
+    });
+    assert_eq!(
+        found_path.as_deref(),
+        Some(std::path::Path::new("/custom/net/bin/aria2c"))
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("oopbot_aria2_{}_{}", epoch_ms(), seq));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let fake_aria = temp_dir.join("fake-aria2c");
+        let args_log = temp_dir.join("args.log");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$@\" > \"{}\"\n\
+             dir=\"\"; out=\"\"\n\
+             while [ $# -gt 0 ]; do\n\
+               case \"$1\" in\n\
+                 -d) dir=$2; shift 2;;\n\
+                 -o) out=$2; shift 2;;\n\
+                 --) shift; break;;\n\
+                 *) shift;;\n\
+               esac\n\
+             done\n\
+             printf 'ARIA2_OK_BINARY' > \"$dir/$out\"\n\
+             printf 'ctrl' > \"$dir/$out.aria2\"\n",
+            args_log.display()
+        );
+        std::fs::write(&fake_aria, script).unwrap();
+        std::fs::set_permissions(&fake_aria, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let url = "https://github.com/Ahmadfauzi34/OOPBoT/releases/download/v0.5.13/oopbot-aarch64-linux-android";
+        let got = download_via_aria2c_at(&fake_aria, url, &temp_dir, "stage.bin")
+            .await
+            .expect("fake aria2c should return payload");
+        assert_eq!(got, b"ARIA2_OK_BINARY");
+        assert!(!temp_dir.join("stage.bin").exists());
+        assert!(!temp_dir.join("stage.bin.aria2").exists());
+
+        let logged = std::fs::read_to_string(&args_log).unwrap();
+        assert!(logged.contains("-x\n8\n-s\n8\n-k\n1M"));
+        assert!(logged.contains(url));
+
+        let fail_aria = temp_dir.join("fail-aria2c");
+        std::fs::write(
+            &fail_aria,
+            "#!/bin/sh\nprintf 'partial' > \"$1/fail.bin\" 2>/dev/null || true\nexit 2\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fail_aria, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(download_via_aria2c_at(&fail_aria, url, &temp_dir, "fail.bin").await.is_none());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+

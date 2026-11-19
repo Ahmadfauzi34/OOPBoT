@@ -227,7 +227,8 @@ impl Tool for RunShell {
     }
     fn description(&self) -> &'static str {
         "Jalankan perintah shell (bash -c di Termux/Linux, fallback sh -c) di perangkat user pada direktori kerja saat ini. \
-         Mendukung fitur bash seperti `time`, `[[ ... ]]`, `pipefail`, `history`, dan array. \
+         Mendukung fitur bash (`time`, `[[ ... ]]`, `pipefail`, `history`, array) dan utilitas CLI internet \
+         (`curl`, `aria2c -x 8 -s 8` untuk unduhan multi-koneksi cepat, `wget`, `jq`, `dig`/`nslookup`, `nc`, `ssh`/`scp`, `git`). \
          Mengembalikan exit_code, stdout, dan stderr. Paket Termux bisa dipasang dengan `pkg install -y <nama>`."
     }
     fn parameters(&self) -> Value {
@@ -820,5 +821,10 @@ mod tests {
         assert_eq!(res["stdout"], "OK:1 OK:2 alpha beta\n");
         let stderr = res["stderr"].as_str().unwrap_or("");
         assert!(stderr.contains("real"), "expected `time` builtin timing in stderr, got: {}", stderr);
+
+        let desc = RunShell.description();
+        for tool in ["aria2c", "curl", "wget", "jq", "dig", "nc", "ssh", "git"] {
+            assert!(desc.contains(tool), "RunShell description missing {tool}: {desc}");
+        }
     }
 }

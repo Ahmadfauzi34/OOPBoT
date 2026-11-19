@@ -17,6 +17,17 @@ class TermuxSetupTest {
     assertTrue(cmd.contains("/releases/download/v0.5.9/oopbot-aarch64-linux-android"))
     assertRunsInAnyShell(cmd)
   }
+
+  @Test
+  fun fdroidCommandInstallsInternetCliToolsAndUsesAria2cWithCurlFallback() {
+    val cmd = TermuxSetup.fdroidCommand("io.jeph.oopbot.debug", "0.5.13")
+    for (pkg in TermuxSetup.INTERNET_PACKAGES) {
+      assertTrue("Missing Termux internet package $pkg", cmd.contains(pkg))
+    }
+    assertTrue(cmd.contains("aria2c -x 8 -s 8 -k 1M"))
+    assertTrue(cmd.contains("curl -fsSL -m 120"))
+    assertRunsInAnyShell(cmd)
+  }
 }
 
 /**

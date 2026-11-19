@@ -17,6 +17,7 @@ Implements the zero-Node.js native TCP host bridge (`oopbot host <mode> <port>`)
 - **Unsupported Legacy Node Modes:** `package_install`, `update_extensions`, and unsupported interactive SSH modes MUST return structured `oopbot_result` (`ok: false`, `code: "unsupported"`) rather than crashing or hanging stdout/TCP.
 - **File & Output Sink Cleanup:** `handle_rpc_mode` MUST bind `set_output_sink(Some(...))` before starting `RpcServer` and clear `set_output_sink(None)` before emitting `oopbot_exit`.
 - **Secret Hygiene:** Never log raw API keys or tokens in JSON error payloads; write `auth.json` with `0o600`.
+- **Binary Upgrade Acceleration:** `ensure.rs` (`ensure_oopbot_binary_with`) uses `aria2c -x 8 -s 8 -k 1M` when available for remote HTTPS release downloads and falls back cleanly to `reqwest`, skipping `aria2c` for loopback test URLs.
 
 ## Work Guidance
 - Any change to message `type`, `op`, `code`, or JSON payload fields MUST stay synchronized with `android/app/src/main/kotlin/io/jeph/oopbot/host/HostModels.kt`, `HostProtocol.kt`, and `tests/host_binary_wire.rs`.
