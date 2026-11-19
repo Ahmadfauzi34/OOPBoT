@@ -1,11 +1,7 @@
 pub mod agent;
-pub mod events;
-pub mod ffi;
-pub mod gemini;
-pub mod host;
-pub mod models;
+pub mod common;
+pub mod config;
+pub mod interfaces;
+pub mod llm;
 pub mod plugins;
-pub mod rpc;
-pub mod session;
 pub mod tools;
-pub(crate) mod util;

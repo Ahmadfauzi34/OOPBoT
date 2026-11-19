@@ -1,11 +1,11 @@
+pub mod engines;
 pub mod html;
-pub mod providers;
 
 #[cfg(test)]
 mod tests;
 
+use self::engines::{execute_search, WebSearchConfig, WebSearchEndpoints};
 use self::html::strip_html_tags;
-use self::providers::{execute_search, WebSearchConfig, WebSearchEndpoints};
 use crate::plugins::Plugin;
 use crate::tools::{truncate, Tool, ToolRegistry};
 use async_trait::async_trait;

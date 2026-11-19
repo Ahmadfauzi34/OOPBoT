@@ -1,0 +1,448 @@
+//! Eksekusi giliran agen (`chat_turn_cancellable`), pemanggilan tool dengan pembatalan,
+//! dan ringkasan konteks (`generate_compaction_summary_cancellable`).
+
+use super::{
+    AgentEvent, AgentHarness, ChatInput, MemoryEventCollector, SteerHook, StepsOutcome, ToolStatus,
+    TurnOutcome,
+};
+use crate::common::BoxError;
+use crate::llm::{
+    function_response_part, user_message_with_images, user_text, FunctionCall, GenerationOptions,
+    TokenUsage,
+};
+use crate::tools::ToolRegistry;
+use serde_json::{json, Value};
+use std::time::Instant;
+
+impl AgentHarness {
+    /// Buat ringkasan konteks (untuk `compact` RPC) dengan dukungan pembatalan asinkron.
+    pub async fn generate_compaction_summary_cancellable(
+        &self,
+        prompt: &str,
+        mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(String, Option<TokenUsage>), BoxError> {
+        let (session_id, active_model) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let s = tabs.active();
+            (s.id.clone(), s.model.clone())
+        };
+        let model_info = self.active_model_info();
+        let gen_options = GenerationOptions {
+            api: Some(model_info.api.clone()),
+            max_tokens: model_info.output_token_limit,
+            thinking_level: Some(self.thinking_level()),
+            reasoning: model_info.reasoning,
+            thinking_level_map: model_info.thinking_level_map.clone(),
+            session_id: Some(session_id),
+        };
+        let contents = vec![user_text(prompt)];
+        let sys = "Kamu adalah asisten peringkas percakapan yang akurat dan ringkas.";
+        let turn = tokio::select! {
+            biased;
+            _ = wait_cancelled(&mut cancel_rx) => {
+                return Err("Operasi dibatalkan (aborted)".into());
+            }
+            res = self.client.generate_with_options(
+                &active_model,
+                sys,
+                &contents,
+                &[],
+                &gen_options,
+            ) => res?,
+        };
+        Ok((turn.text, turn.usage))
+    }
+
+    /// Jalankan satu function call dan pancarkan event `ToolCallStart` + `ToolCallEnd`.
+    /// Mengembalikan `None` jika dibatalkan saat menunggu konfirmasi atau eksekusi tool.
+    async fn run_tool_cancellable(
+        &self,
+        step_index: usize,
+        call: &FunctionCall,
+        collector: &MemoryEventCollector,
+        cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    ) -> Option<Value> {
+        let call_id = call
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("step-{}-{}", step_index, call.name));
+
+        let Some(tool) = self.tools.get(&call.name) else {
+            let err_val = json!({ "error": format!("tool '{}' tidak dikenal", call.name) });
+            self.emit(
+                AgentEvent::ToolCallEnd {
+                    step_index,
+                    call_id,
+                    tool_name: call.name.clone(),
+                    status: ToolStatus::Error,
+                    output: err_val.clone(),
+                    duration_ms: 0,
+                },
+                collector,
+            );
+            return Some(err_val);
+        };
+
+        let preview = tool.preview(&call.args);
+        let requires_confirmation = tool.requires_confirmation_for_args(&call.args);
+
+        self.emit(
+            AgentEvent::ToolCallStart {
+                step_index,
+                call_id: call_id.clone(),
+                tool_name: tool.name().to_string(),
+                args: call.args.clone(),
+                preview: preview.clone(),
+                requires_confirmation,
+            },
+            collector,
+        );
+
+        if requires_confirmation {
+            let approved = tokio::select! {
+                biased;
+                _ = wait_cancelled(cancel_rx) => {
+                    let abort_val = json!({ "error": "Dibatalkan oleh user (aborted)" });
+                    self.emit(
+                        AgentEvent::ToolCallEnd {
+                            step_index,
+                            call_id,
+                            tool_name: tool.name().to_string(),
+                            status: ToolStatus::Error,
+                            output: abort_val,
+                            duration_ms: 0,
+                        },
+                        collector,
+                    );
+                    return None;
+                }
+                res = self.approver.approve(tool.name(), &preview) => res,
+            };
+            if !approved {
+                let rejected = json!({ "error": "User menolak eksekusi tool ini. Tanyakan alternatif ke user." });
+                self.emit(
+                    AgentEvent::ToolCallEnd {
+                        step_index,
+                        call_id,
+                        tool_name: tool.name().to_string(),
+                        status: ToolStatus::Rejected,
+                        output: rejected.clone(),
+                        duration_ms: 0,
+                    },
+                    collector,
+                );
+                return Some(rejected);
+            }
+        }
+
+        let started = Instant::now();
+        let exec_res = tokio::select! {
+            biased;
+            _ = wait_cancelled(cancel_rx) => {
+                let abort_val = json!({ "error": "Dibatalkan oleh user (aborted)" });
+                self.emit(
+                    AgentEvent::ToolCallEnd {
+                        step_index,
+                        call_id,
+                        tool_name: tool.name().to_string(),
+                        status: ToolStatus::Error,
+                        output: abort_val,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    },
+                    collector,
+                );
+                return None;
+            }
+            res = tool.execute(&call.args) => res,
+        };
+
+        match exec_res {
+            Ok(result) => {
+                self.emit(
+                    AgentEvent::ToolCallEnd {
+                        step_index,
+                        call_id,
+                        tool_name: tool.name().to_string(),
+                        status: ToolStatus::Done,
+                        output: result.clone(),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    },
+                    collector,
+                );
+                Some(strip_internal_tool_fields_for_llm(tool.name(), result))
+            }
+            Err(e) => {
+                let err_val = json!({ "error": e });
+                self.emit(
+                    AgentEvent::ToolCallEnd {
+                        step_index,
+                        call_id,
+                        tool_name: tool.name().to_string(),
+                        status: ToolStatus::Error,
+                        output: err_val.clone(),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    },
+                    collector,
+                );
+                Some(err_val)
+            }
+        }
+    }
+
+    /// Jalankan satu giliran obrolan dengan dukungan pembatalan nyata (`watch::Receiver<bool>`)
+    /// serta suntikan pesan `steer` di sela langkah tool (`step_idx > 1`).
+    pub async fn chat_turn_cancellable(
+        &self,
+        input: &ChatInput,
+        mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+        steer_hook: Option<SteerHook>,
+    ) -> Result<TurnOutcome, BoxError> {
+        let (session_id, active_model, mut history) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let s = tabs.active();
+            (s.id.clone(), s.model.clone(), s.history.clone())
+        };
+
+        let user_msg = if input.images.is_empty() {
+            user_text(&input.text)
+        } else {
+            user_message_with_images(&input.text, &input.images)
+        };
+        history.push(user_msg);
+
+        let decls = self.tools.declarations();
+        let collector = MemoryEventCollector::new();
+        let turn_started = Instant::now();
+        let mut tool_steps = 0usize;
+        let mut total_usage: Option<TokenUsage> = None;
+        let mut last_usage: Option<TokenUsage> = None;
+        let mut was_aborted = false;
+
+        let model_info = self.active_model_info();
+        let gen_options = GenerationOptions {
+            api: Some(model_info.api.clone()),
+            max_tokens: model_info.output_token_limit,
+            thinking_level: Some(self.thinking_level()),
+            reasoning: model_info.reasoning,
+            thinking_level_map: model_info.thinking_level_map.clone(),
+            session_id: Some(session_id.clone()),
+        };
+
+        self.emit(
+            AgentEvent::TurnStart {
+                session_id,
+                model: active_model.clone(),
+            },
+            &collector,
+        );
+
+        for step_idx in 1..=self.max_steps {
+            if *cancel_rx.borrow() {
+                was_aborted = true;
+                break;
+            }
+
+            if step_idx > 1 {
+                if let Some(hook) = &steer_hook {
+                    for steer in hook() {
+                        let steer_msg = if steer.images.is_empty() {
+                            user_text(&steer.text)
+                        } else {
+                            user_message_with_images(&steer.text, &steer.images)
+                        };
+                        history.push(steer_msg);
+                    }
+                }
+                if *cancel_rx.borrow() {
+                    was_aborted = true;
+                    break;
+                }
+            }
+
+            let turn = tokio::select! {
+                biased;
+                _ = wait_cancelled(&mut cancel_rx) => {
+                    was_aborted = true;
+                    break;
+                }
+                res = self.client.generate_with_options(
+                    &active_model,
+                    &self.system_instruction,
+                    &history,
+                    &decls,
+                    &gen_options,
+                ) => res?,
+            };
+            history.push(turn.raw_content.clone());
+
+            if let Some(u) = turn.usage {
+                let cur = total_usage.get_or_insert(TokenUsage::default());
+                cur.input_tokens += u.input_tokens;
+                cur.output_tokens += u.output_tokens;
+                last_usage = Some(u);
+            }
+
+            for thought in &turn.thoughts {
+                self.emit(
+                    AgentEvent::Thinking {
+                        step_index: step_idx,
+                        text: thought.clone(),
+                    },
+                    &collector,
+                );
+            }
+
+            if turn.function_calls.is_empty() {
+                self.emit(
+                    AgentEvent::AssistantText {
+                        text: turn.text.clone(),
+                    },
+                    &collector,
+                );
+                self.emit(
+                    AgentEvent::TurnEnd {
+                        steps_count: tool_steps,
+                        duration_ms: turn_started.elapsed().as_millis() as u64,
+                        outcome: StepsOutcome::Done,
+                    },
+                    &collector,
+                );
+
+                let events = collector.take_events();
+                let folded = MemoryEventCollector::fold_turn(&input.text, &events);
+                let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+                let active = tabs.active_mut();
+                active.update_title_from_prompt(&input.text);
+                active.history = history;
+                active.timeline.extend(folded);
+                self.persist_tabs(&tabs);
+
+                return Ok(TurnOutcome {
+                    text: turn.text,
+                    events,
+                    steps: tool_steps,
+                    outcome: StepsOutcome::Done,
+                    usage: total_usage,
+                    last_usage,
+                    aborted: false,
+                });
+            }
+
+            if !turn.text.is_empty() {
+                self.emit(
+                    AgentEvent::Thinking {
+                        step_index: step_idx,
+                        text: turn.text.clone(),
+                    },
+                    &collector,
+                );
+            }
+
+            let mut parts = Vec::with_capacity(turn.function_calls.len());
+            for (idx, call) in turn.function_calls.iter().enumerate() {
+                tool_steps += 1;
+                match self
+                    .run_tool_cancellable(step_idx, call, &collector, &mut cancel_rx)
+                    .await
+                {
+                    Some(response) => {
+                        parts.push(function_response_part(call, response));
+                    }
+                    None => {
+                        let cancel_err = json!({ "error": "Dibatalkan oleh user (aborted)" });
+                        parts.push(function_response_part(call, cancel_err.clone()));
+                        for unstarted in &turn.function_calls[idx + 1..] {
+                            parts.push(function_response_part(unstarted, cancel_err.clone()));
+                        }
+                        was_aborted = true;
+                        break;
+                    }
+                }
+            }
+            history.push(json!({ "role": "user", "parts": parts }));
+            if was_aborted {
+                break;
+            }
+        }
+
+        self.emit(
+            AgentEvent::TurnEnd {
+                steps_count: tool_steps,
+                duration_ms: turn_started.elapsed().as_millis() as u64,
+                outcome: StepsOutcome::Stopped,
+            },
+            &collector,
+        );
+        let events = collector.take_events();
+        let folded = MemoryEventCollector::fold_turn(&input.text, &events);
+        let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+        let active = tabs.active_mut();
+        active.update_title_from_prompt(&input.text);
+        active.history = history;
+        active.timeline.extend(folded);
+        self.persist_tabs(&tabs);
+
+        Ok(TurnOutcome {
+            text: String::new(),
+            events,
+            steps: tool_steps,
+            outcome: StepsOutcome::Stopped,
+            usage: total_usage,
+            last_usage,
+            aborted: was_aborted,
+        })
+    }
+}
+
+async fn wait_cancelled(cancel_rx: &mut tokio::sync::watch::Receiver<bool>) {
+    if *cancel_rx.borrow() {
+        return;
+    }
+    while cancel_rx.changed().await.is_ok() {
+        if *cancel_rx.borrow() {
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
+}
+
+pub(super) fn default_system_instruction(tools: &ToolRegistry) -> String {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "?".into());
+    let prefix = std::env::var("PREFIX").unwrap_or_default();
+    let is_termux = prefix.contains("com.termux");
+    format!(
+        "Kamu adalah OOPBoT, agen AI yang berjalan langsung di perangkat user.\n\
+         Lingkungan: {env}, OS {os}/{arch}, direktori kerja: {cwd}{prefix_info}.\n\
+         Tool yang tersedia: {tools}.\n\
+         Aturan:\n\
+         - Gunakan tool untuk memeriksa fakta (isi file, output perintah) daripada menebak.\n\
+         - Untuk tugas multi-langkah, kerjakan bertahap dan verifikasi hasilnya.\n\
+         - Jangan menjalankan perintah destruktif (rm -rf, format, dsb.) tanpa alasan jelas.\n\
+         - Jawab dalam Bahasa Indonesia secara ringkas, gunakan format teks yang enak dibaca.",
+        env = if is_termux {
+            "Termux di Android"
+        } else {
+            "terminal Linux/Unix"
+        },
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        cwd = cwd,
+        prefix_info = if is_termux {
+            format!(", $PREFIX={}", prefix)
+        } else {
+            String::new()
+        },
+        tools = tools.names().join(", "),
+    )
+}
+
+pub(super) fn strip_internal_tool_fields_for_llm(tool_name: &str, mut result: Value) -> Value {
+    if tool_name == "todo" {
+        if let Some(obj) = result.as_object_mut() {
+            obj.remove("details");
+        }
+    }
+    result
+}

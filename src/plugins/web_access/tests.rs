@@ -2,7 +2,7 @@ use super::html::{
     decode_html_entities, extract_href, is_ddg_challenge, parse_ddg_results, strip_html_tags,
     urldecode, urlencoding,
 };
-use super::providers::{SearchEngine, WebSearchConfig, WebSearchEndpoints};
+use super::engines::{SearchEngine, WebSearchConfig, WebSearchEndpoints};
 use super::{FetchPageTool, WebSearchTool};
 use crate::tools::Tool;
 use serde_json::{json, Value};
