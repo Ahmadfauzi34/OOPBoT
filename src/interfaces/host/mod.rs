@@ -164,10 +164,10 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
             handle_engine_install_mode(params, &config_dir, Path::new(&prefix), writer).await
         }
         "engine_login" => {
-            handle_engine_login_mode(params, &config_dir, reader, writer).await
+            handle_engine_login_mode(params, &config_dir, Path::new(&prefix), reader, writer).await
         }
         "rpc" => {
-            handle_rpc_mode(params, &config_dir, reader, writer).await
+            handle_rpc_mode(params, &config_dir, Path::new(&prefix), reader, writer).await
         }
         "utility" => {
             handle_utility_mode(&config_dir, Path::new(&prefix), &home, reader, writer).await
@@ -372,6 +372,7 @@ async fn handle_login_mode(
 async fn handle_rpc_mode(
     params: Value,
     config_dir: &Path,
+    prefix: &Path,
     reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
@@ -463,7 +464,7 @@ async fn handle_rpc_mode(
                 command: PathBuf::from(&manifest.command),
                 args: manifest.args.clone(),
                 cwd: resolved_cwd,
-                env: Vec::new(),
+                env: termux_subprocess_env(prefix),
             },
         };
 

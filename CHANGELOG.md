@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.17] - 2026-11-19
+
+### Fixed
+- Fixed external Antigravity CLI (`antigravity-termux-standalone.tar.gz`) archive extraction failing with `Binary 'bin/agy' tidak ditemukan di dalam arsip`: matched the actual archive root twin-binary layout (`agy` + `agy.va39`) while preserving `bin/` and nested-folder compatibility and ensuring `0o755` permissions on companion binaries.
+- Streamed large engine archive downloads in chunks with MB progress reporting (`connect_timeout` 30s / total 600s) instead of buffering the entire payload in memory.
+- Expanded Termux engine prerequisite detection & installation to include `resolv-conf`, `ca-certificates`, and `qemu-user-aarch64` (when ARM CPU lacks LSE atomics) alongside `glibc-repo`/`glibc`, and injected `PREFIX`/`TERMUX_VERSION` into engine verification, login, and ACP subprocesses launched via `RunCommandService`.
+
 ## [0.5.16] - 2026-11-19
 
 ### Added

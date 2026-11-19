@@ -28,6 +28,93 @@ pub(super) fn is_termux_glibc_ready(prefix: &Path) -> bool {
     prefix.join("glibc/lib/ld-linux-aarch64.so.1").is_file()
 }
 
+/// Pastikan env minimal Termux (`PREFIX`, `TERMUX_VERSION`) tersedia saat menjalankan binary
+/// standalone Termux seperti `agy` dari `RunCommandService` (`bash --noprofile --norc -c`).
+pub(super) fn termux_subprocess_env(prefix: &Path) -> Vec<(String, String)> {
+    if !prefix.join("bin").is_dir() {
+        return Vec::new();
+    }
+    let mut env_pairs = Vec::new();
+    let prefix_missing = std::env::var("PREFIX")
+        .ok()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    if prefix_missing {
+        env_pairs.push(("PREFIX".to_string(), prefix.to_string_lossy().to_string()));
+    }
+    let termux_ver_missing = std::env::var("TERMUX_VERSION")
+        .ok()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    if termux_ver_missing {
+        env_pairs.push(("TERMUX_VERSION".to_string(), "0.118.0".to_string()));
+    }
+    env_pairs
+}
+
+fn cpuinfo_lacks_lse_atomics() -> bool {
+    if std::env::consts::ARCH != "aarch64" {
+        return false;
+    }
+    let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") else {
+        return false;
+    };
+    let Some(features_line) = cpuinfo
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with("features"))
+    else {
+        return false;
+    };
+    !features_line
+        .split_whitespace()
+        .any(|tok| tok == "atomics")
+}
+
+/// Kumpulkan paket Termux yang dibutuhkan agar engine eksternal (seperti `agy`) dapat berjalan.
+pub(super) fn missing_termux_engine_prereqs(
+    prefix: &Path,
+    spec: &ExternalEngineSpec,
+) -> Vec<&'static str> {
+    let mut pkgs = Vec::new();
+    if spec.requires_termux_glibc {
+        if !is_termux_glibc_ready(prefix) {
+            pkgs.push("glibc-repo");
+            pkgs.push("glibc");
+        }
+        if !prefix.join("etc/resolv.conf").is_file() {
+            pkgs.push("resolv-conf");
+        }
+        if !prefix.join("etc/tls/cert.pem").is_file() {
+            pkgs.push("ca-certificates");
+        }
+    }
+    if spec.requires_arm_lse_or_qemu
+        && !prefix.join("bin/qemu-aarch64").is_file()
+        && cpuinfo_lacks_lse_atomics()
+    {
+        pkgs.push("qemu-user-aarch64");
+    }
+    pkgs
+}
+
+pub(super) fn build_termux_prereq_command(pkgs: &[&str]) -> String {
+    let has_glibc_repo = pkgs.contains(&"glibc-repo");
+    let rest: Vec<&str> = pkgs
+        .iter()
+        .copied()
+        .filter(|p| *p != "glibc-repo")
+        .collect();
+    if has_glibc_repo {
+        if rest.is_empty() {
+            "pkg install -y glibc-repo".to_string()
+        } else {
+            format!("pkg install -y glibc-repo && pkg install -y {}", rest.join(" "))
+        }
+    } else {
+        format!("pkg install -y {}", rest.join(" "))
+    }
+}
+
 /// Cek ringan apakah engine eksternal sudah memiliki sesi autentikasi tersimpan di home user.
 pub(super) fn check_engine_authenticated(engine_id: &str, home: &str) -> bool {
     if engine_id.eq_ignore_ascii_case("antigravity") {
@@ -205,13 +292,22 @@ async fn resolve_github_release_asset(
     (tag, asset_url)
 }
 
-/// Cari path binary target (mis. `bin/agy`) di dalam folder hasil ekstrak tarball (root atau 1 level nested).
+/// Cari path binary target (mis. `agy` atau `bin/agy`) di dalam folder hasil ekstrak tarball
+/// (baik di root arsip, di dalam `bin/`, atau di dalam 1 folder wrapper).
 fn locate_extracted_binary(staging_root: &Path, rel_path: &str) -> Option<(PathBuf, PathBuf)> {
     let direct = staging_root.join(rel_path);
     if direct.is_file() {
         return Some((staging_root.to_path_buf(), direct));
     }
     let file_name = Path::new(rel_path).file_name()?;
+    let root_flat = staging_root.join(file_name);
+    if root_flat.is_file() {
+        return Some((staging_root.to_path_buf(), root_flat));
+    }
+    let root_bin = staging_root.join("bin").join(file_name);
+    if root_bin.is_file() {
+        return Some((staging_root.to_path_buf(), root_bin));
+    }
     let entries = std::fs::read_dir(staging_root).ok()?;
     for entry in entries.flatten() {
         let sub = entry.path();
@@ -224,14 +320,78 @@ fn locate_extracted_binary(staging_root: &Path, rel_path: &str) -> Option<(PathB
             if flat.is_file() {
                 return Some((sub, flat));
             }
+            let sub_bin = sub.join("bin").join(file_name);
+            if sub_bin.is_file() {
+                return Some((sub, sub_bin));
+            }
         }
     }
     None
 }
 
+#[cfg(unix)]
+fn mark_binary_and_siblings_executable(staged_bin: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let set_exec = |p: &Path| {
+        if let Ok(meta) = std::fs::metadata(p) {
+            if meta.is_file() {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                let _ = std::fs::set_permissions(p, perms);
+            }
+        }
+    };
+    set_exec(staged_bin);
+    // Pastikan twin binary di folder yang sama (mis. `agy.va39` di samping `agy`) juga executable.
+    if let (Some(parent), Some(stem)) = (
+        staged_bin.parent(),
+        staged_bin.file_name().and_then(|n| n.to_str()),
+    ) {
+        let prefix = format!("{}.", stem);
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with(&prefix) {
+                        set_exec(&p);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn mark_binary_and_siblings_executable(_staged_bin: &Path) {}
+
 /// Instalasi inti engine eksternal dari URL tarball dengan staging, verifikasi opsional, dan atomic swap + rollback.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) async fn install_engine_archive<F>(
     config_dir: &Path,
+    spec: &ExternalEngineSpec,
+    archive_url: &str,
+    version_hint: &str,
+    verify_binary: bool,
+    on_progress: F,
+) -> Result<ExternalEngineManifest, String>
+where
+    F: FnMut(&str, &str),
+{
+    install_engine_archive_with_prefix(
+        config_dir,
+        None,
+        spec,
+        archive_url,
+        version_hint,
+        verify_binary,
+        on_progress,
+    )
+    .await
+}
+
+pub(super) async fn install_engine_archive_with_prefix<F>(
+    config_dir: &Path,
+    prefix: Option<&Path>,
     spec: &ExternalEngineSpec,
     archive_url: &str,
     version_hint: &str,
@@ -268,14 +428,15 @@ where
 
     on_progress("download", &format!("Downloading {}...", spec.display_name));
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|e| {
             cleanup(&staging_dir, &archive_path);
             format!("Gagal inisialisasi HTTP client: {}", e)
         })?;
 
-    let resp = client
+    let mut resp = client
         .get(archive_url)
         .header("User-Agent", format!("oopbot/{}", env!("CARGO_PKG_VERSION")))
         .send()
@@ -289,18 +450,43 @@ where
         cleanup(&staging_dir, &archive_path);
         return Err(format!("Server mengembalikan HTTP {} saat mengunduh arsip", status));
     }
-    let bytes = resp.bytes().await.map_err(|e| {
+
+    let total_bytes = resp.content_length();
+    let mut out_file = std::fs::File::create(&archive_path).map_err(|e| {
+        cleanup(&staging_dir, &archive_path);
+        format!("Gagal membuat arsip sementara: {}", e)
+    })?;
+    let mut downloaded: u64 = 0;
+    let mut last_reported_mb: u64 = 0;
+    while let Some(chunk) = resp.chunk().await.map_err(|e| {
         cleanup(&staging_dir, &archive_path);
         format!("Gagal membaca body arsip: {}", e)
-    })?;
-    if bytes.is_empty() {
+    })? {
+        out_file.write_all(&chunk).map_err(|e| {
+            cleanup(&staging_dir, &archive_path);
+            format!("Gagal menulis arsip sementara: {}", e)
+        })?;
+        downloaded += chunk.len() as u64;
+        let mb = downloaded / (1024 * 1024);
+        if mb >= last_reported_mb + 5 {
+            last_reported_mb = mb;
+            let msg = match total_bytes {
+                Some(total) if total > 0 => format!(
+                    "Downloading {}... {} / {} MB",
+                    spec.display_name,
+                    mb,
+                    (total / (1024 * 1024)).max(1)
+                ),
+                _ => format!("Downloading {}... {} MB", spec.display_name, mb),
+            };
+            on_progress("download", &msg);
+        }
+    }
+    drop(out_file);
+    if downloaded == 0 {
         cleanup(&staging_dir, &archive_path);
         return Err("Arsip unduhan kosong (0 byte)".to_string());
     }
-    std::fs::write(&archive_path, &bytes).map_err(|e| {
-        cleanup(&staging_dir, &archive_path);
-        format!("Gagal menulis arsip sementara: {}", e)
-    })?;
 
     on_progress("extract", "Extracting standalone archive...");
     let tar_out = std::process::Command::new("tar")
@@ -329,32 +515,34 @@ where
         ));
     };
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(&staged_bin) {
-            let mut perms = meta.permissions();
-            perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&staged_bin, perms);
-        }
-    }
+    mark_binary_and_siblings_executable(&staged_bin);
 
     let mut resolved_version = version_hint.trim().trim_start_matches('v').to_string();
     if verify_binary {
         on_progress("verify", &format!("Verifying {} binary...", spec.display_name));
-        let ver_out = std::process::Command::new(&staged_bin)
-            .arg("--version")
-            .output()
-            .map_err(|e| {
-                let _ = std::fs::remove_dir_all(&staging_dir);
-                format!("Gagal mengeksekusi binary terpasang: {}", e)
-            })?;
+        let mut ver_cmd = std::process::Command::new(&staged_bin);
+        ver_cmd.arg("--version");
+        if let Some(p) = prefix {
+            for (k, v) in termux_subprocess_env(p) {
+                ver_cmd.env(k, v);
+            }
+        }
+        let ver_out = ver_cmd.output().map_err(|e| {
+            let _ = std::fs::remove_dir_all(&staging_dir);
+            format!("Gagal mengeksekusi binary terpasang: {}", e)
+        })?;
         if !ver_out.status.success() {
             let stderr = String::from_utf8_lossy(&ver_out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&ver_out.stdout).trim().to_string();
+            let detail = match (stderr.is_empty(), stdout.is_empty()) {
+                (false, _) => stderr,
+                (true, false) => stdout,
+                (true, true) => String::new(),
+            };
             let _ = std::fs::remove_dir_all(&staging_dir);
             return Err(format!(
                 "Verifikasi binary gagal ({}): {}",
-                ver_out.status, stderr
+                ver_out.status, detail
             ));
         }
         let stdout = String::from_utf8_lossy(&ver_out.stdout).trim().to_string();
@@ -424,7 +612,8 @@ where
     Ok(manifest)
 }
 
-/// Host mode `engine_install`: pasang prasyarat Termux (`glibc-repo` & `glibc`) lalu unduh & pasang engine ACP.
+/// Host mode `engine_install`: pasang prasyarat Termux (`glibc-repo`, `glibc`, `resolv-conf`, dll.)
+/// lalu unduh & pasang engine ACP.
 pub(super) async fn handle_engine_install_mode(
     params: Value,
     config_dir: &Path,
@@ -450,21 +639,26 @@ pub(super) async fn handle_engine_install_mode(
     };
 
     let skip_prereqs = params["skipPrereqs"].as_bool().unwrap_or(false);
-    if spec.requires_termux_glibc && !skip_prereqs && !is_termux_glibc_ready(prefix) {
+    let missing_pkgs = if skip_prereqs {
+        Vec::new()
+    } else {
+        missing_termux_engine_prereqs(prefix, spec)
+    };
+    if !missing_pkgs.is_empty() {
+        let manual_cmd = build_termux_prereq_command(&missing_pkgs);
         emit_progress(
             &mut writer,
             "prereqs",
-            "Checking Termux glibc runtime (pkg install -y glibc-repo glibc)...",
+            &format!("Installing Termux runtime packages ({})...", missing_pkgs.join(", ")),
         );
-        let manual_cmd = "pkg install -y glibc-repo && pkg install -y glibc";
         let pkg_status = tokio::process::Command::new("sh")
-            .args(["-c", manual_cmd])
+            .args(["-c", &manual_cmd])
             .stdin(Stdio::null())
             .output()
             .await;
         match pkg_status {
-            Ok(out) if out.status.success() && is_termux_glibc_ready(prefix) => {
-                emit_progress(&mut writer, "prereqs", "Termux glibc runtime ready.");
+            Ok(out) if out.status.success() && missing_termux_engine_prereqs(prefix, spec).is_empty() => {
+                emit_progress(&mut writer, "prereqs", "Termux runtime packages ready.");
             }
             Ok(out) => {
                 let detail = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -473,9 +667,9 @@ pub(super) async fn handle_engine_install_mode(
                     "ok": false,
                     "code": "prereq_failed",
                     "error": if detail.is_empty() {
-                        "Gagal memasang Termux glibc runtime secara otomatis".to_string()
+                        format!("Gagal memasang prasyarat Termux ({}) secara otomatis", missing_pkgs.join(", "))
                     } else {
-                        format!("Gagal memasang Termux glibc: {}", detail)
+                        format!("Gagal memasang prasyarat Termux ({}): {}", missing_pkgs.join(", "), detail)
                     },
                     "data": { "manualCommand": manual_cmd }
                 });
@@ -488,7 +682,7 @@ pub(super) async fn handle_engine_install_mode(
                     "type": "oopbot_result",
                     "ok": false,
                     "code": "prereq_failed",
-                    "error": format!("Gagal menjalankan installer glibc: {}", e),
+                    "error": format!("Gagal menjalankan installer prasyarat Termux: {}", e),
                     "data": { "manualCommand": manual_cmd }
                 });
                 writeln!(writer, "{}", serde_json::to_string(&err)?)?;
@@ -517,8 +711,9 @@ pub(super) async fn handle_engine_install_mode(
     };
 
     let verify_binary = !params["skipVerify"].as_bool().unwrap_or(false);
-    let res = install_engine_archive(
+    let res = install_engine_archive_with_prefix(
         config_dir,
+        Some(prefix),
         spec,
         &download_url,
         &version_hint,
@@ -564,6 +759,7 @@ fn extract_first_https_url(line: &str) -> Option<String> {
 pub(super) async fn handle_engine_login_mode(
     params: Value,
     config_dir: &Path,
+    prefix: &Path,
     reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
@@ -607,12 +803,16 @@ pub(super) async fn handle_engine_login_mode(
         })
         .unwrap_or_else(|| spec.login_args.iter().map(|s| s.to_string()).collect());
 
-    let mut child = tokio::process::Command::new(&manifest.command)
-        .args(&login_args)
+    let mut cmd = tokio::process::Command::new(&manifest.command);
+    cmd.args(&login_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    for (k, v) in termux_subprocess_env(prefix) {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Gagal memulai proses login '{}': {}", spec.display_name, e))?;
 

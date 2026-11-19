@@ -49,7 +49,7 @@ const BUILTIN_EXTERNAL_ENGINES: &[ExternalEngineSpec] = &[ExternalEngineSpec {
     subtitle: "Antigravity CLI · ACP",
     protocol: ExternalEngineProtocol::Acp,
     github_repo: "wallentx/antigravity-cli-termux",
-    binary_rel_path: "bin/agy",
+    binary_rel_path: "agy",
     acp_args: &["acp"],
     login_args: &["acp", "--login"],
     requires_termux_glibc: true,

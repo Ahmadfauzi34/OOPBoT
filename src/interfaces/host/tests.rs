@@ -815,9 +815,9 @@ fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
 }
 
 #[tokio::test]
-async fn test_pkg_version_0516_rejects_0510_rpc_and_upgrades_0510_binary() {
+async fn test_pkg_version_0517_rejects_0510_rpc_and_upgrades_0510_binary() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(pkg_ver, "0.5.16");
+    assert_eq!(pkg_ver, "0.5.17");
 
     let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.10").unwrap();
     assert_eq!(refusal["ok"], false);
@@ -1770,5 +1770,105 @@ fn gate_host_detect_session_engine_reads_acp_header() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gate_host_engine_install_supports_flat_twin_binary_archive_and_termux_prereqs() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_eng_flat_{}_{}", epoch_ms(), seq));
+    let config_dir = temp_dir.join("config");
+    let prefix_dir = temp_dir.join("prefix");
+    let pkg_src = temp_dir.join("pkg_src");
+    std::fs::create_dir_all(&pkg_src).unwrap();
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(prefix_dir.join("bin")).unwrap();
+
+    // 1. Uji deteksi prasyarat Termux (`glibc-repo`, `glibc`, `resolv-conf`, `ca-certificates`)
+    let spec = crate::config::find_builtin_external_engine("antigravity").unwrap();
+    let missing_all = missing_termux_engine_prereqs(&prefix_dir, spec);
+    assert_eq!(
+        missing_all,
+        vec!["glibc-repo", "glibc", "resolv-conf", "ca-certificates"]
+    );
+    assert_eq!(
+        build_termux_prereq_command(&missing_all),
+        "pkg install -y glibc-repo && pkg install -y glibc resolv-conf ca-certificates"
+    );
+
+    let ld_path = prefix_dir.join("glibc/lib/ld-linux-aarch64.so.1");
+    std::fs::create_dir_all(ld_path.parent().unwrap()).unwrap();
+    std::fs::write(&ld_path, b"elf").unwrap();
+    std::fs::create_dir_all(prefix_dir.join("etc/tls")).unwrap();
+    std::fs::write(prefix_dir.join("etc/resolv.conf"), b"nameserver 8.8.8.8\n").unwrap();
+    std::fs::write(prefix_dir.join("etc/tls/cert.pem"), b"cert").unwrap();
+    let missing_after = missing_termux_engine_prereqs(&prefix_dir, spec);
+    assert!(
+        !missing_after.contains(&"glibc")
+            && !missing_after.contains(&"resolv-conf")
+            && !missing_after.contains(&"ca-certificates")
+    );
+
+    // 2. Uji arsip nyata antigravity-termux-standalone.tar.gz: `agy` + `agy.va39` di root tarball
+    let agy_src = pkg_src.join("agy");
+    let va39_src = pkg_src.join("agy.va39");
+    std::fs::write(&va39_src, b"#!/bin/sh\necho \"1.5.12\"\n").unwrap();
+    std::fs::set_permissions(&va39_src, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(
+        &agy_src,
+        "#!/bin/sh\ndir=$(dirname \"$0\")\n[ -x \"$dir/agy.va39\" ] || exit 9\n\"$dir/agy.va39\" \"$@\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&agy_src, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let tarball_path = temp_dir.join("antigravity-termux-standalone.tar.gz");
+    let tar_status = std::process::Command::new("tar")
+        .args([
+            "-czf",
+            tarball_path.to_str().unwrap(),
+            "-C",
+            pkg_src.to_str().unwrap(),
+            "agy",
+            "agy.va39",
+        ])
+        .status()
+        .expect("tar -czf flat should succeed");
+    assert!(tar_status.success());
+    let tarball_bytes = std::fs::read(&tarball_path).unwrap();
+
+    let (base_url, hits, server) = spawn_mock_release_server(
+        vec![("/flat/antigravity-termux-standalone.tar.gz".to_string(), 200, tarball_bytes)],
+        1,
+    );
+
+    let manifest = install_engine_archive_with_prefix(
+        &config_dir,
+        Some(&prefix_dir),
+        spec,
+        &format!("{}/flat/antigravity-termux-standalone.tar.gz", base_url),
+        "1.5.12",
+        true,
+        |_, _| {},
+    )
+    .await
+    .expect("flat twin-binary archive install should succeed");
+
+    server.join().unwrap();
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(manifest.installed_version, "1.5.12");
+    assert!(Path::new(&manifest.command).is_file());
+    assert!(
+        Path::new(&manifest.command)
+            .parent()
+            .unwrap()
+            .join("agy.va39")
+            .is_file(),
+        "twin binary agy.va39 harus ikut terpindah di samping agy"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
 
 
