@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.14] - 2026-11-19
+
+### Added
+- Termux internet-bound Linux CLI bundle (`aria2`, `wget`, `jq`, `dnsutils`/`dig`, `netcat-openbsd`/`nc`, `openssh`/`ssh`, `git`) installed best-effort alongside mandatory `curl` in `TermuxSetup.fdroidCommand` and `oopbot-setup.sh`.
+- Multi-connection `aria2c -x 8 -s 8 -k 1M` download acceleration (with `.aria2` cleanup and automatic `curl`/`reqwest` fallback) for GitHub Releases binary downloads during both Termux setup and native `oopbot host ensure` upgrades.
+- Enriched `run_shell` tool description highlighting available internet CLI utilities (`aria2c -x 8 -s 8`, `curl`, `wget`, `jq`, `dig`/`nslookup`, `nc`, `ssh`/`scp`, `git`).
+
 ## [0.5.13] - 2026-11-18
 
 ### Added
