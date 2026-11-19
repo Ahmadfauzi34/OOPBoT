@@ -238,7 +238,7 @@ internal class ChatController(
   /** Switches this chat's thinking level and makes it the one new chats start with. */
   fun setThinkingLevel(level: String) = launchRpc {
     process.setThinkingLevel(level)
-    if (process.model.value?.optString("api") != "acp") {
+    if (process.timeline.state.value.model?.optString("api") != "acp") {
       saveDefault { graph.modelDefaults.saveThinkingLevel(level, context.getString(R.string.provider_failed)) }
     }
   }
