@@ -97,6 +97,8 @@ internal class AgentProcess(
   remoteHosts: RemoteHosts,
   /** [io.jeph.oopbot.data.BundledExtension.id]s the user turned off, which each new Pi leaves out. */
   private val disabledExtensions: StateFlow<Set<String>>,
+  /** Optional external ACP engine selector (e.g. `acp:antigravity`) used when starting a brand-new session. */
+  private val activeEngine: StateFlow<String?> = MutableStateFlow(null),
 ) : ManagedProcess {
   private class Connection(val channel: HostChannel) {
     val rpc = RpcClient(channel::send)
@@ -595,7 +597,9 @@ internal class AgentProcess(
       extensionUiConfiguration = disabled
     }
     val channel = try {
-      hostClient.openRpc(cwd, sessionFileState.value, disabled)
+      val sessionPath = sessionFileState.value
+      val engine = if (sessionPath == null) activeEngine.value else null
+      hostClient.openRpc(cwd, sessionPath, disabled, engine)
     } catch (failure: HostFailure) {
       stateFlow.value = AgentProcessState.Failed(failure.message, failure)
       return null

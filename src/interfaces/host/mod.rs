@@ -20,6 +20,7 @@
 
 mod backups;
 mod browse_files;
+mod engines;
 mod ensure;
 mod git;
 mod providers;
@@ -34,6 +35,7 @@ pub use git::{parse_git_diff, sha256_hex};
 
 use backups::*;
 use browse_files::*;
+use engines::*;
 use ensure::*;
 #[cfg(test)]
 use git::*;
@@ -46,6 +48,8 @@ use terminal::*;
 
 use crate::common::fs::write_json_atomic;
 use crate::common::BoxError;
+use crate::config::{find_builtin_external_engine, load_engine_manifest, parse_acp_engine_selector};
+use crate::interfaces::acp::{AcpBridgeConfig, AcpLaunchConfig, AcpRpcBridge};
 use crate::interfaces::rpc::{set_output_sink, RpcServer};
 use serde_json::{json, Value};
 use std::env;
@@ -156,11 +160,17 @@ pub async fn run_host_mode(mode: &str, port: u16) -> Result<(), BoxError> {
         "login" => {
             handle_login_mode(params, &config_dir, reader, writer).await
         }
+        "engine_install" => {
+            handle_engine_install_mode(params, &config_dir, Path::new(&prefix), writer).await
+        }
+        "engine_login" => {
+            handle_engine_login_mode(params, &config_dir, reader, writer).await
+        }
         "rpc" => {
             handle_rpc_mode(params, &config_dir, reader, writer).await
         }
         "utility" => {
-            handle_utility_mode(&config_dir, &home, reader, writer).await
+            handle_utility_mode(&config_dir, Path::new(&prefix), &home, reader, writer).await
         }
         "browse" => {
             handle_browse_mode(params, &home, reader, writer).await
@@ -361,7 +371,7 @@ async fn handle_login_mode(
 /// Menangani mode `rpc`: mengalirkan komunikasi Agent langsung ke TCP socket Android
 async fn handle_rpc_mode(
     params: Value,
-    _config_dir: &Path,
+    config_dir: &Path,
     reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
@@ -389,6 +399,107 @@ async fn handle_rpc_mode(
     }
 
     let session_path = params["sessionPath"].as_str().map(str::to_string);
+
+    // Deteksi apakah sesi ini ditargetkan ke External ACP Engine (`engine: "acp:<id>"` atau header sesi)
+    let engine_selector = params["engine"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            session_path
+                .as_deref()
+                .and_then(|p| detect_session_engine(Path::new(p)))
+        });
+
+    if let Some(engine_id) = engine_selector
+        .as_deref()
+        .and_then(parse_acp_engine_selector)
+    {
+        let Some(manifest) = load_engine_manifest(config_dir, engine_id) else {
+            let err = json!({
+                "type": "oopbot_result",
+                "ok": false,
+                "code": "engine_not_installed",
+                "error": format!("External engine '{}' is not installed. Please install it from Add a provider.", engine_id),
+                "data": { "engineId": engine_id }
+            });
+            writeln!(writer, "{}", serde_json::to_string(&err)?)?;
+            writer.flush()?;
+            return Ok(());
+        };
+
+        if !Path::new(&manifest.command).is_file() {
+            let err = json!({
+                "type": "oopbot_result",
+                "ok": false,
+                "code": "engine_not_installed",
+                "error": format!("Engine '{}' binary missing at {}. Please reinstall.", engine_id, manifest.command),
+                "data": { "engineId": engine_id }
+            });
+            writeln!(writer, "{}", serde_json::to_string(&err)?)?;
+            writer.flush()?;
+            return Ok(());
+        }
+
+        let resolved_cwd = cwd
+            .clone()
+            .or_else(|| env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let display_name = find_builtin_external_engine(engine_id)
+            .map(|s| s.display_name.to_string())
+            .unwrap_or_else(|| engine_id.to_string());
+
+        let writer_arc: Arc<Mutex<Box<dyn Write + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(writer)));
+
+        let cfg = AcpBridgeConfig {
+            engine_id: engine_id.to_string(),
+            display_name,
+            config_dir: config_dir.to_path_buf(),
+            cwd: resolved_cwd.clone(),
+            session_path: session_path.map(PathBuf::from),
+            launch: AcpLaunchConfig {
+                command: PathBuf::from(&manifest.command),
+                args: manifest.args.clone(),
+                cwd: resolved_cwd,
+                env: Vec::new(),
+            },
+        };
+
+        let bridge = match AcpRpcBridge::start(cfg, writer_arc.clone()).await {
+            Ok(b) => b,
+            Err(e) => {
+                if let Ok(mut w) = writer_arc.lock() {
+                    let err = json!({
+                        "type": "oopbot_result",
+                        "ok": false,
+                        "code": "acp_start_failed",
+                        "error": format!("Failed to start ACP engine '{}': {}", engine_id, e),
+                        "data": { "engineId": engine_id }
+                    });
+                    let _ = writeln!(w, "{}", serde_json::to_string(&err)?);
+                    let _ = w.flush();
+                }
+                return Ok(());
+            }
+        };
+
+        let result = bridge.run_loop_with_input(reader).await;
+
+        if let Ok(mut w) = writer_arc.lock() {
+            let exit_msg = json!({
+                "type": "oopbot_exit",
+                "code": 0,
+                "signal": Value::Null,
+                "stderr": ""
+            });
+            let _ = writeln!(w, "{}", serde_json::to_string(&exit_msg)?);
+            let _ = w.flush();
+        }
+
+        return result;
+    }
 
     // Ambil ekstensi yang diaktifkan
     let mut extensions = Vec::new();
@@ -429,9 +540,10 @@ async fn handle_rpc_mode(
     result
 }
 
-/// Menangani mode `utility`: menjawab request `sessions`, `auth_status`, `provider_models`, dll.
+/// Menangani mode `utility`: menjawab request `sessions`, `auth_status`, `provider_models`, `engine_list`, dll.
 async fn handle_utility_mode(
     config_dir: &Path,
+    prefix: &Path,
     home: &str,
     mut reader: BufReader<TcpStream>,
     mut writer: BufWriter<TcpStream>,
@@ -485,6 +597,8 @@ async fn handle_utility_mode(
             "subagent_sessions" => handle_subagent_sessions(config_dir, &params),
             "backups" => handle_list_backups(config_dir),
             "backup_delete" => handle_backup_delete(config_dir, &params),
+            "engine_list" => handle_engine_list(config_dir, prefix, home),
+            "engine_uninstall" => handle_engine_uninstall(config_dir, &params),
             "remote_hosts" => handle_remote_hosts(config_dir, home),
             "remote_host_save" => handle_remote_host_save(config_dir, home, &params),
             "remote_host_remove" => handle_remote_host_remove(config_dir, home, &params),

@@ -5,6 +5,7 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.agent.AgentRegistry
 import io.jeph.oopbot.agent.KeepAlive
 import io.jeph.oopbot.host.AuthStatus
+import io.jeph.oopbot.host.ExternalEngineInfo
 import io.jeph.oopbot.host.HostClient
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.LoginUi
@@ -21,9 +22,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONException
 
 /**
- * Sign-in state and custom providers. Every successful change re-reads [status] and reloads idle
- * agents so they pick up the new credentials. Changes throw [HostFailure][io.jeph.oopbot.host.HostFailure]
- * or [HostRejected].
+ * Sign-in state, custom providers, and external ACP CLI engines. Every successful change re-reads [status]
+ * and reloads idle agents so they pick up the new credentials. Changes throw
+ * [HostFailure][io.jeph.oopbot.host.HostFailure] or [HostRejected].
  */
 internal class AccountRepository(
   private val hostClient: HostClient,
@@ -31,6 +32,7 @@ internal class AccountRepository(
   private val keepAlive: KeepAlive,
 ) {
   private val statusState = MutableStateFlow<AuthStatus?>(null)
+  private val enginesState = MutableStateFlow<List<ExternalEngineInfo>>(emptyList())
   private val refreshErrorState = MutableStateFlow<String?>(null)
   private val refreshLock = Mutex()
   private val localModelsReload = PendingReload()
@@ -38,14 +40,18 @@ internal class AccountRepository(
   /** Null until the first successful refresh. */
   val status: StateFlow<AuthStatus?> = statusState.asStateFlow()
 
+  /** Built-in external CLI agent engines (ACP) with install, glibc, and auth status. */
+  val engines: StateFlow<List<ExternalEngineInfo>> = enginesState.asStateFlow()
+
   /** Why the last refresh failed; null after a successful one. */
   val refreshError: StateFlow<String?> = refreshErrorState.asStateFlow()
 
-  /** Re-reads `auth_status`. Never throws; a failure lands in [refreshError]. */
+  /** Re-reads `auth_status` and `engine_list`. Never throws; a failure lands in [refreshError]. */
   suspend fun refresh() {
     refreshLock.withLock {
       refreshErrorState.value = try {
         statusState.value = hostClient.authStatus()
+        enginesState.value = runCatching { hostClient.engineList() }.getOrElse { enginesState.value }
         null
       } catch (failure: IOException) {
         failure.message ?: refreshFailed()
@@ -55,6 +61,29 @@ internal class AccountRepository(
         error.message ?: refreshFailed()
       }
     }
+  }
+
+  /** Re-reads `engine_list` only, preserving the previous list on failure. */
+  suspend fun refreshEngines() {
+    enginesState.value = runCatching { hostClient.engineList() }.getOrElse { enginesState.value }
+  }
+
+  /** Installs or updates an external ACP engine in Termux, streaming progress to [onProgress]. */
+  suspend fun installEngine(engineId: String, onProgress: (step: String, line: String) -> Unit) {
+    keepAlive.acquire("engine install").use { hostClient.installEngine(engineId, onProgress) }
+    changed()
+  }
+
+  /** Runs interactive OAuth/CLI login for an installed external ACP engine. */
+  suspend fun loginEngine(engineId: String, ui: LoginUi) {
+    keepAlive.acquire("engine sign-in").use { hostClient.loginEngine(engineId, ui) }
+    changed()
+  }
+
+  /** Removes an installed external ACP engine from Termux. */
+  suspend fun uninstallEngine(engineId: String) {
+    hostClient.uninstallEngine(engineId)
+    changed()
   }
 
   /** Sign-in to a provider Pi ships, by OAuth or API key; cancelling the caller aborts it. */

@@ -14,7 +14,7 @@ Manages communication between the Android app and Termux / remote SSH hosts: loc
 - **Socket Token & Handshake Integrity:** Every incoming TCP connection to `HostServer` MUST authenticate via the one-time `OOPBOT_TOKEN` handshake (`oopbot_hello`) before dispatching `oopbot_request` / `oopbot_utility_request`. Never bind `HostServer` beyond loopback.
 - **Client Version Enforcement:** `HostClient` version checks (`HostClientVersionGuardTest.kt`) MUST match `src/host/mod.rs` (`check_rpc_expected_version`) so outdated Termux binaries fail fast with an actionable upgrade signal (`fixedInTermux`).
 - **JNI Bridge Contract (`OopbotBridge.kt` <-> `src/ffi.rs`):** Keep `package io.jeph.oopbot.host`, `object OopbotBridge`, and all `@JvmStatic external fun` names/signatures locked to `Java_io_jeph_oopbot_host_OopbotBridge_*` exports in `src/ffi.rs`, and guard `System.loadLibrary("oopbot")` failures via `isAvailable`.
-- **Wire Parity:** `HostModels.kt` & `HostProtocol.kt` MUST stay aligned with Rust `src/host/` and TS `android/host/src/helper/` (`HostModelsWireContractTest.kt`).
+- **Wire Parity:** `HostModels.kt` (`ExternalEngineInfo`), `HostProtocol.kt` (`AUTH_URL`), `HostRejected.kt` (`data`), and `HostClient.kt` (`engineList`, `installEngine`, `loginEngine`, `uninstallEngine`, `openRpc(engine = ...)`) MUST stay aligned with Rust `src/interfaces/host/` and TS `android/host/src/helper/` (`HostModelsWireContractTest.kt`).
 
 ## Work Guidance
 - Never invoke raw Termux shell commands from UI screens; route file, git, browse, and utility operations through `FileHost`, `GitHost`, `FolderBrowser`, or `HostClient`.

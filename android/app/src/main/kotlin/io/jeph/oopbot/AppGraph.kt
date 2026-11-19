@@ -102,6 +102,7 @@ internal class AppGraph(private val application: Application) {
         sessionRepository,
         remoteHosts,
         preferences.disabledExtensions,
+        preferences.activeEngine,
       )
     }
   val accountRepository = AccountRepository(hostClient, registry, keepAlive)

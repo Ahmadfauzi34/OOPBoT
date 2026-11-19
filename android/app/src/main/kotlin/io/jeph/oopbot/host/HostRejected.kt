@@ -10,8 +10,12 @@ import org.json.JSONObject
  * it's shown so it follows a change of language; [message] is the same. [text] is null when the host gave no reason;
  * its arguments may say more, such as the form field a validation failure is about.
  */
-internal class HostRejected(val code: String, val englishError: String, val text: HostText? = HostText(englishError)) :
-  Exception() {
+internal class HostRejected(
+  val code: String,
+  val englishError: String,
+  val text: HostText? = HostText(englishError),
+  val data: JSONObject? = null,
+) : Exception() {
   val error: String get() = text?.resolve() ?: AppStrings.get(R.string.host_rejected_without_reason)
 
   override val message: String get() = error
@@ -21,9 +25,10 @@ internal class HostRejected(val code: String, val englishError: String, val text
     fun from(result: JSONObject): HostRejected? {
       if (result.optBoolean("ok")) return null
       val code = result.optString("code", "error")
+      val data = result.optJSONObject("data")
       val englishError = result.opt("error") as? String
-      if (englishError.isNullOrEmpty()) return HostRejected(code, "The Termux helper failed.", text = null)
-      return HostRejected(code, englishError, HostText.of(englishError, result.optJSONObject("i18n")))
+      if (englishError.isNullOrEmpty()) return HostRejected(code, "The Termux helper failed.", text = null, data = data)
+      return HostRejected(code, englishError, HostText.of(englishError, result.optJSONObject("i18n")), data = data)
     }
   }
 }

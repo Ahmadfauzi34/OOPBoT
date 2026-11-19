@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.host.AuthStatus
+import io.jeph.oopbot.host.ExternalEngineInfo
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.ui.LocalTransitionSettled
 import io.jeph.oopbot.ui.auth.LoginSheet
@@ -56,8 +57,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * The added providers: signed-in providers Pi ships, then custom OpenAI-compatible endpoints; below them, the
- * experimental models that run on the phone.
+ * The added providers: signed-in providers Pi ships, installed external ACP CLI engines, then custom
+ * OpenAI-compatible endpoints; below them, the experimental models that run on the phone.
  */
 @Composable
 internal fun ProvidersScreen(
@@ -70,8 +71,11 @@ internal fun ProvidersScreen(
   val graph = LocalContext.current.appGraph
   val accounts = graph.accountRepository
   val status by accounts.status.collectAsStateWithLifecycle()
+  val engines by accounts.engines.collectAsStateWithLifecycle()
+  val activeEngine by graph.preferences.activeEngine.collectAsStateWithLifecycle()
   val refreshError by accounts.refreshError.collectAsStateWithLifecycle()
   val settled by rememberUpdatedState(LocalTransitionSettled.current)
+  var managingEngine by rememberSaveable { mutableStateOf<String?>(null) }
   LaunchedEffect(Unit) {
     if (accounts.status.value != null) snapshotFlow { settled }.first { it }
     accounts.refresh()
@@ -79,12 +83,14 @@ internal fun ProvidersScreen(
   SettingsPage(title = stringResource(R.string.providers_title), onBack = onBack) {
     val current = status
     val signedIn = subscriptions.filter { current?.isSignedIn(it.id) == true }
+    val installedEngines = engines.filter { it.installed }
     val custom = current?.custom.orEmpty()
     when {
       current == null && refreshError == null ->
         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { SimmeringPot() }
 
-      signedIn.isEmpty() && custom.isEmpty() -> SettingsCaption(text = stringResource(R.string.providers_empty))
+      signedIn.isEmpty() && installedEngines.isEmpty() && custom.isEmpty() ->
+        SettingsCaption(text = stringResource(R.string.providers_empty))
 
       else -> SettingsSection(title = null) {
         signedIn.forEachIndexed { index, subscription ->
@@ -96,8 +102,22 @@ internal fun ProvidersScreen(
             leading = { ProviderLogo(subscription.id) },
           ) { Chevron() }
         }
-        custom.forEachIndexed { index, provider ->
+        installedEngines.forEachIndexed { index, engine ->
           if (index > 0 || signedIn.isNotEmpty()) SettingsDivider()
+          val engineSubtitle = when {
+            activeEngine == engine.selector -> stringResource(R.string.engine_using_for_new_chats)
+            engine.authenticated -> stringResource(R.string.engine_status_signed_in)
+            else -> stringResource(R.string.engine_status_sign_in_needed)
+          }
+          SettingsRow(
+            title = engine.displayName,
+            subtitle = engineSubtitle,
+            onClick = { managingEngine = engine.id },
+            leading = { ProviderLogo(engine.id) },
+          ) { Chevron() }
+        }
+        custom.forEachIndexed { index, provider ->
+          if (index > 0 || signedIn.isNotEmpty() || installedEngines.isNotEmpty()) SettingsDivider()
           SettingsRow(
             title = provider.id,
             subtitle = provider.baseUrl,
@@ -112,21 +132,36 @@ internal fun ProvidersScreen(
     refreshError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
     LocalModelsSection(preferences = graph.preferences, onOpenLocalModels = onOpenLocalModels)
   }
+  managingEngine?.let { engineId ->
+    val target = engines.firstOrNull { it.id == engineId }
+    if (target != null) {
+      EngineSetupSheet(engine = target, onDismiss = { managingEngine = null })
+    }
+  }
 }
 
 /**
- * The kinds of provider to add. A provider Pi ships signs in (or takes its API key) over a sheet and
- * [onAdded] runs with its id once Pi holds its credential; the OpenAI-compatible option continues to the
- * provider editor.
+ * The kinds of provider to add. Built-in providers and external ACP CLI engines (such as Antigravity)
+ * appear together in one unified list; the OpenAI-compatible option continues to the provider editor.
  */
 @Composable
 internal fun AddProviderScreen(onBack: () -> Unit, onAddCompatible: () -> Unit, onAdded: (providerId: String) -> Unit) {
-  val accounts = LocalContext.current.appGraph.accountRepository
+  val graph = LocalContext.current.appGraph
+  val accounts = graph.accountRepository
   val status by accounts.status.collectAsStateWithLifecycle()
+  val engines by accounts.engines.collectAsStateWithLifecycle()
+  val activeEngine by graph.preferences.activeEngine.collectAsStateWithLifecycle()
   val refreshError by accounts.refreshError.collectAsStateWithLifecycle()
   var signingIn by rememberSaveable { mutableStateOf<String?>(null) }
+  var settingUpEngine by rememberSaveable { mutableStateOf<String?>(null) }
+  val displayEngines = engines.ifEmpty { listOf(defaultAntigravityEngine()) }
   // A screen restored after process death is composed without the providers list that loads status.
-  LaunchedEffect(Unit) { if (accounts.status.value == null) accounts.refresh() }
+  LaunchedEffect(Unit) {
+    when {
+      accounts.status.value == null -> accounts.refresh()
+      accounts.engines.value.isEmpty() -> accounts.refreshEngines()
+    }
+  }
   SettingsPage(title = stringResource(R.string.providers_add), onBack = onBack) {
     SettingsSection(title = null) {
       subscriptions.forEach { subscription ->
@@ -140,6 +175,14 @@ internal fun AddProviderScreen(onBack: () -> Unit, onAddCompatible: () -> Unit, 
         ) {
           if (added) SettingsValue(stringResource(R.string.providers_added)) else Chevron()
         }
+        SettingsDivider()
+      }
+      displayEngines.forEach { engine ->
+        AddEngineRow(
+          engine = engine,
+          isActive = activeEngine == engine.selector,
+          onClick = { settingUpEngine = engine.id },
+        )
         SettingsDivider()
       }
       SettingsRow(
@@ -160,7 +203,45 @@ internal fun AddProviderScreen(onBack: () -> Unit, onAddCompatible: () -> Unit, 
       },
     )
   }
+  settingUpEngine?.let { engineId ->
+    displayEngines.firstOrNull { it.id == engineId }?.let { target ->
+      EngineSetupSheet(engine = target, onDismiss = { settingUpEngine = null })
+    }
+  }
 }
+
+@Composable
+private fun AddEngineRow(engine: ExternalEngineInfo, isActive: Boolean, onClick: () -> Unit) {
+  val subtitle = engine.subtitle.ifBlank { stringResource(R.string.engine_antigravity_subtitle) }
+  SettingsRow(
+    title = engine.displayName,
+    subtitle = subtitle,
+    onClick = onClick,
+    leading = { ProviderLogo(engine.id) },
+  ) {
+    when {
+      isActive -> SettingsValue(stringResource(R.string.engine_status_active))
+      engine.installed -> SettingsValue(stringResource(R.string.engine_status_installed))
+      else -> Chevron()
+    }
+  }
+}
+
+@Composable
+private fun defaultAntigravityEngine(): ExternalEngineInfo = ExternalEngineInfo(
+  id = "antigravity",
+  selector = "acp:antigravity",
+  displayName = stringResource(R.string.engine_antigravity_title),
+  subtitle = stringResource(R.string.engine_antigravity_subtitle),
+  protocol = "acp",
+  githubRepo = "wallentx/antigravity-cli-termux",
+  installed = false,
+  installedVersion = null,
+  command = null,
+  requiresTermuxGlibc = true,
+  glibcReady = false,
+  authenticated = false,
+)
 
 /**
  * Header with a back button, or [topBar] in its place while there is one, over a scrolling, width-capped column of

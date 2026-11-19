@@ -192,6 +192,47 @@ class HostModelsWireContractTest {
     channel.close()
   }
 
+  @Test
+  fun externalEngineInfoAndManualCommandRejectionMatchRustWireContract() {
+    val engine = ExternalEngineInfo.from(
+      JSONObject()
+        .put("id", "antigravity")
+        .put("selector", "acp:antigravity")
+        .put("displayName", "Antigravity")
+        .put("subtitle", "Antigravity CLI via Termux (ACP)")
+        .put("protocol", "acp")
+        .put("githubRepo", "wallentx/antigravity-cli-termux")
+        .put("installed", true)
+        .put("installedVersion", "1.5.12")
+        .put("command", "/data/data/com.termux/files/home/.oopbot/engines/antigravity/bin/agy")
+        .put("requiresTermuxGlibc", true)
+        .put("glibcReady", true)
+        .put("authenticated", false),
+    )
+    assertEquals("antigravity", engine.id)
+    assertEquals("acp:antigravity", engine.selector)
+    assertEquals("Antigravity", engine.displayName)
+    assertTrue(engine.installed)
+    assertEquals("1.5.12", engine.installedVersion)
+    assertTrue(engine.requiresTermuxGlibc)
+    assertTrue(engine.glibcReady)
+    assertFalse(engine.authenticated)
+
+    val rejected = HostRejected.from(
+      JSONObject()
+        .put("type", HostProtocol.RESULT)
+        .put("ok", false)
+        .put("code", "glibc_install_failed")
+        .put("error", "Termux glibc auto-install failed")
+        .put("data", JSONObject().put("manualCommand", "pkg install -y glibc-repo && pkg install -y glibc")),
+    )!!
+    assertEquals("glibc_install_failed", rejected.code)
+    assertEquals(
+      "pkg install -y glibc-repo && pkg install -y glibc",
+      rejected.data?.optString("manualCommand"),
+    )
+  }
+
   private companion object {
     const val TIMEOUT = 5_000L
   }

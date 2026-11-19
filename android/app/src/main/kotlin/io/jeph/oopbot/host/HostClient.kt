@@ -195,6 +195,55 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     call("package_install", JSONObject().put("source", source), PACKAGE_INSTALL_TIMEOUT_MILLIS, progress(onProgress))
   }
 
+  /** Lists built-in external CLI agent engines (ACP) with install, Termux glibc, and auth status. */
+  suspend fun engineList(): List<ExternalEngineInfo> =
+    utilityCall("engine_list", JSONObject()).optJSONArray("engines").objects().map(ExternalEngineInfo::from)
+
+  /** Installs or updates an external ACP engine in Termux, streaming progress steps and lines. */
+  suspend fun installEngine(engineId: String, onProgress: (step: String, line: String) -> Unit): JSONObject =
+    call("engine_install", JSONObject().put("engineId", engineId), PACKAGE_INSTALL_TIMEOUT_MILLIS) { _, line ->
+      if (HostProtocol.isProgress(line.optString("type"))) {
+        val text = HostText.of(line.optString("line"), line.optJSONObject("lineI18n")).resolve()
+        onProgress(line.optString("step"), text)
+      }
+    }
+
+  /** Runs interactive OAuth/CLI sign-in for an installed external ACP engine (`agy acp --login`). */
+  suspend fun loginEngine(engineId: String, ui: LoginUi) {
+    call("engine_login", JSONObject().put("engineId", engineId), LOGIN_TIMEOUT_MILLIS) { channel, line ->
+      val type = line.optString("type")
+      when {
+        HostProtocol.isAuthEvent(type) -> line.optJSONObject("event")?.let(ui::onEvent)
+
+        HostProtocol.isAuthUrl(type) -> {
+          val url = line.optString("url")
+          if (url.isNotEmpty()) {
+            ui.onEvent(JSONObject().put("type", "auth_url").put("url", url))
+          }
+        }
+
+        HostProtocol.isProgress(type) -> {
+          val text = HostText.of(line.optString("line"), line.optJSONObject("lineI18n")).resolve()
+          if (text.isNotEmpty()) {
+            ui.onEvent(JSONObject().put("type", "progress").put("message", text))
+          }
+        }
+
+        HostProtocol.isAuthPrompt(type) -> ui.onPrompt(
+          line.optJSONObject("prompt") ?: JSONObject(),
+          AuthReply(channel, line.optLong("id")),
+        )
+
+        HostProtocol.isAuthDismiss(type) -> ui.onPromptDismiss(line.optLong("id"))
+      }
+    }
+  }
+
+  /** Removes an installed external ACP engine directory from Termux. */
+  suspend fun uninstallEngine(engineId: String) {
+    utilityCall("engine_uninstall", JSONObject().put("engineId", engineId))
+  }
+
   /** Makes new OOPBoT sessions start with this model while it stays available and in scope. */
   suspend fun setDefaultModel(provider: String, modelId: String) {
     utilityCall("default_model", JSONObject().put("provider", provider).put("modelId", modelId))
@@ -348,7 +397,12 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
    * is out of date too. OOPBoT loads the bundled extensions not in [disabledExtensions], which are
    * [io.jeph.oopbot.data.BundledExtension.id]s, and always the ones Settings has no switch for.
    */
-  suspend fun openRpc(cwd: String, sessionPath: String?, disabledExtensions: Set<String>): HostChannel {
+  suspend fun openRpc(
+    cwd: String,
+    sessionPath: String?,
+    disabledExtensions: Set<String>,
+    engine: String? = null,
+  ): HostChannel {
     val extensions = BundledExtension.entries
       .filter { it.switch == null || it.id !in disabledExtensions }
       .map { extension -> JSONObject().put("name", extension.id) }
@@ -357,6 +411,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
       .put("sessionPath", sessionPath ?: JSONObject.NULL)
       .put("expectedVersion", expectedOopbotVersion)
       .put("oopbotExtensions", JSONArray(extensions))
+    if (!engine.isNullOrBlank()) params.put("engine", engine)
     val channel = connect("rpc")
     var sent = false
     try {

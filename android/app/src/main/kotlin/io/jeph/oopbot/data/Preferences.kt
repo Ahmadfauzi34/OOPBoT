@@ -93,10 +93,14 @@ internal class Preferences internal constructor(
       .coerceIn(LocalModelSettings.IDLE_UNLOAD_MINUTES),
   )
   private val pickerMachineState = MutableStateFlow(prefs.getString(PICKER_MACHINE, null))
+  private val activeEngineState = MutableStateFlow(prefs.getString(ACTIVE_ENGINE, null))
 
   @Volatile
   private var remoteHostsCacheText: String? =
     if (db != null) db.prefs.readRemoteHostsCache() else prefs.getString(REMOTE_HOSTS, null)
+
+  /** Optional external ACP engine selector (e.g. `acp:antigravity`) for new chats; null uses OOPBoT native. */
+  val activeEngine: StateFlow<String?> = activeEngineState.asStateFlow()
 
   /** Onboarding finished. */
   val setupComplete: StateFlow<Boolean> = setupCompleteState.asStateFlow()
@@ -389,6 +393,14 @@ internal class Preferences internal constructor(
     localModelsEnabledState.value = enabled
   }
 
+  fun setActiveEngine(engine: String?) {
+    val clean = engine?.trim()?.takeIf { it.isNotEmpty() }
+    prefs.edit {
+      if (clean == null) remove(ACTIVE_ENGINE) else putString(ACTIVE_ENGINE, clean)
+    }
+    activeEngineState.value = clean
+  }
+
   /**
    * The name OpenCL gives the phone's GPU, empty when there's no driver, as found under this Android build; null when
    * it hasn't been looked up since Android was updated, which may bring a new driver.
@@ -569,5 +581,6 @@ internal class Preferences internal constructor(
     const val LOCAL_MODEL_IDLE_UNLOAD_MINUTES = "localModelIdleUnloadMinutes"
     const val PICKER_MACHINE = "pickerMachine"
     const val REMOTE_HOSTS = "remoteHosts"
+    const val ACTIVE_ENGINE = "activeEngine"
   }
 }

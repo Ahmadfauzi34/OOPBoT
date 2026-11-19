@@ -1613,3 +1613,162 @@ async fn ensure_aria2c_discovery_loopback_bypass_and_download_cleanup() {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn gate_host_engine_install_downloads_extracts_verifies_and_rolls_back_on_corrupt_archive() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_eng_inst_{}_{}", epoch_ms(), seq));
+    let config_dir = temp_dir.join("config");
+    let prefix_dir = temp_dir.join("prefix");
+    let home_dir = temp_dir.join("home");
+    let pkg_src = temp_dir.join("pkg_src");
+    std::fs::create_dir_all(pkg_src.join("bin")).unwrap();
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(&prefix_dir).unwrap();
+    std::fs::create_dir_all(&home_dir).unwrap();
+
+    // 1. Buat fake binary `bin/agy` dan kemas menjadi `.tar.gz`
+    let agy_src = pkg_src.join("bin/agy");
+    std::fs::write(&agy_src, "#!/bin/sh\necho \"agy 1.5.12\"\n").unwrap();
+    std::fs::set_permissions(&agy_src, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let tarball_path = temp_dir.join("antigravity-termux-standalone.tar.gz");
+    let tar_status = std::process::Command::new("tar")
+        .args([
+            "-czf",
+            tarball_path.to_str().unwrap(),
+            "-C",
+            pkg_src.to_str().unwrap(),
+            "bin/agy",
+        ])
+        .status()
+        .expect("tar -czf should succeed");
+    assert!(tar_status.success());
+    let tarball_bytes = std::fs::read(&tarball_path).unwrap();
+
+    // 2. Sajikan tarball valid + tarball korup via mock HTTP server lokal
+    let (base_url, hits, server) = spawn_mock_release_server(
+        vec![
+            (
+                "/good/antigravity.tar.gz".to_string(),
+                200,
+                tarball_bytes,
+            ),
+            (
+                "/corrupt/antigravity.tar.gz".to_string(),
+                200,
+                b"not-a-valid-gzip-archive".to_vec(),
+            ),
+        ],
+        2,
+    );
+
+    let spec = crate::config::find_builtin_external_engine("antigravity").unwrap();
+    let mut progress_steps = Vec::new();
+    let manifest = install_engine_archive(
+        &config_dir,
+        spec,
+        &format!("{}/good/antigravity.tar.gz", base_url),
+        "1.5.12",
+        true,
+        |step, _line| progress_steps.push(step.to_string()),
+    )
+    .await
+    .expect("valid archive install should succeed");
+
+    assert_eq!(manifest.id, "antigravity");
+    assert_eq!(manifest.installed_version, "1.5.12");
+    assert!(Path::new(&manifest.command).is_file());
+    assert!(!manifest.sha256.as_deref().unwrap_or_default().is_empty());
+    assert!(progress_steps.iter().any(|s| s == "download"));
+    assert!(progress_steps.iter().any(|s| s == "extract"));
+    assert!(progress_steps.iter().any(|s| s == "verify"));
+
+    // 3. Cek `handle_engine_list` sebelum & sesudah glibc ada
+    let list_before_glibc = handle_engine_list(&config_dir, &prefix_dir, home_dir.to_str().unwrap());
+    assert_eq!(list_before_glibc["ok"], true);
+    let agy_entry = list_before_glibc["data"]["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "antigravity")
+        .unwrap();
+    assert_eq!(agy_entry["installed"], true);
+    assert_eq!(agy_entry["installedVersion"], "1.5.12");
+    assert_eq!(agy_entry["glibcReady"], false);
+
+    // Simulasikan Termux glibc loader tersedia
+    let ld_path = prefix_dir.join("glibc/lib/ld-linux-aarch64.so.1");
+    std::fs::create_dir_all(ld_path.parent().unwrap()).unwrap();
+    std::fs::write(&ld_path, b"elf").unwrap();
+    assert!(is_termux_glibc_ready(&prefix_dir));
+
+    let list_after_glibc = handle_engine_list(&config_dir, &prefix_dir, home_dir.to_str().unwrap());
+    let agy_entry_glibc = list_after_glibc["data"]["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "antigravity")
+        .unwrap();
+    assert_eq!(agy_entry_glibc["glibcReady"], true);
+
+    // 4. Instalasi archive korup harus gagal TANPA merusak instalasi v1.5.12 yang sudah ada
+    let bad_res = install_engine_archive(
+        &config_dir,
+        spec,
+        &format!("{}/corrupt/antigravity.tar.gz", base_url),
+        "1.5.99",
+        true,
+        |_, _| {},
+    )
+    .await;
+    assert!(bad_res.is_err());
+
+    server.join().unwrap();
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // Pastikan manifest & binary lama tetap utuh
+    let still_ok = crate::config::load_engine_manifest(&config_dir, "antigravity").unwrap();
+    assert_eq!(still_ok.installed_version, "1.5.12");
+    assert!(Path::new(&still_ok.command).is_file());
+
+    // 5. Uninstall bersih
+    let uninst = handle_engine_uninstall(&config_dir, &json!({ "engineId": "acp:antigravity" }));
+    assert_eq!(uninst["ok"], true);
+    assert!(crate::config::load_engine_manifest(&config_dir, "antigravity").is_none());
+    assert!(!crate::config::engine_dir(&config_dir, "antigravity").exists());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn gate_host_detect_session_engine_reads_acp_header() {
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = std::env::temp_dir().join(format!("oopbot_eng_sess_{}_{}", epoch_ms(), seq));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let acp_session = temp_dir.join("acp.jsonl");
+    std::fs::write(
+        &acp_session,
+        "{\"type\":\"session\",\"version\":3,\"id\":\"s1\",\"engine\":\"acp:antigravity\"}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        detect_session_engine(&acp_session).as_deref(),
+        Some("acp:antigravity")
+    );
+
+    let native_session = temp_dir.join("native.jsonl");
+    std::fs::write(
+        &native_session,
+        "{\"type\":\"session\",\"version\":3,\"id\":\"s2\"}\n",
+    )
+    .unwrap();
+    assert_eq!(detect_session_engine(&native_session), None);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+

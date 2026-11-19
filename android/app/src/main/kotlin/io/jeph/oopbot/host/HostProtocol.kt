@@ -22,6 +22,7 @@ internal object HostProtocol {
    */
   const val CHANNEL = "oopbot_channel"
   const val AUTH_EVENT = "oopbot_auth_event"
+  const val AUTH_URL = "oopbot_auth_url"
   const val AUTH_PROMPT = "oopbot_auth_prompt"
   const val AUTH_RESPONSE = "oopbot_auth_response"
   const val AUTH_CANCEL = "oopbot_auth_cancel"
@@ -35,6 +36,7 @@ internal object HostProtocol {
   fun isExit(type: String?): Boolean = type == EXIT
   fun isChannel(type: String?): Boolean = type == CHANNEL
   fun isAuthEvent(type: String?): Boolean = type == AUTH_EVENT
+  fun isAuthUrl(type: String?): Boolean = type == AUTH_URL
   fun isAuthPrompt(type: String?): Boolean = type == AUTH_PROMPT
   fun isAuthDismiss(type: String?): Boolean = type == AUTH_PROMPT_DISMISS
 }
