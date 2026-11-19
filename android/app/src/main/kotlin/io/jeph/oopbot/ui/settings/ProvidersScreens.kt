@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.host.AuthStatus
+import io.jeph.oopbot.host.CustomProvider
 import io.jeph.oopbot.host.ExternalEngineInfo
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.ui.LocalTransitionSettled
@@ -81,63 +82,95 @@ internal fun ProvidersScreen(
     accounts.refresh()
   }
   SettingsPage(title = stringResource(R.string.providers_title), onBack = onBack) {
-    val current = status
-    val signedIn = subscriptions.filter { current?.isSignedIn(it.id) == true }
-    val installedEngines = engines.filter { it.installed }
-    val custom = current?.custom.orEmpty()
-    when {
-      current == null && refreshError == null ->
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { SimmeringPot() }
-
-      signedIn.isEmpty() && installedEngines.isEmpty() && custom.isEmpty() ->
-        SettingsCaption(text = stringResource(R.string.providers_empty))
-
-      else -> SettingsSection(title = null) {
-        signedIn.forEachIndexed { index, subscription ->
-          if (index > 0) SettingsDivider()
-          SettingsRow(
-            title = stringResource(subscription.title),
-            subtitle = stringResource(subscription.subtitle),
-            onClick = { onOpenSubscription(subscription.id) },
-            leading = { ProviderLogo(subscription.id) },
-          ) { Chevron() }
-        }
-        installedEngines.forEachIndexed { index, engine ->
-          if (index > 0 || signedIn.isNotEmpty()) SettingsDivider()
-          val engineSubtitle = when {
-            activeEngine == engine.selector -> stringResource(R.string.engine_using_for_new_chats)
-            engine.authenticated -> stringResource(R.string.engine_status_signed_in)
-            else -> stringResource(R.string.engine_status_sign_in_needed)
-          }
-          SettingsRow(
-            title = engine.displayName,
-            subtitle = engineSubtitle,
-            onClick = { managingEngine = engine.id },
-            leading = { ProviderLogo(engine.id) },
-          ) { Chevron() }
-        }
-        custom.forEachIndexed { index, provider ->
-          if (index > 0 || signedIn.isNotEmpty() || installedEngines.isNotEmpty()) SettingsDivider()
-          SettingsRow(
-            title = provider.id,
-            subtitle = provider.baseUrl,
-            onClick = { onEditProvider(provider.id) },
-            leading = { RowIcon(R.drawable.ic_lucide_key_round) },
-          ) { Chevron() }
-        }
-      }
-    }
+    ProvidersListSection(
+      status = status,
+      installedEngines = engines.filter { it.installed },
+      activeEngine = activeEngine,
+      refreshError = refreshError,
+      onOpenSubscription = onOpenSubscription,
+      onManageEngine = { managingEngine = it },
+      onEditProvider = onEditProvider,
+    )
     DashedActionRow(label = stringResource(R.string.providers_add), icon = R.drawable.ic_lucide_plus, onClick = onAdd)
-    current?.modelsError?.let { SettingsCaption(text = it.localized(), color = oopbotColors.destructive) }
+    status?.modelsError?.let { SettingsCaption(text = it.localized(), color = oopbotColors.destructive) }
     refreshError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
     LocalModelsSection(preferences = graph.preferences, onOpenLocalModels = onOpenLocalModels)
   }
   managingEngine?.let { engineId ->
-    val target = engines.firstOrNull { it.id == engineId }
-    if (target != null) {
+    engines.firstOrNull { it.id == engineId }?.let { target ->
       EngineSetupSheet(engine = target, onDismiss = { managingEngine = null })
     }
   }
+}
+
+@Composable
+private fun ProvidersListSection(
+  status: AuthStatus?,
+  installedEngines: List<ExternalEngineInfo>,
+  activeEngine: String?,
+  refreshError: String?,
+  onOpenSubscription: (id: String) -> Unit,
+  onManageEngine: (id: String) -> Unit,
+  onEditProvider: (id: String) -> Unit,
+) {
+  val signedIn = subscriptions.filter { status?.isSignedIn(it.id) == true }
+  val custom = status?.custom.orEmpty()
+  when {
+    status == null && refreshError == null ->
+      Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { SimmeringPot() }
+
+    signedIn.isEmpty() && installedEngines.isEmpty() && custom.isEmpty() ->
+      SettingsCaption(text = stringResource(R.string.providers_empty))
+
+    else -> SettingsSection(title = null) {
+      signedIn.forEachIndexed { index, subscription ->
+        if (index > 0) SettingsDivider()
+        SettingsRow(
+          title = stringResource(subscription.title),
+          subtitle = stringResource(subscription.subtitle),
+          onClick = { onOpenSubscription(subscription.id) },
+          leading = { ProviderLogo(subscription.id) },
+        ) { Chevron() }
+      }
+      installedEngines.forEachIndexed { index, engine ->
+        if (index > 0 || signedIn.isNotEmpty()) SettingsDivider()
+        InstalledEngineRow(
+          engine = engine,
+          isActive = activeEngine == engine.selector,
+          onClick = { onManageEngine(engine.id) },
+        )
+      }
+      custom.forEachIndexed { index, provider ->
+        if (index > 0 || signedIn.isNotEmpty() || installedEngines.isNotEmpty()) SettingsDivider()
+        CustomProviderRow(provider = provider, onClick = { onEditProvider(provider.id) })
+      }
+    }
+  }
+}
+
+@Composable
+private fun InstalledEngineRow(engine: ExternalEngineInfo, isActive: Boolean, onClick: () -> Unit) {
+  val engineSubtitle = when {
+    isActive -> stringResource(R.string.engine_using_for_new_chats)
+    engine.authenticated -> stringResource(R.string.engine_status_signed_in)
+    else -> stringResource(R.string.engine_status_sign_in_needed)
+  }
+  SettingsRow(
+    title = engine.displayName,
+    subtitle = engineSubtitle,
+    onClick = onClick,
+    leading = { ProviderLogo(engine.id) },
+  ) { Chevron() }
+}
+
+@Composable
+private fun CustomProviderRow(provider: CustomProvider, onClick: () -> Unit) {
+  SettingsRow(
+    title = provider.id,
+    subtitle = provider.baseUrl,
+    onClick = onClick,
+    leading = { RowIcon(R.drawable.ic_lucide_key_round) },
+  ) { Chevron() }
 }
 
 /**
@@ -165,16 +198,11 @@ internal fun AddProviderScreen(onBack: () -> Unit, onAddCompatible: () -> Unit, 
   SettingsPage(title = stringResource(R.string.providers_add), onBack = onBack) {
     SettingsSection(title = null) {
       subscriptions.forEach { subscription ->
-        val added = status?.isSignedIn(subscription.id) == true
-        SettingsRow(
-          title = stringResource(subscription.title),
-          subtitle = stringResource(subscription.subtitle),
-          enabled = !added,
+        AddSubscriptionRow(
+          subscription = subscription,
+          added = status?.isSignedIn(subscription.id) == true,
           onClick = { signingIn = subscription.id },
-          leading = { ProviderLogo(subscription.id) },
-        ) {
-          if (added) SettingsValue(stringResource(R.string.providers_added)) else Chevron()
-        }
+        )
         SettingsDivider()
       }
       displayEngines.forEach { engine ->
@@ -194,19 +222,44 @@ internal fun AddProviderScreen(onBack: () -> Unit, onAddCompatible: () -> Unit, 
     }
     refreshError?.let { SettingsCaption(text = it, color = oopbotColors.destructive) }
   }
-  signingIn?.let { id ->
-    LoginSheet(
-      providerId = id,
-      onDismiss = {
-        signingIn = null
-        if (accounts.status.value?.isSignedIn(id) == true) onAdded(id)
-      },
-    )
-  }
+  AddProviderSheets(
+    signingIn = signingIn,
+    settingUpEngine = settingUpEngine,
+    displayEngines = displayEngines,
+    onDismissLogin = { id ->
+      signingIn = null
+      if (accounts.status.value?.isSignedIn(id) == true) onAdded(id)
+    },
+    onDismissEngine = { settingUpEngine = null },
+  )
+}
+
+@Composable
+private fun AddProviderSheets(
+  signingIn: String?,
+  settingUpEngine: String?,
+  displayEngines: List<ExternalEngineInfo>,
+  onDismissLogin: (String) -> Unit,
+  onDismissEngine: () -> Unit,
+) {
+  signingIn?.let { id -> LoginSheet(providerId = id, onDismiss = { onDismissLogin(id) }) }
   settingUpEngine?.let { engineId ->
     displayEngines.firstOrNull { it.id == engineId }?.let { target ->
-      EngineSetupSheet(engine = target, onDismiss = { settingUpEngine = null })
+      EngineSetupSheet(engine = target, onDismiss = onDismissEngine)
     }
+  }
+}
+
+@Composable
+private fun AddSubscriptionRow(subscription: Subscription, added: Boolean, onClick: () -> Unit) {
+  SettingsRow(
+    title = stringResource(subscription.title),
+    subtitle = stringResource(subscription.subtitle),
+    enabled = !added,
+    onClick = onClick,
+    leading = { ProviderLogo(subscription.id) },
+  ) {
+    if (added) SettingsValue(stringResource(R.string.providers_added)) else Chevron()
   }
 }
 
