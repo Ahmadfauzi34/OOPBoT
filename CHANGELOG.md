@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-11-19
+
+### Added
+- External ACP (Agent Client Protocol, JSON-RPC 2.0 over stdio) CLI engine bridge (`src/interfaces/acp/`) with first-class **Antigravity CLI** (`wallentx/antigravity-cli-termux` -> `agy acp`) integration ([#40](https://github.com/Ahmadfauzi34/OOPBoT/pull/40)):
+  - Downloadable engine catalog and manifest store (`src/config/engines.rs`, `~/.oopbot/engines/<id>/manifest.json`).
+  - Bidirectional `AcpRpcBridge` translating OOPBoT JSONL RPC commands (`prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_available_models`, `set_model`, `set_thinking_level`, `new_session`, `switch_session`, `export_html`, `extension_ui_response`) and ACP events/callbacks (`session/update`, `session/request_permission` mapped to Android's native `confirm` dialog, `fs/read_text_file`, `fs/write_text_file`, `terminal/*` lifecycle with `process_kill_tree` cleanup).
+  - Native Termux host installer, uninstaller, and OAuth login bridge (`src/interfaces/host/engines.rs`: `engine_install`, `engine_login`, `engine_list`, `engine_uninstall`) with staging-directory archive extraction, backup/rollback on failure, automatic Termux `glibc-repo`/`glibc` installation (`manualCommand` fallback), and `acp:<id>` routing in `oopbot host rpc`.
+  - Android unified provider list & `EngineSetupSheet` (`ProvidersScreens.kt`, `ProviderRows.kt`, `EngineSetupSheet.kt`, `HostClient`, `AccountRepository`, `Preferences.activeEngine`, `AgentProcess`) supporting one-tap download/install, browser + callback-paste OAuth login (`agy acp --login`), per-session engine header persistence, and active engine toggle.
+
+### Fixed
+- Hardened session context resilience across LLM transport retries, JSONL transcript recovery, context compaction, and live session reloads, backed by regression gate tests ([#39](https://github.com/Ahmadfauzi34/OOPBoT/pull/39)):
+  - Treated HTTP `408 Request Timeout`, `429 Too Many Requests`, and `529 Overloaded` as retryable alongside `5xx`/network errors across Gemini, OpenAI Chat/Responses, and Anthropic clients.
+  - Sanitized orphan `ToolCall` / `ToolResult` messages (`Session::sanitize_tool_Transcript`) after crashes, partial turns, or interrupted tool batches so strict tool-pairing APIs never reject subsequent turns with `400 Bad Request`.
+  - Replaced single-shot context compaction with multi-step progressive fallback (`33%` -> `50%` -> `75%` -> deterministic emergency trim when summarizer LLM calls fail) and proactive `context_warning` notifications at 85% budget usage.
+  - Reloaded disk changes via `SessionStore::sync_from_disk_if_newer` before RPC turns and skipped blank/corrupt JSONL lines gracefully instead of failing entire session loads.
+
 ## [0.5.15] - 2026-11-19
 
 ### Changed
