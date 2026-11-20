@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.21] - 2026-11-20
+
+### Fixed
+- Fixed external ACP tool execution hanging indefinitely in `Running...` when an agent requested permission (`session/request_permission`):
+  - `AcpRpcBridge` now emits native Android `extension_ui_request` (`select` with the agent's permission options, or `confirm` fallback) alongside `oopbot_channel` `tool_approval`, and resolves pending ACP permissions directly from Android's `extension_ui_response` (`value`, `confirmed`, or `cancelled`).
+  - Normalized ACP tool arguments & `locations` (`file_path`, `CodeContent`, `CommandLine`, etc.) to OOPBoT's `path`/`content`/`command` schema, mapped `"write"`/`"shell"` kinds cleanly, and forwarded non-terminal `tool_call_update` args/output incrementally via `toolcall_end` and `tool_execution_update`.
+  - Added `~/` tilde expansion in `resolve_acp_path` for `fs/read_text_file` and `fs/write_text_file`.
+
 ## [0.5.20] - 2026-11-19
 
 ### Added

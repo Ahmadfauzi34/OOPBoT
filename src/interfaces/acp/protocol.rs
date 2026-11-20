@@ -554,6 +554,7 @@ pub enum AcpSessionUpdate {
         tool_call_id: String,
         status: String,
         title: Option<String>,
+        raw_input: Option<Value>,
         output_text: String,
         is_error: bool,
     },
@@ -606,6 +607,91 @@ pub fn extract_acp_content_text(val: &Value) -> String {
     String::new()
 }
 
+fn first_nonempty_trimmed<'a>(obj: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    for k in keys {
+        if let Some(s) = obj.get(*k).and_then(|v| v.as_str()).map(str::trim) {
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+fn first_nonempty_raw<'a>(obj: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    for k in keys {
+        if let Some(s) = obj.get(*k).and_then(|v| v.as_str()) {
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// Normalisasikan `rawInput` / `arguments` + `locations` ACP ke schema OOPBoT (`path`, `content`, `command`).
+pub fn normalize_acp_tool_args(container: &Value) -> Value {
+    let raw = container
+        .get("rawInput")
+        .or_else(|| container.get("arguments"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    let mut out = if raw.is_object() { raw } else { json!({}) };
+
+    if out.get("path").and_then(|v| v.as_str()).is_none() {
+        let loc_path = container
+            .get("locations")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|l| l.get("path").and_then(|p| p.as_str()).or_else(|| l.as_str()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let found_path = first_nonempty_trimmed(
+            &out,
+            &[
+                "path",
+                "file_path",
+                "filePath",
+                "target_file",
+                "targetFile",
+                "TargetFile",
+                "FilePath",
+                "file",
+            ],
+        )
+        .map(str::to_string)
+        .or_else(|| loc_path.map(str::to_string));
+
+        if let Some(p) = found_path {
+            out["path"] = json!(p);
+        }
+    }
+
+    if out.get("content").and_then(|v| v.as_str()).is_none() {
+        if let Some(c) = first_nonempty_raw(
+            &out,
+            &["content", "CodeContent", "codeContent", "file_text", "text"],
+        )
+        .map(str::to_string)
+        {
+            out["content"] = json!(c);
+        }
+    }
+
+    if out.get("command").and_then(|v| v.as_str()).is_none() {
+        if let Some(cmd) =
+            first_nonempty_trimmed(&out, &["command", "CommandLine", "commandLine", "cmd"])
+                .map(str::to_string)
+        {
+            out["command"] = json!(cmd);
+        }
+    }
+
+    out
+}
+
 /// Parse payload `params` dari notification `session/update`.
 pub fn parse_session_update(params: &Value) -> AcpSessionUpdate {
     let update = params.get("update").unwrap_or(params);
@@ -633,11 +719,7 @@ pub fn parse_session_update(params: &Value) -> AcpSessionUpdate {
                 .unwrap_or("tool")
                 .to_string();
             let kind = update["kind"].as_str().unwrap_or("other").to_string();
-            let raw_input = update
-                .get("rawInput")
-                .or_else(|| update.get("arguments"))
-                .cloned()
-                .unwrap_or_else(|| json!({}));
+            let raw_input = normalize_acp_tool_args(update);
             AcpSessionUpdate::ToolCall {
                 tool_call_id,
                 title,
@@ -653,6 +735,12 @@ pub fn parse_session_update(params: &Value) -> AcpSessionUpdate {
                 .to_string();
             let status = update["status"].as_str().unwrap_or("in_progress").to_string();
             let title = update["title"].as_str().map(str::to_string);
+            let norm_input = normalize_acp_tool_args(update);
+            let raw_input = if norm_input.as_object().is_some_and(|m| !m.is_empty()) {
+                Some(norm_input)
+            } else {
+                None
+            };
             let mut output_text = update
                 .get("content")
                 .map(extract_acp_content_text)
@@ -673,6 +761,7 @@ pub fn parse_session_update(params: &Value) -> AcpSessionUpdate {
                 tool_call_id,
                 status,
                 title,
+                raw_input,
                 output_text,
                 is_error,
             }
@@ -787,11 +876,7 @@ pub fn parse_permission_request(params: &Value) -> AcpPermissionRequest {
         .unwrap_or("Tool action")
         .to_string();
     let kind = tc["kind"].as_str().unwrap_or("execute").to_string();
-    let raw_input = tc
-        .get("rawInput")
-        .or_else(|| tc.get("arguments"))
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let raw_input = normalize_acp_tool_args(tc);
 
     let options = params
         .get("options")
@@ -829,12 +914,12 @@ pub fn parse_permission_request(params: &Value) -> AcpPermissionRequest {
     }
 }
 
-/// Petakan kategori tool ACP (`read`, `edit`, `execute`, `search`, `fetch`, dll.) ke nama kartu tool UI OOPBoT.
+/// Petakan kategori tool ACP (`read`, `edit`, `write`, `execute`, `search`, `fetch`, dll.) ke nama kartu tool UI OOPBoT.
 pub fn map_acp_tool_kind_to_oopbot(kind: &str) -> &'static str {
     match kind.to_ascii_lowercase().as_str() {
         "read" => "read",
-        "edit" | "delete" | "move" => "write",
-        "execute" => "bash",
+        "write" | "edit" | "delete" | "move" => "write",
+        "execute" | "bash" | "shell" => "bash",
         "search" => "web_search",
         "fetch" => "fetch_page",
         _ => "tool",

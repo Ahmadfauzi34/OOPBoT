@@ -19,6 +19,15 @@ fn resolve_acp_path(default_cwd: &Path, raw: &str) -> Result<PathBuf, (i64, Stri
     if trimmed.is_empty() {
         return Err((-32602, "Parameter 'path' wajib diisi".to_string()));
     }
+    if trimmed == "~" || trimmed.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            let rest = trimmed.trim_start_matches('~').trim_start_matches('/');
+            return Ok(if rest.is_empty() { home } else { home.join(rest) });
+        }
+    }
     let p = PathBuf::from(trimmed);
     if p.is_absolute() {
         Ok(p)

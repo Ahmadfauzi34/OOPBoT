@@ -1330,4 +1330,194 @@ for line in sys.stdin:
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn gate_acp_bridge_extension_ui_permission_and_progressive_tool_args() {
+    let dir = std::env::temp_dir().join(format!("oopbot_acp_uiperm_{}", epoch_ms()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = write_mock_acp_script(
+        &dir,
+        "mock_acp_uiperm.py",
+        r#"
+import sys, json
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+def recv():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if line:
+            return json.loads(line)
+
+sid = "acp-uiperm-1"
+while True:
+    msg = recv()
+    if msg is None:
+        break
+    method = msg.get("method")
+    req_id = msg.get("id")
+    params = msg.get("params", {})
+
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"sessionId": sid}})
+    elif method == "session/prompt":
+        # Tahap 1: agen kirim tool_call write dengan rawInput kosong dulu
+        send({"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": sid,
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-write-1",
+                "title": "Write",
+                "kind": "write",
+                "rawInput": {}
+            }
+        }})
+        # Tahap 2: update non-terminal mengisi file_path & CodeContent + output parsial
+        send({"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": sid,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-write-1",
+                "status": "in_progress",
+                "rawInput": {"file_path": "demo.txt", "CodeContent": "halo acp\n"},
+                "content": "menunggu izin"
+            }
+        }})
+        # Tahap 3: agen meminta permission -> harus terbit extension_ui_request
+        send({"jsonrpc": "2.0", "id": 501, "method": "session/request_permission", "params": {
+            "sessionId": sid,
+            "toolCall": {
+                "toolCallId": "tc-write-1",
+                "title": "Write demo.txt",
+                "kind": "write",
+                "locations": [{"path": "demo.txt"}]
+            },
+            "options": [
+                {"optionId": "allow_1", "name": "Izinkan sekali", "kind": "allow_once"},
+                {"optionId": "reject_1", "name": "Tolak", "kind": "reject_once"}
+            ]
+        }})
+        perm_resp = recv()
+        chosen = perm_resp.get("result", {}).get("outcome", {}).get("optionId")
+        if chosen != "allow_1":
+            raise RuntimeError(f"Expected allow_1, got {chosen}")
+
+        # Tahap 4: setelah disetujui via extension_ui_response, jalankan fs/write_text_file
+        send({"jsonrpc": "2.0", "id": 502, "method": "fs/write_text_file", "params": {
+            "sessionId": sid,
+            "path": "demo.txt",
+            "content": "halo acp\n"
+        }})
+        _ = recv()
+        send({"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": sid,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-write-1",
+                "status": "completed",
+                "content": [{"type": "text", "text": "File ditulis"}]
+            }
+        }})
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
+"#,
+    );
+
+    let (writer, mut out_rx) = ChannelWriter::pair();
+    let cfg = AcpBridgeConfig {
+        engine_id: "antigravity".to_string(),
+        display_name: "Antigravity".to_string(),
+        config_dir: dir.clone(),
+        cwd: dir.clone(),
+        session_path: None,
+        launch: AcpLaunchConfig {
+            command: PathBuf::from("python3"),
+            args: vec![script.to_string_lossy().to_string()],
+            cwd: dir.clone(),
+            env: vec![],
+        },
+    };
+
+    let bridge = AcpRpcBridge::start(cfg, writer).await.unwrap();
+    let (cmd_tx, reader) = LinePipeReader::new();
+    let loop_handle = tokio::spawn(async move { bridge.run_loop_with_input(reader).await.unwrap() });
+    let _ = recv_until(&mut out_rx, Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    cmd_tx
+        .send(json!({ "id": "p_ui", "type": "prompt", "message": "buat demo.txt" }).to_string())
+        .unwrap();
+
+    // Verifikasi toolcall_end progresif mengisi path & content, serta extension_ui_request select muncul
+    let mut saw_enriched_args = false;
+    let mut saw_partial_update = false;
+    let ui_req_id: String;
+    loop {
+        let ev = tokio::time::timeout(Duration::from_secs(4), out_rx.recv())
+            .await
+            .expect("timeout menunggu extension_ui_request")
+            .expect("channel ditutup");
+        if ev["type"] == "message_update"
+            && ev["assistantMessageEvent"]["type"] == "toolcall_end"
+            && ev["assistantMessageEvent"]["toolCall"]["arguments"]["path"] == "demo.txt"
+        {
+            assert_eq!(
+                ev["assistantMessageEvent"]["toolCall"]["arguments"]["content"],
+                "halo acp\n"
+            );
+            saw_enriched_args = true;
+        }
+        if ev["type"] == "tool_execution_update"
+            && ev["partialResult"]["content"][0]["text"] == "menunggu izin"
+        {
+            saw_partial_update = true;
+        }
+        if ev["type"] == "extension_ui_request" && ev["method"] == "select" {
+            assert_eq!(ev["options"], json!(["Izinkan sekali", "Tolak"]));
+            assert!(ev["message"].as_str().unwrap_or("").contains("demo.txt"));
+            ui_req_id = ev["id"].as_str().unwrap().to_string();
+            break;
+        }
+    }
+    assert!(saw_enriched_args, "GATE: args path/content harus ternormalisasi & diperbarui");
+    assert!(saw_partial_update, "GATE: tool_call_update non-terminal harus memancarkan tool_execution_update");
+
+    // Android menjawab dialog extension_ui_request via extension_ui_response
+    cmd_tx
+        .send(
+            json!({
+                "type": "extension_ui_response",
+                "id": ui_req_id,
+                "value": "Izinkan sekali"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+    let tool_end = recv_until(&mut out_rx, Duration::from_secs(4), |v| {
+        v["type"] == "tool_execution_end"
+    })
+    .await;
+    assert_eq!(tool_end["toolName"], "write");
+    assert_eq!(tool_end["isError"], false);
+    assert_eq!(std::fs::read_to_string(dir.join("demo.txt")).unwrap(), "halo acp\n");
+
+    let _ = recv_until(&mut out_rx, Duration::from_secs(3), |v| {
+        v["type"] == "agent_settled"
+    })
+    .await;
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(Duration::from_secs(2), loop_handle).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+
 

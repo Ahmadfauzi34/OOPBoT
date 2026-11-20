@@ -54,7 +54,7 @@ struct StreamingTurnState {
     current_content_idx: usize,
     open_block_kind: Option<&'static str>, // "thinking" | "text"
     open_block_text: String,
-    active_tools: HashMap<String, (String, Value)>, // tool_call_id -> (ui_tool_name, args)
+    active_tools: HashMap<String, (String, Value, usize)>, // tool_call_id -> (ui_tool_name, args, content_idx)
     aborted: bool,
 }
 
@@ -70,6 +70,56 @@ impl StreamingTurnState {
             active_tools: HashMap::new(),
             aborted: false,
         }
+    }
+}
+
+fn merge_tool_args(existing: &mut Value, incoming: &Value) -> bool {
+    let Some(inc_obj) = incoming.as_object() else {
+        return false;
+    };
+    if inc_obj.is_empty() {
+        return false;
+    }
+    if !existing.is_object() {
+        *existing = json!({});
+    }
+    let Some(dst) = existing.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for (k, v) in inc_obj {
+        if v.is_null() {
+            continue;
+        }
+        if dst.get(k) != Some(v) {
+            dst.insert(k.clone(), v.clone());
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn format_permission_preview(title: &str, raw_input: &Value) -> String {
+    let mut parts = Vec::new();
+    let trimmed_title = title.trim();
+    if !trimmed_title.is_empty() {
+        parts.push(trimmed_title.to_string());
+    }
+    if let Some(cmd) = raw_input["command"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(format!("$ {}", cmd));
+    } else if let Some(path) = raw_input["path"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(path.to_string());
+    } else if let Some(obj) = raw_input.as_object() {
+        if !obj.is_empty() {
+            if let Ok(s) = serde_json::to_string_pretty(raw_input) {
+                parts.push(s);
+            }
+        }
+    }
+    if parts.is_empty() {
+        "Agen meminta izin menjalankan aksi ini.".to_string()
+    } else {
+        parts.join("\n")
     }
 }
 
@@ -1379,8 +1429,10 @@ impl AcpRpcBridge {
                     "arguments": ui_args,
                 }));
                 turn.current_content_idx += 1;
-                turn.active_tools
-                    .insert(tool_call_id.clone(), (ui_tool_name.clone(), ui_args.clone()));
+                turn.active_tools.insert(
+                    tool_call_id.clone(),
+                    (ui_tool_name.clone(), ui_args.clone(), idx),
+                );
 
                 self.send_line(&json!({
                     "type": "tool_execution_start",
@@ -1392,7 +1444,8 @@ impl AcpRpcBridge {
             AcpSessionUpdate::ToolCallUpdate {
                 tool_call_id,
                 status,
-                title: _,
+                title,
+                raw_input,
                 output_text,
                 is_error,
             } => {
@@ -1400,19 +1453,69 @@ impl AcpRpcBridge {
                     status.to_ascii_lowercase().as_str(),
                     "completed" | "failed" | "error" | "rejected" | "cancelled"
                 );
-                if !is_terminal {
-                    return;
-                }
                 let Some(turn) = active_turn.as_mut() else {
                     return;
                 };
+                if !is_terminal {
+                    if let Some((ui_tool_name, stored_args, cidx)) =
+                        turn.active_tools.get_mut(&tool_call_id)
+                    {
+                        let mut changed = false;
+                        if let Some(ref inc) = raw_input {
+                            changed |= merge_tool_args(stored_args, inc);
+                        }
+                        if let Some(t) = title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                            if stored_args.get("title").and_then(|v| v.as_str()) != Some(t) {
+                                stored_args["title"] = json!(t);
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            if let Some(block) = turn.content_blocks.get_mut(*cidx) {
+                                block["arguments"] = stored_args.clone();
+                            }
+                            self.send_line(&json!({
+                                "type": "message_update",
+                                "assistantMessageEvent": {
+                                    "type": "toolcall_end",
+                                    "contentIndex": *cidx,
+                                    "toolCall": {
+                                        "id": tool_call_id,
+                                        "name": ui_tool_name,
+                                        "arguments": stored_args,
+                                    }
+                                }
+                            }));
+                        }
+                        if !output_text.is_empty() {
+                            self.send_line(&json!({
+                                "type": "tool_execution_update",
+                                "toolCallId": tool_call_id,
+                                "toolName": ui_tool_name,
+                                "partialResult": {
+                                    "content": [{ "type": "text", "text": output_text }]
+                                }
+                            }));
+                        }
+                    }
+                    return;
+                }
+                if let Some((_, stored_args, cidx)) = turn.active_tools.get_mut(&tool_call_id) {
+                    if let Some(ref inc) = raw_input {
+                        if merge_tool_args(stored_args, inc) {
+                            if let Some(block) = turn.content_blocks.get_mut(*cidx) {
+                                block["arguments"] = stored_args.clone();
+                            }
+                        }
+                    }
+                }
                 if turn.assistant_msg_started {
                     self.flush_assistant_message(turn, "toolUse");
                 }
-                let (ui_tool_name, _) = turn
+                let (ui_tool_name, _, _) = turn
                     .active_tools
                     .remove(&tool_call_id)
-                    .unwrap_or_else(|| ("tool".to_string(), json!({})));
+                    .unwrap_or_else(|| ("tool".to_string(), json!({}), 0));
 
                 let result_payload = json!({
                     "content": [{ "type": "text", "text": output_text }]
@@ -1485,7 +1588,13 @@ impl AcpRpcBridge {
         }
     }
 
-    async fn handle_agent_request(&mut self, id: Value, method: &str, params: &Value) {
+    async fn handle_agent_request(
+        &mut self,
+        id: Value,
+        method: &str,
+        params: &Value,
+        active_turn: &mut Option<StreamingTurnState>,
+    ) {
         match method {
             "session/request_permission" => {
                 let perm = parse_permission_request(params);
@@ -1493,6 +1602,31 @@ impl AcpRpcBridge {
                 self.perm_counter += 1;
 
                 let ui_tool_name = map_acp_tool_kind_to_oopbot(&perm.kind);
+                if let Some(turn) = active_turn.as_mut() {
+                    if let Some((stored_tool, stored_args, cidx)) =
+                        turn.active_tools.get_mut(&perm.tool_call_id)
+                    {
+                        if merge_tool_args(stored_args, &perm.raw_input) {
+                            if let Some(block) = turn.content_blocks.get_mut(*cidx) {
+                                block["arguments"] = stored_args.clone();
+                            }
+                            self.send_line(&json!({
+                                "type": "message_update",
+                                "assistantMessageEvent": {
+                                    "type": "toolcall_end",
+                                    "contentIndex": *cidx,
+                                    "toolCall": {
+                                        "id": perm.tool_call_id,
+                                        "name": stored_tool,
+                                        "arguments": stored_args,
+                                    }
+                                }
+                            }));
+                        }
+                    }
+                }
+
+                let preview_msg = format_permission_preview(&perm.title, &perm.raw_input);
                 let options_json: Vec<Value> = perm
                     .options
                     .iter()
@@ -1504,6 +1638,26 @@ impl AcpRpcBridge {
                         })
                     })
                     .collect();
+
+                if !perm.options.is_empty() {
+                    let labels: Vec<&str> = perm.options.iter().map(|o| o.name.as_str()).collect();
+                    self.send_line(&json!({
+                        "type": "extension_ui_request",
+                        "id": req_id,
+                        "method": "select",
+                        "title": format!("Izinkan {}?", ui_tool_name),
+                        "message": preview_msg,
+                        "options": labels,
+                    }));
+                } else {
+                    self.send_line(&json!({
+                        "type": "extension_ui_request",
+                        "id": req_id,
+                        "method": "confirm",
+                        "title": format!("Izinkan {}?", ui_tool_name),
+                        "message": preview_msg,
+                    }));
+                }
 
                 self.send_channel(
                     "tool_approval",
@@ -1799,7 +1953,8 @@ impl AcpRpcBridge {
                             }
                         }
                         Some(AcpAgentEvent::Request { id, method, params }) => {
-                            self.handle_agent_request(id, &method, &params).await;
+                            self.handle_agent_request(id, &method, &params, &mut active_turn)
+                                .await;
                         }
                         Some(AcpAgentEvent::Closed { stderr_tail }) => {
                             self.cancel_all_pending_permissions().await;
@@ -2229,7 +2384,30 @@ impl AcpRpcBridge {
                             self.send_response(&id, "set_auto_retry", json!({}));
                         }
                         "extension_ui_response" => {
-                            if !id.is_empty() {
+                            if !id.is_empty() && self.pending_permissions.contains_key(&id) {
+                                if cmd["cancelled"].as_bool() == Some(true) {
+                                    self.resolve_permission(&id, false, None).await;
+                                } else if let Some(val) = cmd["value"].as_str() {
+                                    let opt_match = self.pending_permissions.get(&id).and_then(|p| {
+                                        p.request
+                                            .options
+                                            .iter()
+                                            .find(|o| o.name == val || o.option_id == val)
+                                            .map(|o| (o.option_id.clone(), !o.kind.starts_with("reject")))
+                                    });
+                                    if let Some((opt_id, approved)) = opt_match {
+                                        self.resolve_permission(&id, approved, Some(&opt_id)).await;
+                                    } else {
+                                        let approved = !val.to_ascii_lowercase().contains("reject")
+                                            && !val.to_ascii_lowercase().contains("deny")
+                                            && !val.to_ascii_lowercase().contains("tolak");
+                                        self.resolve_permission(&id, approved, None).await;
+                                    }
+                                } else {
+                                    let confirmed = cmd["confirmed"].as_bool().unwrap_or(false);
+                                    self.resolve_permission(&id, confirmed, None).await;
+                                }
+                            } else if !id.is_empty() {
                                 self.send_response(&id, "extension_ui_response", json!({}));
                             }
                         }
