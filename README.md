@@ -1,30 +1,41 @@
-# OOPBoT — Hybrid Rust Agent Harness + Android App (Termux Rust Host)
+# OOPBoT — Hybrid Rust Agent Harness + Android App (Termux Rust Host & ACP Bridge)
 
-Fondasi *agent harness* berbasis Rust yang menggabungkan:
-1. **Binary CLI & RPC Native Rust (`oopbot`)** untuk Termux (`aarch64-linux-android`).
-2. **Aplikasi Android (`android/`)** berbasis UI OOPBoT yang terhubung kuat ke Termux (**Konsep 2: Termux Rust Host**) — menggunakan binary Rust `oopbot --mode rpc` (~2.9 MB) dan SDK bawaan (`oopbot-sdk.ts`) sebagai pengganti penuh `@earendil-works/pi-coding-agent` (`pi` Node.js ~150 MB).
-3. **Shared Library C-ABI (`liboopbot.so`)** siap untuk ekspansi JNI in-process (Konsep 1).
+**OOPBoT** adalah *agent harness* hybrid berbasis Rust yang menggabungkan:
+1. **Binary CLI, RPC & Termux Host Native (`oopbot`)** untuk Termux (`aarch64-linux-android`) tanpa runtime Node.js.
+2. **Aplikasi Android Kotlin/Jetpack Compose (`android/`)** yang terhubung langsung ke host Rust di Termux melalui `oopbot host` + protokol JSONL `--mode rpc`.
+3. **External ACP Engine Bridge (`src/interfaces/acp/`)** untuk menjalankan agen CLI eksternal berbasis **Agent Client Protocol (ACP JSON-RPC 2.0 stdio)** seperti **Antigravity CLI (`agy acp`)** di dalam UI OOPBoT yang sama.
+4. **Shared Library C-ABI & JNI (`liboopbot.so`)** yang dibundel di dalam APK (`jniLibs/arm64-v8a/liboopbot.so`).
 
-Setiap rilis di GitHub Actions otomatis menghasilkan **3 artefak**:
-1. **`oopbot-aarch64-linux-android`** — Binary CLI + RPC mandiri untuk Termux (`oopbot` & `oopbot --mode rpc`).
-2. **`liboopbot-aarch64-linux-android.so`** — Shared library (`cdylib`) C-ABI (`jniLibs/arm64-v8a/liboopbot.so`).
-3. **`oopbot-<tag>-arm64.apk`** — APK Android siap pasang yang langsung menggunakan mesin Rust `oopbot` di Termux.
+Setiap rilis di GitHub Actions (`.github/workflows/build-termux.yml`) otomatis mempublikasikan:
+1. **`oopbot-aarch64-linux-android`** — Binary tunggal CLI, JSONL RPC, ACP bridge, dan Termux TCP host (`+.sha256`).
+2. **`liboopbot-aarch64-linux-android.so`** — Shared library (`cdylib`) C-ABI / JNI (`+.sha256`).
+3. **`oopbot-<tag>-arm64.apk`** — APK Android signed R8 release (`+.sha256` + `mapping.txt`).
 
 ---
 
-## Arsitektur Konsep 2: Android App ↔ Termux Rust Host (`oopbot --mode rpc`)
+## Arsitektur Sistem
 
 ```mermaid
 flowchart LR
-    APK["Aplikasi Android (APK)<br/>AgentProcess.kt & ChatTimeline.kt"] <-->|"Socket / HelperBridge"| Host["Termux Bootstrap<br/>host.mjs + oopbot-sdk.ts"]
-    Host <-->|"stdin/stdout JSONL"| RPC["Binary Rust Native<br/>oopbot --mode rpc"]
-    RPC -->|"Tool Execution"| Tools["Termux Shell & Filesystem<br/>bash, read, write, ls"]
-    RPC -->|"HTTP/2 + Rustls"| LLM["Gemini API &<br/>OpenAI-Compatible Providers"]
+    APK["Aplikasi Android (Jetpack Compose)<br/>AgentProcess.kt & ChatTimeline.kt"] <-->|"TCP Host / JSONL RPC"| Host["Native Termux Host<br/>oopbot host &lt;mode&gt; &lt;port&gt;"]
+    Host -->|"Native Mode"| RPC["RPC Daemon<br/>src/interfaces/rpc/"]
+    Host -->|"External Engine (acp:&lt;id&gt;)"| ACP["ACP Bridge<br/>src/interfaces/acp/AcpRpcBridge"]
+    RPC -->|"Tools & Plugins"| Core["Agent Loop + Tools + Plugins<br/>bash, read, write, ls, todo, web, background, subagents"]
+    RPC -->|"HTTP/2 + Rustls"| LLM["Gemini / OpenAI Chat &amp; Responses / Anthropic"]
+    ACP <-->|"JSON-RPC 2.0 stdio + fs/terminal/perm"| ExtCLI["External ACP CLI<br/>mis. agy acp"]
 ```
 
-- **Tanpa `npm ci` 150 MB di Termux**: Saat aplikasi Android menjalankan mode `ensure` di Termux (`android/host/src/modes/ensure.ts`), host langsung mengunduh/menyalin binary native `oopbot-aarch64-linux-android` ke `$OOPBOT_ROOT/bin/oopbot` dan `$PREFIX/bin/oopbot`.
-- **Manajemen Settings, Multi-Provider & Auto-Scan Model (`android/host/src/oopbot-sdk.ts`)**: Saat Anda menambahkan API key provider pilihan Anda (OpenRouter, DeepSeek, Google Gemini, Anthropic, OpenAI, Z.ai, atau Kimi) di menu **Settings → Providers** pada aplikasi Android atau via terminal, sistem otomatis memindai daftar model live dari endpoint provider (`/v1beta/models` atau `/v1/models`) dan menyimpannya ke `models.json`.
-- **Protokol RPC JSONL Penuh (`src/rpc.rs`)**: Setiap tab percakapan di aplikasi Android menjalankan `oopbot --mode rpc` yang mengirimkan stream event real-time (`thinking_start/end`, `toolcall_start/end`, `tool_execution_start/end`, `text_start/delta/end`, `turn_end`, `agent_end`, `agent_settled`) langsung ke komponen UI `ChatTimeline.kt` dan `StepFigure.kt`.
+### Kemampuan Utama
+- **Zero-Node.js Termux Native Host (`src/interfaces/host/`)**: Menggantikan daemon Node.js lama dengan binary Rust tunggal (`oopbot host ensure`, `rpc`, `providers`, `provider_models`, `sessions`, `files`, `terminal`, `git`, `engine_install`, `engine_login`, `engine_list`, `engine_uninstall`).
+- **Multi-Provider LLM & Live Discovery (`src/llm/`, `src/config/`)**: Mendukung Google Gemini (`:generateContent` + sanitasi skema tool), OpenAI Chat Completions, OpenAI Responses (`/responses`), Anthropic Messages (`/v1/messages`), serta OpenRouter, DeepSeek, Z.ai, Kimi, dan endpoint OpenAI-compatible kustom dengan auto-scan katalog model & penyimpanan kredensial `auth.json` (`0o600`).
+- **Agent Harness & Sistem Plugin Modular (`src/agent/`, `src/tools/`, `src/plugins/`)**:
+  - **Built-in Tools**: `run_shell` (`bash`), `read_file` (`read`), `write_file` (`write`), `list_dir` (`ls`).
+  - **Built-in Plugins**: `todo` (perencanaan tugas & replay branch), `web_search` / `fetch_page` (fallback multi-engine DDG/Tavily/Brave/Serper/SearXNG/Gemini Grounding), `background` (manajemen proses panjang non-blocking + wake-up otomatis), `interact` (`ask_user` / `notify_user`), dan `subagents`.
+- **External ACP Engine Bridge (`src/interfaces/acp/`)**:
+  - Handshake `initialize` + pemulihan sesi `session/load` & mirror JSONL lokal (`acpSessionId` & `session_info`).
+  - Translasi stream `session/update` (`agent_thought_chunk`, `agent_message_chunk`, `tool_call`, `tool_call_update` progresif, `plan`, `available_commands_update`, `session_info_update`, `current_mode_update`, `usage_update`, `config_option_update`).
+  - Callback Agent → Client: `fs/read_text_file`, `fs/write_text_file` (dengan ekspansi `~/`), siklus `terminal/{create,output,wait_for_exit,kill,release}` non-blocking dengan cleanup process-tree, serta `session/request_permission` yang dipetakan ke dialog native Android `extension_ui_request` (`select` / `confirm`).
+  - Pemilih model & thinking level ACP (`set_model`, `set_thinking_level`, `cycle_model`, `cycle_thinking_level`), antrean `steer`/`follow_up`, `get_commands`, `get_session_stats`, dan `export_html`.
 
 ---
 
@@ -35,70 +46,79 @@ pkg install -y curl
 curl -fsSL https://raw.githubusercontent.com/Ahmadfauzi34/OOPBoT/main/install.sh | sh
 ```
 
-Lalu atur API key salah satu provider pilihan Anda (OpenRouter, DeepSeek, Gemini, OpenAI, Claude, atau Ollama):
+Atur API key provider pilihan Anda (mis. Gemini, OpenRouter, DeepSeek, OpenAI, Anthropic) atau simpan di `~/.config/oopbot/.env`:
+
 ```sh
-# Pilihan 1: OpenRouter (Ratusan model: DeepSeek V3/R1, Claude 3.5, dsb)
-export OPENROUTER_API_KEY=sk-or-v1-...
-
-# Pilihan 2: DeepSeek
-export DEEPSEEK_API_KEY=sk-...
-
-# Pilihan 3: Google Gemini
 export GEMINI_API_KEY=...
-
-# Pilihan 4: Simpan di file konfigurasi
-nano ~/.config/oopbot/.env
+# atau OPENROUTER_API_KEY=... / DEEPSEEK_API_KEY=... / OPENAI_API_KEY=... / ANTHROPIC_API_KEY=...
 
 oopbot
 ```
 
+> Untuk penggunaan bersama **Aplikasi Android OOPBoT**, layar onboarding di aplikasi menyediakan perintah persiapan Termux satu-tempel (`RunCommandService`) serta pemasangan **External ACP Engine** (seperti Antigravity CLI + OAuth browser/kode manual) langsung dari menu **Providers / Engine Setup**.
 
 ---
 
-## Perintah Interaktif & Slash Commands (CLI & Aplikasi Android)
+## Perintah CLI & Slash Commands
 
-```
-oopbot [-m MODEL] [-p "PROMPT"] [-y] [--max-steps N] [--mode rpc] [--session PATH]
+```sh
+oopbot [-m MODEL] [-p "PROMPT"] [-y] [--max-steps N] [--mode rpc|host|scan-models] [--session PATH]
 ```
 
 | Perintah | Fungsi |
 |---|---|
-| `/token <API_KEY> [BASE_URL]` | Simpan/ganti API key provider (opsional custom URL OpenAI-compatible/OpenRouter) dan otomatis scan daftar model |
-| `/scan` | Pindai ulang daftar model langsung dari endpoint provider menggunakan token aktif (`/v1beta/models` atau `/v1/models`) |
-| `/models` | Tampilkan katalog model & model aktif di tab saat ini |
-| `/model <nomor\|id>` | Ganti model untuk tab aktif (misal `/model 2` atau `/model gemini-2.5-pro`) |
-| `/tabs` | Lihat daftar semua tab sesi percakapan beserta model & jumlah langkahnya |
+| `/token <API_KEY> [BASE_URL]` | Simpan API key ke `~/.config/oopbot/.env` dan pindai daftar model provider |
+| `/scan` | Pindai ulang daftar model live dari endpoint provider aktif |
+| `/models` | Tampilkan katalog model & model aktif pada tab saat ini |
+| `/model <nomor\|id>` | Ganti model aktif (mis. `/model gemini-2.5-pro`) |
+| `/thinking [level]` | Lihat atau ubah level reasoning (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`) |
+| `/tabs` | Lihat daftar semua tab sesi percakapan beserta model & jumlah langkah |
 | `/new [model]` | Buat tab sesi baru (opsional langsung menentukan model) |
-| `/tab <nomor\|id>` | Pindah antar-tab sesi |
+| `/tab <nomor\|id>` | Berpindah antar-tab sesi |
 | `/close <nomor\|id>` | Tutup tab sesi |
-| `/steps` | Lihat lipatan proses kerja agen (`StepsFold`: `Thinking` + `ToolCall` beserta durasi ms) |
-| `/clear` / `reset` | Bersihkan memori tab saat ini |
+| `/steps` | Lihat ringkasan *StepsFold* (`Thinking` + `ToolCall` + durasi) |
+| `/clear` / `/reset` | Bersihkan riwayat pesan pada tab saat ini |
 
-### Tool Bawaan
+### Pemetaan Tool UI Android
 
-| Tool CLI (`oopbot`) | Nama di UI Android (`rpc`) | Fungsi |
+| Tool / ACP Kind | Nama di UI Android | Fungsi |
 |---|---|---|
-| `run_shell` | `bash` | `sh -c <command>` dengan timeout, kembalikan exit code/stdout/stderr |
-| `write_file` | `write` | Buat/timpa file (direktori induk dibuat otomatis) |
-| `read_file` | `read` | Baca file teks |
-| `list_dir` | `ls` | Daftar isi direktori |
+| `run_shell` / `execute` / `bash` | `bash` | Eksekusi shell command (`bash -c` / `sh -c`) dengan batas timeout & deteksi command berbahaya |
+| `write_file` / `write` / `edit` | `write` / `edit` | Membuat, menimpa, atau memodifikasi file |
+| `read_file` / `read` | `read` | Membaca isi file teks |
+| `list_dir` | `ls` | Mendaftar isi direktori |
 
 ---
 
-## Struktur Modul (`src/` & `android/`)
+## Struktur Repositori (4-Layer DAG)
 
-| File | Peran |
+| Direktori / File | Peran |
 |---|---|
-| [`src/lib.rs`](src/lib.rs) | Entry point library (`rlib` + `cdylib` untuk `liboopbot.so`) |
-| [`src/main.rs`](src/main.rs) | Entry point binary CLI & RPC Termux (`oopbot`) |
-| [`src/rpc.rs`](src/rpc.rs) | Server JSONL RPC (`oopbot --mode rpc`) yang kompatibel dengan `AgentProcess.kt` & `ChatTimeline.kt` |
-| [`src/agent.rs`](src/agent.rs) | Trait `Agent`, `GeminiAgent`, trait `Approver` |
-| [`src/events.rs`](src/events.rs) | `AgentEvent`, trait `EventSink`, `TimelineEntry::StepsFold` |
-| [`src/models.rs`](src/models.rs) | `ModelCatalog` & `ModelInfo` + parser live scan `/v1beta/models` & `/v1/models` |
-| [`src/session.rs`](src/session.rs) | `WorkspaceTabs` & `ChatSession` (manajemen multi-tab CLI) |
-| [`src/tools.rs`](src/tools.rs) | Trait `Tool`, `ToolRegistry`, dan implementasi tool |
-| [`src/gemini.rs`](src/gemini.rs) | Klien HTTP dual-protocol: Google Gemini (`:generateContent`) & OpenAI-compatible (`/chat/completions`) |
-| [`src/ffi.rs`](src/ffi.rs) | Ekspor simbol C-ABI (`oopbot_engine_new`, `oopbot_engine_request`, `oopbot_string_free`, `oopbot_engine_free`) |
-| [`android/host/src/oopbot-sdk.ts`](android/host/src/oopbot-sdk.ts) | Pengganti ringan `@earendil-works/pi-coding-agent` SDK + auto-scan model Gemini |
-| [`android/host/src/modes/ensure.ts`](android/host/src/modes/ensure.ts) | Pemasang otomatis binary Rust `oopbot` di Termux |
-| [`android/host/src/modes/rpc.ts`](android/host/src/modes/rpc.ts) | Spawner `oopbot --mode rpc` untuk seluruh sesi percakapan Android |
+| [`src/common/`](src/common/) | Fondasi netral: `BoxError`, utilitas I/O atomik (`fs.rs`), waktu ISO/epoch (`time.rs`) |
+| [`src/config/`](src/config/) | Katalog model, builtin providers, auto-discovery `/models`, store config (`auth.json`, `models.json`, `settings.json`), katalog engine eksternal (`engines.rs`) |
+| [`src/llm/`](src/llm/) | Klien HTTP/2 multi-protokol (`gemini.rs`, `openai_chat.rs`, `openai_responses.rs`, `anthropic.rs`) |
+| [`src/tools/`](src/tools/) | Trait `Tool`, `ToolRegistry`, implementasi tool filesystem & shell |
+| [`src/agent/`](src/agent/) | Headless agent loop (`runner.rs`, `events.rs`, `session.rs`), tanpa I/O terminal |
+| [`src/plugins/`](src/plugins/) | Trait `Plugin` & plugin bawaan (`todo/`, `web_access/`, `background/`, `interact.rs`, `subagents`) |
+| [`src/interfaces/cli/`](src/interfaces/cli/) | Antarmuka CLI Termux (argumen, REPL, slash commands, renderer terminal) |
+| [`src/interfaces/rpc/`](src/interfaces/rpc/) | Daemon JSONL `--mode rpc`, antrean prompt/steer/follow-up, compaction, approver UI |
+| [`src/interfaces/host/`](src/interfaces/host/) | Bridge TCP `oopbot host <mode> <port>` (manajemen file, git, terminal, sesi, backup, engine CLI) |
+| [`src/interfaces/acp/`](src/interfaces/acp/) | Klien & bridge ACP JSON-RPC 2.0 stdio (`protocol.rs`, `client.rs`, `client_ops.rs`, `bridge.rs`) |
+| [`src/interfaces/ffi/`](src/interfaces/ffi/) | Ekspor C-ABI & JNI Android (`liboopbot.so`) |
+| [`android/`](android/) | Aplikasi Android Kotlin/Jetpack Compose (`AgentProcess.kt`, `ChatController.kt`, `ChatTimeline.kt`, `HostClient.kt`, `ProvidersScreens.kt`, `EngineSetupSheet.kt`) |
+| [`tests/host_binary_wire.rs`](tests/host_binary_wire.rs) | Tes integrasi wire protocol binary `oopbot host` |
+
+---
+
+## Verifikasi & Pengembangan
+
+```sh
+# Rust lint & seluruh unit + integration tests
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked -- --test-threads=2
+
+# Android lint, detekt, unit test & host TS check (di folder android/)
+pnpm --dir android/host test
+./android/gradlew -p android ktlintCheck detekt testDebugUnitTest
+```
+
