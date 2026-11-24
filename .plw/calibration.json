@@ -1,0 +1,62 @@
+{
+  "schema_version": "plw-project-calibration-v1",
+  "ignore_dirs": [],
+  "exclude_paths": [],
+  "entrypoints": [
+    {
+      "pattern": "android/app/src/main/kotlin/io/jeph/oopbot/host/OopbotBridge.kt",
+      "reason": "Kotlin JNI bridge bound across language boundary to Rust liboopbot.so (src/interfaces/ffi/jni.rs)",
+      "kind": "jni_bridge",
+      "added_by": "agent"
+    },
+    {
+      "pattern": "android/host/build.ts",
+      "reason": "esbuild bundler CLI invoked by pnpm run build, Gradle, and Vitest global-setup.ts",
+      "kind": "tooling",
+      "added_by": "agent"
+    },
+    {
+      "pattern": "android/scripts/check-compose-reports.py",
+      "reason": "CI verification script invoked by .github/workflows/android-test.yml to verify Compose stability metrics",
+      "kind": "tooling",
+      "added_by": "agent"
+    }
+  ],
+  "test_paths": [
+    {
+      "pattern": "android/host/test/global-setup.ts",
+      "reason": "Vitest globalSetup harness configured in android/host/vitest.config.ts to build oopbot-helper.mjs for tests",
+      "role": "test_helper",
+      "added_by": "agent"
+    }
+  ],
+  "import_aliases": [],
+  "suppress_findings": [
+    {
+      "analyzer": "topo.test_reachability",
+      "file_pattern": "android/app/src/main/kotlin/io/jeph/oopbot/host/OopbotBridge.kt",
+      "rule_type": "high_influence_without_test_path",
+      "reason": "Cross-language JNI bridge verified by Rust JNI unit tests in src/interfaces/ffi/tests.rs (Java_io_jeph_oopbot_host_OopbotBridge_*) outside Kotlin static import graph",
+      "added_by": "agent"
+    },
+    {
+      "analyzer": "topo.test_reachability",
+      "file_pattern": "android/host/src/helper/main.ts",
+      "rule_type": "high_influence_without_test_path",
+      "reason": "Bundled into oopbot-helper.mjs by android/host/test/global-setup.ts and exercised end-to-end as a child process in android/host/test/helper-daemon.test.ts",
+      "added_by": "agent"
+    },
+    {
+      "analyzer": "topo.test_reachability",
+      "file_pattern": "src/lib.rs",
+      "rule_type": "high_influence_without_test_path",
+      "reason": "Rust library crate root whose submodules are compiled and exercised by cargo test --lib inline #[cfg(test)] suites outside external tests/*.rs imports",
+      "added_by": "agent"
+    }
+  ],
+  "style_preferences": {
+    "simplify_ignore_patterns": [],
+    "notes": ""
+  },
+  "updated_at": "2026-11-24T20:40:18.667002Z"
+}
