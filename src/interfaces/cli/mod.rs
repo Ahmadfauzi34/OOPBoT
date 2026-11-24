@@ -186,6 +186,27 @@ pub async fn run_scan_models() -> Result<(), BoxError> {
     Ok(())
 }
 
+/// Gabungkan guideline plugin aktif + `--append-system-prompt` ke system
+/// instruction CLI — cerminan persis `RpcRuntime::new_in_dir_with_cwd`
+/// (`interfaces/rpc/runtime.rs:286-293`): plugin dulu, lalu append user.
+/// Tanpa extension dan tanpa flag, hasilnya byte-identik dengan base.
+fn append_cli_system_instruction(
+    mut base: String,
+    plugins: &PluginRegistry,
+    append: Option<&str>,
+) -> String {
+    let plugin_append = plugins.system_prompt_append();
+    if !plugin_append.is_empty() {
+        base.push_str("\n\n");
+        base.push_str(&plugin_append);
+    }
+    if let Some(text) = append.filter(|s| !s.trim().is_empty()) {
+        base.push_str("\n\n");
+        base.push_str(text);
+    }
+    base
+}
+
 /// Jalankan mode CLI interaktif (REPL) atau mode satu kali jalan (`-p <PROMPT>`).
 pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
     let creds = match resolve_cli_credentials(cli.model.as_deref()) {
@@ -204,7 +225,7 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
     plugins.register_active_tools(&mut tools);
 
     let client = LlmClient::new_with_base_url(creds.api_key, creds.model.clone(), creds.base_url)?;
-    let agent = AgentHarness::with_event_sink(
+    let mut agent = AgentHarness::with_event_sink(
         "OOPBoT",
         client,
         tools,
@@ -212,6 +233,11 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         Box::new(CliEventSink),
         cli.max_steps,
     );
+    agent.set_system_instruction(append_cli_system_instruction(
+        agent.system_instruction().to_owned(),
+        &plugins,
+        cli.system_append.as_deref(),
+    ));
     agent.set_active_model(&creds.model);
 
     // Mode satu kali jalan (-p "prompt")
@@ -229,4 +255,47 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
     }
 
     repl::run_repl(&agent, &creds.provider_name, &creds.model, cli.auto_approve).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_system_instruction_tanpa_plugin_dan_flag_tidak_berubah() {
+        let plugins = PluginRegistry::with_defaults();
+        assert_eq!(
+            append_cli_system_instruction("BASE".into(), &plugins, None),
+            "BASE"
+        );
+        assert_eq!(
+            append_cli_system_instruction("BASE".into(), &plugins, Some("   ")),
+            "BASE"
+        );
+    }
+
+    #[test]
+    fn cli_system_instruction_memuat_guideline_plugin_aktif() {
+        let mut plugins = PluginRegistry::with_defaults();
+        plugins.activate("oopbot-todo");
+        plugins.activate("oopbot-web-access");
+        let out = append_cli_system_instruction("BASE".into(), &plugins, None);
+        assert!(out.starts_with("BASE"));
+        assert!(out.contains("Todo & Task Management Guidelines"));
+        assert!(out.contains("Web Access Guidelines"));
+    }
+
+    #[test]
+    fn cli_system_instruction_append_user_setelah_plugin() {
+        let mut plugins = PluginRegistry::with_defaults();
+        plugins.activate("oopbot-todo");
+        let out = append_cli_system_instruction(
+            "BASE".into(),
+            &plugins,
+            Some("Jawab selalu dalam Bahasa Jawa."),
+        );
+        let guideline = out.find("Todo & Task Management Guidelines").unwrap();
+        let user = out.find("Jawab selalu dalam Bahasa Jawa.").unwrap();
+        assert!(guideline < user);
+    }
 }
