@@ -139,6 +139,28 @@ impl ContextManager {
             });
         };
 
+        // Pada auto-compaction (`!force`), bila ekor yang dipertahankan (`kept_tail`) saja sudah
+        // melampaui `usable_limit`, meringkas histori lama tidak dapat menyelesaikan overflow;
+        // lewati panggilan summarizer agar tidak membuang satu request LLM sia-sia.
+        if !force {
+            let tail_budget = self.evaluate(
+                system_instruction,
+                tool_declarations,
+                &history[plan.cut_index..],
+                None,
+            );
+            if tail_budget.status == BudgetStatus::OverLimit {
+                return Ok(PreparedContext {
+                    history: history.to_vec(),
+                    budget: initial_budget,
+                    compacted: false,
+                    summary: None,
+                    summarized_messages: 0,
+                    kept_messages: history.len(),
+                });
+            }
+        }
+
         let summary = summarizer.summarize(&plan.prompt, cancel_rx).await?;
         let rebuilt = rebuild_canonical_history(&summary, &history[plan.cut_index..]);
         let post_budget = self.evaluate(system_instruction, tool_declarations, &rebuilt, None);

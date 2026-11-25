@@ -267,3 +267,113 @@ async fn agent_compact_active_tab_preserves_timeline_and_auto_compacts_in_runner
     assert!(reqs.last().unwrap().contains("<compaction_summary>"));
     srv.abort();
 }
+
+#[tokio::test]
+async fn agent_runner_gates_llm_requests_when_context_remains_over_limit() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let captured: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured_srv = Arc::clone(&captured);
+
+    // Server mock mengembalikan ringkasan yang sengaja sangat panjang agar post-compaction tetap OverLimit.
+    let srv = tokio::spawn(async move {
+        for _ in 0..4 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 65_536];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            captured_srv.lock().unwrap().push(req);
+
+            let huge_summary = "ringkasan sangat panjang ".repeat(120);
+            let body = json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": huge_summary }
+                }],
+                "usage": { "prompt_tokens": 50, "completion_tokens": 600 }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "tiny-model".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let mut tabs = WorkspaceTabs::new("tiny-model");
+    tabs.active_mut().history = vec![
+        json!({ "role": "user", "parts": [{ "text": "lama 1" }] }),
+        json!({ "role": "model", "parts": [{ "text": "jawab 1" }] }),
+    ];
+
+    let mut harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        3,
+        tabs,
+        None,
+    );
+    harness.configure_model(
+        "tiny-model",
+        &json!({ "api": "openai-completions", "contextWindow": 500, "maxTokens": 100 }),
+    );
+    harness.set_auto_compact(true);
+
+    // 1. Prompt user baru sendirian sudah OverLimit -> summarizer dilewati & LLM utama diblokir (0 HTTP calls).
+    let err1 = harness
+        .chat(&"prompt terlalu panjang ".repeat(140))
+        .await
+        .expect_err("oversized single turn must be rejected before LLM request");
+    assert!(err1.to_string().contains("melampaui batas model"));
+    assert_eq!(
+        captured.lock().unwrap().len(),
+        0,
+        "must not waste summarization or main LLM call when retained tail is already OverLimit"
+    );
+
+    // 2. Histori lama besar + prompt baru kecil -> compaction jalan, tetapi summary hasil LLM terlalu besar
+    // sehingga post-compaction tetap OverLimit -> request utama tetap diblokir (hanya 1 HTTP call untuk summary).
+    harness.replace_active_history(
+        "1",
+        Some("Tab 1"),
+        vec![
+            json!({ "role": "user", "parts": [{ "text": "histori lama ".repeat(120) }] }),
+            json!({ "role": "model", "parts": [{ "text": "balasan lama ".repeat(120) }] }),
+        ],
+    );
+    let err2 = harness
+        .chat("lanjut")
+        .await
+        .expect_err("post-compaction OverLimit must block main LLM turn");
+    assert!(err2.to_string().contains("setelah compaction"));
+    assert_eq!(
+        captured.lock().unwrap().len(),
+        1,
+        "only the compaction summary request should have been sent, not the overflowing main turn"
+    );
+
+    srv.abort();
+}

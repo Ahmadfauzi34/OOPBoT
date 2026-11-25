@@ -242,3 +242,41 @@ async fn context_manager_skips_when_within_budget_and_compacts_when_forced_or_ov
     assert!(auto.compacted);
     assert_eq!(summarizer.calls.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn context_manager_skips_wasted_summarization_when_retained_tail_is_over_limit() {
+    let policy = ContextPolicy {
+        max_input_tokens: 400,
+        reserve_output_tokens: 100, // usable=300
+        auto_compact_ratio: 0.80,
+        keep_recent_tokens: 40,
+    };
+    let mgr = ContextManager::new(policy);
+    let summarizer = MockSummarizer::new("Ringkasan.");
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+
+    // Pesan user terbaru sendirian sudah > 300 token (usable_limit).
+    let history = vec![
+        u_msg("turn lama"),
+        m_msg("balasan lama"),
+        u_msg(&"konten sangat besar ".repeat(150)),
+    ];
+
+    // Auto-compaction (`force = false`) harus melewati summarizer agar tidak membuang request LLM.
+    let auto = mgr
+        .prepare_or_compact("sys", &[], &history, None, false, None, &summarizer, rx.clone())
+        .await
+        .unwrap();
+    assert!(!auto.compacted);
+    assert_eq!(auto.budget.status, BudgetStatus::OverLimit);
+    assert_eq!(summarizer.calls.load(Ordering::SeqCst), 0);
+
+    // Manual `/compact` (`force = true`) tetap diizinkan meringkas pesan lama.
+    let forced = mgr
+        .prepare_or_compact("sys", &[], &history, None, true, None, &summarizer, rx)
+        .await
+        .unwrap();
+    assert!(forced.compacted);
+    assert_eq!(summarizer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(forced.budget.status, BudgetStatus::OverLimit);
+}
