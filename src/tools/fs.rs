@@ -167,6 +167,51 @@ fn normalize_lf(s: &str) -> String {
     }
 }
 
+/// Normalize `\r\n` to `\n` while mapping every byte index in the normalized string
+/// (`0..=norm.len()`) back to its exact byte offset in `orig`.
+fn normalize_lf_with_map(orig: &str) -> (String, Vec<usize>) {
+    let bytes = orig.as_bytes();
+    let mut norm = String::with_capacity(bytes.len());
+    let mut map = Vec::with_capacity(bytes.len() + 1);
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+            map.push(i);
+            norm.push('\n');
+            i += 2;
+        } else {
+            let ch = orig[i..].chars().next().unwrap();
+            let clen = ch.len_utf8();
+            for k in 0..clen {
+                map.push(i + k);
+            }
+            norm.push(ch);
+            i += clen;
+        }
+    }
+    map.push(bytes.len());
+    (norm, map)
+}
+
+fn slice_uses_crlf(orig: &str, orig_start: usize, orig_end: usize) -> bool {
+    let matched = &orig[orig_start..orig_end];
+    if matched.contains("\r\n") {
+        return true;
+    }
+    if matched.contains('\n') {
+        return false;
+    }
+    let bytes = orig.as_bytes();
+    if let Some(rel_nl) = bytes[orig_end..].iter().position(|&b| b == b'\n') {
+        let nl_idx = orig_end + rel_nl;
+        return nl_idx > 0 && bytes[nl_idx - 1] == b'\r';
+    }
+    if let Some(prev_nl) = bytes[..orig_start].iter().rposition(|&b| b == b'\n') {
+        return prev_nl > 0 && bytes[prev_nl - 1] == b'\r';
+    }
+    false
+}
+
 fn count_logical_lines(s: &str) -> usize {
     if s.is_empty() {
         return 0;
@@ -428,12 +473,23 @@ fn resolve_edits(
     Ok(resolved)
 }
 
-fn apply_edits(working_text: &str, sorted_edits: &[ResolvedEdit]) -> Result<String, String> {
-    let mut updated = working_text.to_string();
+fn apply_edits(
+    orig_body: &str,
+    norm_to_orig: &[usize],
+    sorted_edits: &[ResolvedEdit],
+) -> Result<String, String> {
+    let mut updated = orig_body.to_string();
     for edit in sorted_edits.iter().rev() {
-        updated.replace_range(edit.start..edit.end, &edit.new_text);
+        let orig_start = norm_to_orig[edit.start];
+        let orig_end = norm_to_orig[edit.end];
+        let replacement = if slice_uses_crlf(orig_body, orig_start, orig_end) {
+            edit.new_text.replace('\n', "\r\n")
+        } else {
+            edit.new_text.clone()
+        };
+        updated.replace_range(orig_start..orig_end, &replacement);
     }
-    if updated == working_text {
+    if updated == orig_body {
         return Err("edit tidak menghasilkan perubahan pada file".to_string());
     }
     Ok(updated)
@@ -1091,24 +1147,17 @@ impl Tool for EditFile {
             Some(rest) => (true, rest),
             None => (false, content.as_str()),
         };
-        let uses_crlf = body.contains("\r\n");
-        let working_text = normalize_lf(body);
+        let (working_text, norm_to_orig) = normalize_lf_with_map(body);
 
         let sorted_edits = resolve_edits(&working_text, &ops, &display_path)?;
-        let updated = apply_edits(&working_text, &sorted_edits)?;
+        let updated_body = apply_edits(body, &norm_to_orig, &sorted_edits)?;
         let report = build_numbered_diff(&working_text, &sorted_edits);
 
-        let mut final_text = String::with_capacity(
-            updated.len() + if has_bom { 3 } else { 0 } + if uses_crlf { updated.len() / 16 } else { 0 },
-        );
+        let mut final_text = String::with_capacity(updated_body.len() + if has_bom { 3 } else { 0 });
         if has_bom {
             final_text.push('\u{FEFF}');
         }
-        if uses_crlf {
-            final_text.push_str(&updated.replace('\n', "\r\n"));
-        } else {
-            final_text.push_str(&updated);
-        }
+        final_text.push_str(&updated_body);
 
         let bytes_written = final_text.len();
         atomic_write_preserving_meta(&target_path, final_text.as_bytes(), orig_perms).await?;
@@ -1122,7 +1171,9 @@ impl Tool for EditFile {
             "bytes_written": bytes_written,
             "details": {
                 "diff": report.diff,
-                "firstChangedLine": report.first_changed_line
+                "firstChangedLine": report.first_changed_line,
+                "linesAdded": report.lines_added,
+                "linesRemoved": report.lines_removed
             }
         }))
     }

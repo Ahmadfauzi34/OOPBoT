@@ -20,6 +20,22 @@ class StepFigureTest {
     assertNull(figure("edit"))
     assertNull(figure("edit", details = JSONObject()))
     assertNull(figure("edit", failed = true, details = JSONObject().put("diff", "+1 a")))
+    assertNull(
+      figure(
+        "edit",
+        failed = true,
+        details = JSONObject().put("linesAdded", 10).put("linesRemoved", 5),
+      ),
+    )
+  }
+
+  @Test
+  fun anEditPrefersExplicitLineCountsOverTruncatedDiff() {
+    val details = JSONObject()
+      .put("diff", "+ 1 a\n- 1 b\n     ... (diff dipotong)")
+      .put("linesAdded", 600)
+      .put("linesRemoved", 450)
+    assertEquals(StepFigure.Lines(600, 450), figure("edit", details = details))
   }
 
   @Test
