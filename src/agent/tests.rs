@@ -377,3 +377,140 @@ async fn agent_runner_gates_llm_requests_when_context_remains_over_limit() {
 
     srv.abort();
 }
+
+#[tokio::test]
+async fn agent_resets_observed_tokens_on_model_or_provider_switch_and_bounds_summary_prompt() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let captured_body: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+    let captured_srv = Arc::clone(&captured_body);
+
+    let srv = tokio::spawn(async move {
+        if let Ok((mut sock, _)) = listener.accept().await {
+            let mut buf = vec![0u8; 262_144];
+            let mut full = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                full.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&full);
+                if let Some((hdrs, body)) = text.split_once("\r\n\r\n") {
+                    let content_len = hdrs
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= content_len {
+                        *captured_srv.lock().unwrap() = Some(body.to_string());
+                        break;
+                    }
+                }
+            }
+            let resp_body = json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": "Ringkasan pendek." }
+                }],
+                "usage": { "prompt_tokens": 120, "completion_tokens": 10 }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "model-a".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let mut tabs = WorkspaceTabs::new("model-a");
+    tabs.active_mut().last_context_tokens = Some(9_999);
+
+    let harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        3,
+        tabs,
+        None,
+    );
+    harness.configure_model(
+        "model-a",
+        &json!({ "api": "openai-completions", "contextWindow": 8000, "maxTokens": 2000 }),
+    );
+    harness.configure_model(
+        "model-b",
+        &json!({ "api": "openai-completions", "contextWindow": 1000, "maxTokens": 200 }),
+    );
+
+    // 1. Sama model -> last_context_tokens tetap ada
+    harness.set_active_model("model-a");
+    assert_eq!(harness.context_budget().last_observed_input_tokens, Some(9_999));
+
+    // 2. Pindah model -> last_context_tokens wajib di-reset ke None
+    harness.set_active_model("model-b");
+    assert_eq!(harness.context_budget().last_observed_input_tokens, None);
+
+    // 3. Pindah base_url/provider -> last_context_tokens juga di-reset
+    {
+        let mut tabs = harness.tabs.lock().unwrap();
+        tabs.active_mut().last_context_tokens = Some(777);
+    }
+    harness.update_credentials("test-key".into(), Some("http://127.0.0.1:9/v1".into()));
+    assert_eq!(harness.context_budget().last_observed_input_tokens, None);
+
+    // Kembalikan base_url ke mock server untuk uji pembatasan prompt compaction model kecil (model-b: 1000 window).
+    harness.update_credentials("test-key".into(), Some(format!("http://{}/v1", addr)));
+    let max_cap = harness.context_policy().max_compaction_prompt_chars();
+    assert!(max_cap < 3_000, "expected small cap for 1000-window model, got {}", max_cap);
+
+    let huge_prompt = "X".repeat(50_000);
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let (summary, _) = harness
+        .generate_compaction_summary_cancellable(&huge_prompt, rx)
+        .await
+        .unwrap();
+    assert_eq!(summary, "Ringkasan pendek.");
+
+    let sent_json: Value =
+        serde_json::from_str(captured_body.lock().unwrap().as_deref().unwrap()).unwrap();
+    let user_content = sent_json["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "user")
+        .and_then(|m| m["content"].as_str())
+        .unwrap();
+    assert!(
+        user_content.chars().count() <= max_cap,
+        "compaction prompt sent to small-window model exceeded cap: {} > {}",
+        user_content.chars().count(),
+        max_cap
+    );
+
+    srv.abort();
+}

@@ -27,6 +27,12 @@ impl AgentHarness {
             (s.id.clone(), s.model.clone())
         };
         let model_info = self.active_model_info();
+        let prompt_cap = crate::context::ContextPolicy::for_model_limits(
+            model_info.input_token_limit,
+            model_info.output_token_limit,
+        )
+        .max_compaction_prompt_chars();
+        let bounded_prompt = crate::context::truncate_head_tail_within_chars(prompt, prompt_cap);
         let gen_options = GenerationOptions {
             api: Some(model_info.api.clone()),
             max_tokens: model_info.output_token_limit,
@@ -35,7 +41,7 @@ impl AgentHarness {
             thinking_level_map: model_info.thinking_level_map.clone(),
             session_id: Some(session_id),
         };
-        let contents = vec![user_text(prompt)];
+        let contents = vec![user_text(&bounded_prompt)];
         let sys = "Kamu adalah asisten peringkas percakapan yang akurat dan ringkas.";
         let turn = tokio::select! {
             biased;

@@ -306,3 +306,49 @@ async fn context_manager_skips_wasted_summarization_when_retained_tail_is_over_l
     assert_eq!(summarizer.calls.load(Ordering::SeqCst), 1);
     assert_eq!(forced.budget.status, BudgetStatus::OverLimit);
 }
+
+#[test]
+fn compaction_prompt_scales_down_for_small_context_window_models() {
+    // Model 8k context window -> usable 6k -> prompt cap ~17,808 chars (jauh di bawah 120k default).
+    let small_policy = ContextPolicy::for_model_limits(Some(8_000), Some(2_000));
+    let small_cap = small_policy.max_compaction_prompt_chars();
+    assert!(
+        (10_000..24_000).contains(&small_cap),
+        "unexpected small-model compaction prompt cap: {}",
+        small_cap
+    );
+
+    // Model 128k context window tetap menggunakan plafon penuh 120k chars.
+    let large_policy = ContextPolicy::for_model_limits(Some(128_000), Some(8_192));
+    assert_eq!(
+        large_policy.max_compaction_prompt_chars(),
+        MAX_COMPACTION_PROMPT_CHARS
+    );
+
+    let mut history = Vec::new();
+    for i in 0..20 {
+        history.push(u_msg(&format!("pesan-{i}: {}", "A".repeat(4_000))));
+        history.push(m_msg(&format!("jawab-{i}: {}", "B".repeat(4_000))));
+    }
+    let giant_prev = "P".repeat(20_000);
+    let giant_inst = "I".repeat(20_000);
+
+    let plan = plan_canonical_compaction_with_prompt_limit(
+        &history,
+        small_policy.keep_recent_tokens,
+        Some(&giant_prev),
+        Some(&giant_inst),
+        small_cap,
+    )
+    .expect("plan");
+
+    assert!(
+        plan.prompt.chars().count() <= small_cap,
+        "small-model compaction prompt exceeded cap: {} > {}",
+        plan.prompt.chars().count(),
+        small_cap
+    );
+    assert!(plan.prompt.contains("<conversation>"));
+    assert!(plan.prompt.contains("<previous_summary>"));
+    assert!(plan.prompt.contains("<custom_instructions>"));
+}

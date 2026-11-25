@@ -68,6 +68,16 @@ impl ContextPolicy {
         let ratio = self.auto_compact_ratio.clamp(0.1, 0.99);
         ((self.usable_limit() as f64) * (ratio as f64)).round() as u64
     }
+
+    /// Batas karakter prompt compaction yang disesuaikan dengan `usable_limit` model aktif
+    /// (faktor konservatif ~3 karakter/token untuk margin tokenizer, dibatasi maksimal
+    /// `MAX_COMPACTION_PROMPT_CHARS`).
+    pub fn max_compaction_prompt_chars(&self) -> usize {
+        let usable = self.usable_limit();
+        let prompt_tokens = usable.saturating_sub(64).max(128);
+        let derived = (prompt_tokens as usize).saturating_mul(3);
+        derived.clamp(512, super::compactor::MAX_COMPACTION_PROMPT_CHARS)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -251,7 +251,13 @@ impl AgentHarness {
 
     /// Teruskan perubahan kredensial ke client (dipakai refresh_credentials RPC).
     pub fn update_credentials(&self, api_key: String, base_url: Option<String>) {
+        let prev_base_url = self.client.base_url();
         self.client.update_credentials(api_key, base_url);
+        if prev_base_url != self.client.base_url() {
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            tabs.active_mut().last_context_tokens = None;
+            self.persist_tabs(&tabs);
+        }
     }
 
     pub fn api_key(&self) -> String {
@@ -313,7 +319,12 @@ impl AgentHarness {
             }
         };
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
-        tabs.active_mut().model = resolved.clone();
+        let active = tabs.active_mut();
+        if active.model != resolved {
+            active.model = resolved.clone();
+            // Token input observasi sebelumnya milik tokenizer model/provider lama; reset agar tidak menyesatkan.
+            active.last_context_tokens = None;
+        }
         self.persist_tabs(&tabs);
         self.client.set_default_model(&resolved);
         resolved
@@ -350,8 +361,7 @@ impl AgentHarness {
         let clean_url = base_url
             .map(|u| u.trim().to_string())
             .filter(|u| !u.is_empty());
-        self.client
-            .update_credentials(clean_key.clone(), clean_url.clone());
+        self.update_credentials(clean_key.clone(), clean_url.clone());
         save_token_to_user_env(&clean_key, clean_url.as_deref(), &self.model());
         self.scan_models().await
     }
@@ -424,6 +434,7 @@ impl AgentHarness {
             _ => format!("Tab {}", id),
         };
         active.history = history;
+        active.last_context_tokens = None;
         active.timeline.clear();
         self.persist_tabs(&tabs);
     }

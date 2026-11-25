@@ -155,7 +155,7 @@ fn format_canonical_message_for_compaction(msg: &Value) -> Option<String> {
 
 /// Potong teks secara aman di batas UTF-8 sambil menjamin panjang hasil akhir
 /// (termasuk teks penanda pemadatan) tidak melebihi `max_chars`.
-fn truncate_head_tail_within_chars(text: &str, max_chars: usize) -> String {
+pub fn truncate_head_tail_within_chars(text: &str, max_chars: usize) -> String {
     let total_chars = text.chars().count();
     if total_chars <= max_chars {
         return text.to_string();
@@ -185,47 +185,81 @@ fn truncate_head_tail_within_chars(text: &str, max_chars: usize) -> String {
     result
 }
 
-/// Rakit prompt compaction dengan jaminan ketat total karakter `<= MAX_COMPACTION_PROMPT_CHARS`,
-/// termasuk batas untuk `<previous_summary>`, `<custom_instructions>`, dan entri percakapan besar.
+/// Rakit prompt compaction dengan jaminan ketat total karakter `<= MAX_COMPACTION_PROMPT_CHARS`.
 pub fn assemble_compaction_prompt(
     formatted: &[String],
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
 ) -> String {
+    assemble_compaction_prompt_with_limit(
+        formatted,
+        previous_summary,
+        custom_instructions,
+        MAX_COMPACTION_PROMPT_CHARS,
+    )
+}
+
+/// Rakit prompt compaction dengan jaminan ketat total karakter `<= max_prompt_chars.min(MAX_COMPACTION_PROMPT_CHARS)`,
+/// termasuk skala proporsional untuk `<previous_summary>`, `<custom_instructions>`, dan entri percakapan besar
+/// agar model ber-context-window kecil (< 30k token) tidak gagal saat meringkas histori besar.
+pub fn assemble_compaction_prompt_with_limit(
+    formatted: &[String],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    max_prompt_chars: usize,
+) -> String {
+    let effective_limit = max_prompt_chars.min(MAX_COMPACTION_PROMPT_CHARS);
     let mut prompt = String::from(
         "Summarize the conversation clearly and preserve key goals, decisions, file paths, and open tasks (Ringkas percakapan sebelumnya secara akurat dan padat).\n",
     );
-    if let Some(prev) = previous_summary.filter(|s| !s.trim().is_empty()) {
-        prompt.push_str("\n<previous_summary>\n");
-        prompt.push_str(&truncate_head_tail_within_chars(
-            prev.trim(),
-            MAX_COMPACTION_PREVIOUS_SUMMARY_CHARS,
-        ));
-        prompt.push_str("\n</previous_summary>\n");
-    }
-
-    let instructions_block = custom_instructions
-        .filter(|s| !s.trim().is_empty())
-        .map(|inst| {
-            format!(
-                "\n<custom_instructions>\n{}\n</custom_instructions>\n",
-                truncate_head_tail_within_chars(inst.trim(), MAX_COMPACTION_INSTRUCTIONS_CHARS)
-            )
-        })
-        .unwrap_or_default();
-
     let conv_open = "\n<conversation>\n";
     let conv_close = "</conversation>\n";
     let omitted_probe = format!(
         "[... {} entri pertengahan dipadatkan agar prompt compaction aman di dalam context window ...]\n",
         formatted.len()
     );
+    let base_overhead = prompt.chars().count()
+        + conv_open.chars().count()
+        + conv_close.chars().count()
+        + omitted_probe.chars().count();
+    let available_body = effective_limit.saturating_sub(base_overhead);
+
+    if let Some(prev) = previous_summary.filter(|s| !s.trim().is_empty()) {
+        let prev_tags_len = "\n<previous_summary>\n\n</previous_summary>\n".chars().count();
+        let prev_cap = MAX_COMPACTION_PREVIOUS_SUMMARY_CHARS
+            .min(available_body / 4)
+            .saturating_sub(prev_tags_len);
+        if prev_cap > 0 {
+            prompt.push_str("\n<previous_summary>\n");
+            prompt.push_str(&truncate_head_tail_within_chars(prev.trim(), prev_cap));
+            prompt.push_str("\n</previous_summary>\n");
+        }
+    }
+
+    let instructions_block = custom_instructions
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|inst| {
+            let inst_tags_len = "\n<custom_instructions>\n\n</custom_instructions>\n"
+                .chars()
+                .count();
+            let inst_cap = MAX_COMPACTION_INSTRUCTIONS_CHARS
+                .min(available_body / 6)
+                .saturating_sub(inst_tags_len);
+            (inst_cap > 0).then(|| {
+                format!(
+                    "\n<custom_instructions>\n{}\n</custom_instructions>\n",
+                    truncate_head_tail_within_chars(inst.trim(), inst_cap)
+                )
+            })
+        })
+        .unwrap_or_default();
+
     let fixed_overhead = prompt.chars().count()
         + instructions_block.chars().count()
         + conv_open.chars().count()
         + conv_close.chars().count()
         + omitted_probe.chars().count();
-    let conv_budget = MAX_COMPACTION_PROMPT_CHARS.saturating_sub(fixed_overhead);
+    let conv_budget = effective_limit.saturating_sub(fixed_overhead);
     let total_conv_chars: usize = formatted.iter().map(|l| l.chars().count() + 1).sum();
 
     prompt.push_str(conv_open);
@@ -293,7 +327,10 @@ pub fn assemble_compaction_prompt(
     if !instructions_block.is_empty() {
         prompt.push_str(&instructions_block);
     }
-    debug_assert!(prompt.chars().count() <= MAX_COMPACTION_PROMPT_CHARS);
+    if prompt.chars().count() > effective_limit {
+        prompt = truncate_head_tail_within_chars(&prompt, effective_limit);
+    }
+    debug_assert!(prompt.chars().count() <= effective_limit);
     prompt
 }
 
@@ -301,21 +338,45 @@ fn build_canonical_compaction_prompt(
     to_summarize: &[Value],
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
+    max_prompt_chars: usize,
 ) -> String {
     let formatted: Vec<String> = to_summarize
         .iter()
         .filter_map(format_canonical_message_for_compaction)
         .collect();
-    assemble_compaction_prompt(&formatted, previous_summary, custom_instructions)
+    assemble_compaction_prompt_with_limit(
+        &formatted,
+        previous_summary,
+        custom_instructions,
+        max_prompt_chars,
+    )
 }
 
-/// Rencanakan pemadatan `history` kanonik secara deterministik.
+/// Rencanakan pemadatan `history` kanonik secara deterministik dengan batas prompt default.
 /// Mengembalikan `None` jika `history` terlalu pendek (< 2 pesan) untuk dipadatkan.
 pub fn plan_canonical_compaction(
     history: &[Value],
     keep_recent_tokens: u64,
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
+) -> Option<CompactionPlan> {
+    plan_canonical_compaction_with_prompt_limit(
+        history,
+        keep_recent_tokens,
+        previous_summary,
+        custom_instructions,
+        MAX_COMPACTION_PROMPT_CHARS,
+    )
+}
+
+/// Rencanakan pemadatan `history` kanonik dengan batas panjang prompt compaction yang sesuai
+/// dengan context window model aktif (`max_prompt_chars`).
+pub fn plan_canonical_compaction_with_prompt_limit(
+    history: &[Value],
+    keep_recent_tokens: u64,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    max_prompt_chars: usize,
 ) -> Option<CompactionPlan> {
     if history.len() < 2 {
         return None;
@@ -386,6 +447,7 @@ pub fn plan_canonical_compaction(
         conversation_slice,
         inherited_summary.as_deref(),
         custom_instructions,
+        max_prompt_chars,
     );
 
     Some(CompactionPlan {

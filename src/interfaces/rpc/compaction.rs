@@ -57,10 +57,17 @@ impl RpcRuntime {
             return Err((false, "Tidak cukup pesan untuk dikompak.".to_string()));
         };
 
-        let compaction_prompt = build_compaction_prompt(
+        let active_info = self.active_model_info();
+        let max_prompt_chars = crate::context::ContextPolicy::for_model_limits(
+            active_info.input_token_limit,
+            active_info.output_token_limit,
+        )
+        .max_compaction_prompt_chars();
+        let compaction_prompt = build_compaction_prompt_with_limit(
             &cut_decision.to_summarize,
             rebuilt_before.previous_compaction_summary.as_deref(),
             custom_instructions,
+            max_prompt_chars,
         );
 
         let emit_started = reason == "threshold";
@@ -455,8 +462,10 @@ pub(super) fn select_compaction_cut_point(active_entries: &[Value]) -> Option<Co
     })
 }
 
+#[cfg(test)]
+use crate::context::assemble_compaction_prompt;
 use crate::context::{
-    assemble_compaction_prompt, truncate_head_tail_chars, MAX_COMPACTION_MSG_CHARS,
+    assemble_compaction_prompt_with_limit, truncate_head_tail_chars, MAX_COMPACTION_MSG_CHARS,
     MAX_COMPACTION_TOOL_CHARS,
 };
 
@@ -542,6 +551,7 @@ pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn build_compaction_prompt(
     to_summarize: &[Value],
     previous_summary: Option<&str>,
@@ -552,5 +562,23 @@ pub(super) fn build_compaction_prompt(
         .filter_map(format_entry_for_compaction)
         .collect();
     assemble_compaction_prompt(&formatted, previous_summary, custom_instructions)
+}
+
+pub(super) fn build_compaction_prompt_with_limit(
+    to_summarize: &[Value],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    max_prompt_chars: usize,
+) -> String {
+    let formatted: Vec<String> = to_summarize
+        .iter()
+        .filter_map(format_entry_for_compaction)
+        .collect();
+    assemble_compaction_prompt_with_limit(
+        &formatted,
+        previous_summary,
+        custom_instructions,
+        max_prompt_chars,
+    )
 }
 

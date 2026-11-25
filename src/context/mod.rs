@@ -17,11 +17,13 @@ pub use budget::{
     DEFAULT_MAX_INPUT_TOKENS, MIN_RESERVE_OUTPUT_TOKENS,
 };
 pub use compactor::{
-    assemble_compaction_prompt, extract_existing_compaction_summary, is_function_response_message,
-    is_valid_canonical_cut_point, plan_canonical_compaction, rebuild_canonical_history,
-    truncate_head_tail_chars, CompactionPlan, COMPACTION_SUMMARY_CLOSE, COMPACTION_SUMMARY_OPEN,
-    MAX_COMPACTION_INSTRUCTIONS_CHARS, MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS,
-    MAX_COMPACTION_TOOL_CHARS,
+    assemble_compaction_prompt, assemble_compaction_prompt_with_limit,
+    extract_existing_compaction_summary, is_function_response_message,
+    is_valid_canonical_cut_point, plan_canonical_compaction,
+    plan_canonical_compaction_with_prompt_limit, rebuild_canonical_history,
+    truncate_head_tail_chars, truncate_head_tail_within_chars, CompactionPlan,
+    COMPACTION_SUMMARY_CLOSE, COMPACTION_SUMMARY_OPEN, MAX_COMPACTION_INSTRUCTIONS_CHARS,
+    MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS, MAX_COMPACTION_TOOL_CHARS,
 };
 
 use crate::common::BoxError;
@@ -86,7 +88,7 @@ impl ContextManager {
     }
 
     /// Evaluasi budget; jika `NeedsCompaction` / `OverLimit` atau `force == true`,
-    /// jalankan `plan_canonical_compaction` → `summarizer.summarize()` → `rebuild_canonical_history()`.
+    /// jalankan `plan_canonical_compaction_with_prompt_limit` → `summarizer.summarize()` → `rebuild_canonical_history()`.
     #[allow(clippy::too_many_arguments)]
     pub async fn prepare_or_compact(
         &self,
@@ -123,11 +125,12 @@ impl ContextManager {
             });
         }
 
-        let Some(plan) = plan_canonical_compaction(
+        let Some(plan) = plan_canonical_compaction_with_prompt_limit(
             history,
             self.policy.keep_recent_tokens,
             None,
             custom_instructions,
+            self.policy.max_compaction_prompt_chars(),
         ) else {
             return Ok(PreparedContext {
                 history: history.to_vec(),
