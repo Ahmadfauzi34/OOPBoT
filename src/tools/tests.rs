@@ -705,6 +705,18 @@ async fn edit_file_preserves_individual_line_endings_in_mixed_crlf_lf_files() {
         std::fs::read(&file).unwrap(),
         b"crlf_one\r\nlf_two_a\nlf_two_b\ncrlf_3a\r\ncrlf_3b\r\nlf_four\n"
     );
+
+    // One multi-line edit spanning both CRLF and LF lines must preserve each line's original delimiter
+    let span_file = tmp.path("mixed_span.txt");
+    std::fs::write(&span_file, b"a\r\nb\nc\r\n").unwrap();
+    EditFile
+        .execute(&json!({
+            "path": span_file.to_string_lossy(),
+            "edits": [{ "oldText": "a\nb\nc", "newText": "a\nB\nc" }]
+        }))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&span_file).unwrap(), b"a\r\nB\nc\r\n");
 }
 
 #[cfg(unix)]

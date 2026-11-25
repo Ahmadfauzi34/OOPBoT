@@ -193,23 +193,129 @@ fn normalize_lf_with_map(orig: &str) -> (String, Vec<usize>) {
     (norm, map)
 }
 
-fn slice_uses_crlf(orig: &str, orig_start: usize, orig_end: usize) -> bool {
-    let matched = &orig[orig_start..orig_end];
-    if matched.contains("\r\n") {
-        return true;
-    }
-    if matched.contains('\n') {
-        return false;
-    }
+fn surrounding_line_ending(orig: &str, orig_start: usize, orig_end: usize) -> &'static str {
     let bytes = orig.as_bytes();
     if let Some(rel_nl) = bytes[orig_end..].iter().position(|&b| b == b'\n') {
         let nl_idx = orig_end + rel_nl;
-        return nl_idx > 0 && bytes[nl_idx - 1] == b'\r';
+        return if nl_idx > 0 && bytes[nl_idx - 1] == b'\r' {
+            "\r\n"
+        } else {
+            "\n"
+        };
     }
     if let Some(prev_nl) = bytes[..orig_start].iter().rposition(|&b| b == b'\n') {
-        return prev_nl > 0 && bytes[prev_nl - 1] == b'\r';
+        return if prev_nl > 0 && bytes[prev_nl - 1] == b'\r' {
+            "\r\n"
+        } else {
+            "\n"
+        };
     }
-    false
+    "\n"
+}
+
+fn split_orig_segments(s: &str) -> Vec<(&str, &'static str)> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+            out.push((&s[start..i], "\r\n"));
+            i += 2;
+            start = i;
+        } else if bytes[i] == b'\n' {
+            out.push((&s[start..i], "\n"));
+            i += 1;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    out.push((&s[start..], ""));
+    out
+}
+
+/// Re-apply original CRLF/LF line terminators per line within a single replacement slice
+/// so edits spanning mixed line endings preserve each line's original delimiter.
+fn localize_replacement_line_endings(
+    orig_body: &str,
+    orig_start: usize,
+    orig_end: usize,
+    new_norm: &str,
+) -> String {
+    if !new_norm.contains('\n') {
+        return new_norm.to_string();
+    }
+
+    let orig_segs = split_orig_segments(&orig_body[orig_start..orig_end]);
+    let new_parts: Vec<&str> = new_norm.split('\n').collect();
+    let new_len = new_parts.len();
+    let orig_len = orig_segs.len();
+
+    let mut prefix = 0usize;
+    let max_prefix = orig_len.min(new_len);
+    while prefix < max_prefix && orig_segs[prefix].0 == new_parts[prefix] {
+        prefix += 1;
+    }
+
+    let mut suffix = 0usize;
+    while suffix < (orig_len - prefix)
+        && suffix < (new_len - prefix)
+        && orig_segs[orig_len - 1 - suffix].0 == new_parts[new_len - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    let fallback_sep = orig_segs[prefix..orig_len - suffix]
+        .iter()
+        .rev()
+        .find_map(|&(_, sep)| (!sep.is_empty()).then_some(sep))
+        .or_else(|| {
+            orig_segs[..prefix]
+                .iter()
+                .rev()
+                .find_map(|&(_, sep)| (!sep.is_empty()).then_some(sep))
+        })
+        .or_else(|| {
+            orig_segs[orig_len - suffix..]
+                .iter()
+                .find_map(|&(_, sep)| (!sep.is_empty()).then_some(sep))
+        })
+        .unwrap_or_else(|| surrounding_line_ending(orig_body, orig_start, orig_end));
+
+    let mut out = String::with_capacity(new_norm.len() + new_len);
+    for (idx, &part) in new_parts.iter().enumerate() {
+        out.push_str(part);
+        if idx + 1 >= new_len {
+            break;
+        }
+        let sep = if idx < prefix {
+            let orig_sep = orig_segs[idx].1;
+            if !orig_sep.is_empty() {
+                orig_sep
+            } else {
+                fallback_sep
+            }
+        } else if idx >= new_len - suffix {
+            let suf_off = idx - (new_len - suffix);
+            let orig_sep = orig_segs[orig_len - suffix + suf_off].1;
+            if !orig_sep.is_empty() {
+                orig_sep
+            } else {
+                fallback_sep
+            }
+        } else {
+            let mid_off = idx - prefix;
+            let orig_mid_len = orig_len - prefix - suffix;
+            if mid_off < orig_mid_len && !orig_segs[prefix + mid_off].1.is_empty() {
+                orig_segs[prefix + mid_off].1
+            } else {
+                fallback_sep
+            }
+        };
+        out.push_str(sep);
+    }
+    out
 }
 
 fn count_logical_lines(s: &str) -> usize {
@@ -482,11 +588,8 @@ fn apply_edits(
     for edit in sorted_edits.iter().rev() {
         let orig_start = norm_to_orig[edit.start];
         let orig_end = norm_to_orig[edit.end];
-        let replacement = if slice_uses_crlf(orig_body, orig_start, orig_end) {
-            edit.new_text.replace('\n', "\r\n")
-        } else {
-            edit.new_text.clone()
-        };
+        let replacement =
+            localize_replacement_line_endings(orig_body, orig_start, orig_end, &edit.new_text);
         updated.replace_range(orig_start..orig_end, &replacement);
     }
     if updated == orig_body {

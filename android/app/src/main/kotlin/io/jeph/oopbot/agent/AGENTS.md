@@ -16,6 +16,7 @@ Manages per-chat agent processes (`AgentProcess`), pooling/parking lifecycle (`A
 - **Safe Partial JSON & Streaming:** `PartialJson.kt` and `StepStream.kt` MUST tolerate truncated/malformed JSON fragments during token streaming without throwing on the UI loop.
 - **Background Foreground Service Sync:** `AgentService.refresh()` MUST be invoked via `AppGraph.holdWhileWorking()` only on transitions of `KeepAlive` holdings, preventing Android foreground service start-rate exceptions.
 - **Transcript Indexing & Inbox Persistence:** `AgentProcess` eagerly pushes non-empty transcripts into `SessionRepository.cacheMessages` on session load, move, resync, and `agent_settled`; `ChatInbox` hydrates from and persists mutations to SQLite `chat_inbox` so unread alerts survive process death.
+- **Edit StepFigure Badge-Count Contract (`StepFigure.kt`):** For `"edit"` tool results, `stepFigure` MUST prefer non-negative `details.linesAdded` and `details.linesRemoved` when present (so large edits whose `details.diff` was truncated at 32 KiB still display exact `+N/-M` badges) and fall back to counting `+`/`-` lines from `details.diff` for Pi/legacy entries, always returning `null` when `failed == true`.
 
 ## Work Guidance
 - Keep `agent/` free of Compose UI composables (Compose views live in `ui/chat/` and `ui/subagents/`).
