@@ -503,3 +503,185 @@ fn audit_publish_completed_seq_is_monotonic() {
     server.runtime.publish_completed_seq(3);
     assert_eq!(*rx.borrow(), 3);
 }
+
+#[test]
+fn maps_and_formats_edit_file_bidirectionally() {
+    let args = json!({
+        "path": "src/main.rs",
+        "edits": [{ "oldText": "old", "newText": "new" }]
+    });
+    let (ui_name, ui_args) = map_tool_for_oopbot_ui("edit_file", &args);
+    assert_eq!(ui_name, "edit");
+    assert_eq!(ui_args, args);
+    assert_eq!(reverse_map_tool_name("edit"), "edit_file");
+
+    let (summary, is_err) = format_tool_output(
+        "edit_file",
+        &json!({
+            "path": "src/main.rs",
+            "edits_applied": 2,
+            "lines_added": 5,
+            "lines_removed": 3
+        }),
+    );
+    assert!(!is_err);
+    assert_eq!(summary, "Edited src/main.rs (2 edit, +5 / -3)");
+
+    let (summary_no_path, is_err_no_path) = format_tool_output(
+        "edit_file",
+        &json!({
+            "edits_applied": 1,
+            "lines_added": 2,
+            "lines_removed": 1
+        }),
+    );
+    assert!(!is_err_no_path);
+    assert_eq!(summary_no_path, "Edited (1 edit, +2 / -1)");
+}
+
+#[tokio::test]
+async fn rpc_event_sink_emits_edit_tool_details_diff_and_persists_session() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let tmp = TempConfigGuard::new("rpc_edit_file_events");
+
+    let raw = Arc::new(Mutex::new(Vec::new()));
+    struct TestBuf(Arc<Mutex<Vec<u8>>>);
+    impl io::Write for TestBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.lock().unwrap().flush()
+        }
+    }
+    let output_buf = Arc::new(Mutex::new(
+        Box::new(TestBuf(raw.clone())) as Box<dyn io::Write + Send + Sync>
+    ));
+    set_output_sink(Some(output_buf));
+
+    let server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+    let sink = super::super::events::RpcEventSink::new(Arc::clone(&server.runtime.ui_state))
+        .with_plugins(Arc::clone(&server.plugins))
+        .with_defer_settled(Arc::clone(&server.runtime.defer_settled));
+
+    sink.on_event(&AgentEvent::TurnStart {
+        session_id: "sess_edit".to_string(),
+        model: "gemini-2.5-flash".to_string(),
+    });
+    sink.on_event(&AgentEvent::ToolCallStart {
+        step_index: 1,
+        call_id: "call_edit_1".to_string(),
+        tool_name: "edit_file".to_string(),
+        args: json!({
+            "path": "src/main.rs",
+            "edits": [{ "oldText": "old();", "newText": "new();" }]
+        }),
+        preview: "edit src/main.rs (1 blok, -1/+1 baris)".to_string(),
+        requires_confirmation: true,
+        thought_signature: None,
+    });
+    sink.on_event(&AgentEvent::ToolCallEnd {
+        step_index: 1,
+        call_id: "call_edit_1".to_string(),
+        tool_name: "edit_file".to_string(),
+        status: ToolStatus::Done,
+        output: json!({
+            "path": "src/main.rs",
+            "edits_applied": 1,
+            "lines_added": 1,
+            "lines_removed": 1,
+            "first_changed_line": 42,
+            "bytes_written": 120,
+            "details": {
+                "diff": "  41 fn main() {\n- 42     old();\n+ 42     new();\n  43 }",
+                "firstChangedLine": 42
+            }
+        }),
+        duration_ms: 4,
+    });
+    sink.on_event(&AgentEvent::TurnEnd {
+        steps_count: 1,
+        duration_ms: 10,
+        outcome: StepsOutcome::Done,
+    });
+
+    set_output_sink(None);
+
+    let text = String::from_utf8(raw.lock().unwrap().clone()).unwrap();
+    let events: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    let start_ev = events
+        .iter()
+        .find(|e| e["type"] == "tool_execution_start")
+        .expect("tool_execution_start emitted");
+    assert_eq!(start_ev["toolName"], "edit");
+
+    let end_ev = events
+        .iter()
+        .find(|e| e["type"] == "tool_execution_end")
+        .expect("tool_execution_end emitted");
+    assert_eq!(end_ev["toolName"], "edit");
+    assert_eq!(end_ev["isError"], false);
+    assert_eq!(
+        end_ev["result"]["content"][0]["text"],
+        "Edited src/main.rs (1 edit, +1 / -1)"
+    );
+    assert_eq!(end_ev["result"]["details"]["firstChangedLine"], 42);
+    assert!(end_ev["result"]["details"]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("- 42     old();"));
+
+    // Verify persisted toolResult message + session history reverse-mapping
+    let state = server.runtime.ui_state.lock().unwrap();
+    let tool_result = state
+        .ui_messages
+        .iter()
+        .find(|m| m["role"] == "toolResult")
+        .expect("toolResult stored in ui_messages");
+    assert_eq!(tool_result["toolName"], "edit");
+    assert_eq!(
+        tool_result["content"][0]["text"],
+        "Edited src/main.rs (1 edit, +1 / -1)"
+    );
+    assert_eq!(tool_result["details"]["firstChangedLine"], 42);
+
+    let session_file = state.session_file.clone().expect("session_file created");
+    drop(state);
+    let loaded = super::super::session_store::load_session_from_path(&session_file);
+    let has_edit_call = loaded.llm_history.iter().any(|msg| {
+        msg["parts"].as_array().is_some_and(|parts| {
+            parts
+                .iter()
+                .any(|p| p["functionCall"]["name"].as_str() == Some("edit_file"))
+        })
+    });
+    let has_edit_resp = loaded.llm_history.iter().any(|msg| {
+        msg["parts"].as_array().is_some_and(|parts| {
+            parts
+                .iter()
+                .any(|p| p["functionResponse"]["name"].as_str() == Some("edit_file"))
+        })
+    });
+    assert!(
+        has_edit_call,
+        "session reload must reverse-map edit -> edit_file call: {:?}",
+        loaded.llm_history
+    );
+    assert!(
+        has_edit_resp,
+        "session reload must reverse-map edit -> edit_file response: {:?}",
+        loaded.llm_history
+    );
+}

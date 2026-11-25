@@ -16,7 +16,7 @@ Core Rust crate (`oopbot`) compiled as both the Termux CLI/daemon binary (`oopbo
 - **Catalog, Discovery & Config Persistence (`src/config/`):** `src/config/catalog.rs` (`ModelInfo`, `ModelCost`, `ModelCatalog`, `ProviderCatalogEntry`, glob scope), `src/config/builtin_providers.rs` (built-in provider/model definitions), `src/config/discovery.rs` (`/models` response parsing & capability inference), `src/config/engines.rs` (downloadable external ACP CLI engine catalog & `~/.oopbot/engines/<id>/manifest.json`), and `src/config/store.rs` (single source of truth for `auth.json` at `0o600`, `models.json`, `settings.json`, and `~/.config/oopbot/.env`). Must only depend on `src/common/`.
 - **Headless Agent Loop (`src/agent/`) & Built-in Tools (`src/tools/`):**
   - `src/agent/`: `mod.rs` (`AgentHarness`, `Agent`, `Approver`, `ChatInput`, `TurnOutcome`), `runner.rs` (cancellable turn/tool loop & compaction summary), `events.rs` (`AgentEvent`, `EventSink`, `NoopEventSink`, `MemoryEventCollector`, `TimelineEntry`), `session.rs` (`ChatSession`, `WorkspaceTabs`). Must remain headless (no terminal `stdin`/`stdout` I/O and no dependency on `interfaces/` or `plugins/`).
-  - `src/tools/`: `mod.rs` (`Tool`/`ToolRegistry`), `shell.rs` (`RunShell` & shell resolution/safety), `fs.rs` (`ReadFile`/`WriteFile`/`ListDir`).
+  - `src/tools/`: `mod.rs` (`Tool`/`ToolRegistry`), `shell.rs` (`RunShell` & shell resolution/safety), `fs.rs` (`ReadFile`/`WriteFile`/`EditFile`/`ListDir`).
 - **Wire Integration Tests:** `tests/host_binary_wire.rs`.
 
 ## Local Contracts

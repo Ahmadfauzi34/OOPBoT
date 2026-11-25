@@ -84,7 +84,8 @@ oopbot [-m MODEL] [-p "PROMPT"] [-y] [--max-steps N] [--mode rpc|host|scan-model
 | Tool / ACP Kind | Nama di UI Android | Fungsi |
 |---|---|---|
 | `run_shell` / `execute` / `bash` | `bash` | Eksekusi shell command (`bash -c` / `sh -c`) dengan batas timeout & deteksi command berbahaya |
-| `write_file` / `write` / `edit` | `write` / `edit` | Membuat, menimpa, atau memodifikasi file |
+| `write_file` / `write` | `write` | Membuat atau menimpa file teks secara penuh |
+| `edit_file` / `edit` | `edit` | Edit parsial atomik berbasis search-and-replace dengan diff bernomor & badge `+N/-M` |
 | `read_file` / `read` | `read` | Membaca isi file teks |
 | `list_dir` | `ls` | Mendaftar isi direktori |
 
