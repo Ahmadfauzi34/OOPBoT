@@ -665,10 +665,58 @@ async fn edit_file_diff_truncation_keeps_step_figure_safe_footer() {
 
     assert_eq!(res["lines_added"], 600);
     assert_eq!(res["lines_removed"], 600);
+    assert_eq!(res["details"]["linesAdded"], 600);
+    assert_eq!(res["details"]["linesRemoved"], 600);
     let diff = res["details"]["diff"].as_str().unwrap();
     assert!(diff.len() <= 32_768);
     assert!(diff.ends_with("     ... (diff dipotong)"));
     assert!(diff.lines().last().unwrap().starts_with(' '));
+}
+
+#[tokio::test]
+async fn edit_file_preserves_individual_line_endings_in_mixed_crlf_lf_files() {
+    let tmp = TempEditDir::new("mixed_eol");
+    let file = tmp.path("mixed.txt");
+    // Line 1: CRLF, Line 2: LF, Line 3: CRLF, Line 4: LF
+    std::fs::write(&file, b"crlf_one\r\nlf_two\ncrlf_three\r\nlf_four\n").unwrap();
+
+    // Editing an LF line must NOT rewrite untouched CRLF lines (and keeps LF on edited lines)
+    EditFile
+        .execute(&json!({
+            "path": file.to_string_lossy(),
+            "edits": [{ "oldText": "lf_two", "newText": "lf_two_a\nlf_two_b" }]
+        }))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"crlf_one\r\nlf_two_a\nlf_two_b\ncrlf_three\r\nlf_four\n"
+    );
+
+    // Editing a CRLF line must NOT rewrite untouched LF lines (and uses CRLF on edited lines)
+    EditFile
+        .execute(&json!({
+            "path": file.to_string_lossy(),
+            "edits": [{ "oldText": "crlf_three", "newText": "crlf_3a\ncrlf_3b" }]
+        }))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"crlf_one\r\nlf_two_a\nlf_two_b\ncrlf_3a\r\ncrlf_3b\r\nlf_four\n"
+    );
+
+    // One multi-line edit spanning both CRLF and LF lines must preserve each line's original delimiter
+    let span_file = tmp.path("mixed_span.txt");
+    std::fs::write(&span_file, b"a\r\nb\nc\r\n").unwrap();
+    EditFile
+        .execute(&json!({
+            "path": span_file.to_string_lossy(),
+            "edits": [{ "oldText": "a\nb\nc", "newText": "a\nB\nc" }]
+        }))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&span_file).unwrap(), b"a\r\nB\nc\r\n");
 }
 
 #[cfg(unix)]

@@ -42,10 +42,18 @@ internal fun stepFigure(
   failed: Boolean,
   details: JSONObject?,
 ): StepFigure? = when (toolName) {
-  "edit" -> details?.optString("diff")?.takeUnless { failed || it.isEmpty() }?.let(::diffLines)
+  "edit" -> editFigure(failed, details)
   "write" -> args?.optString("content")?.takeUnless { failed }?.let { StepFigure.Lines(lineCount(it), 0) }
   "bash" -> output?.let(::shellStatus)
   else -> null
+}
+
+private fun editFigure(failed: Boolean, details: JSONObject?): StepFigure.Lines? {
+  if (failed || details == null) return null
+  val added = details.optInt("linesAdded", -1)
+  val removed = details.optInt("linesRemoved", -1)
+  if (added >= 0 && removed >= 0) return StepFigure.Lines(added, removed)
+  return details.optString("diff").takeIf { it.isNotEmpty() }?.let(::diffLines)
 }
 
 /** The `+` and `-` lines of Pi's diff (`+12 text`, `-12 text`); context lines start with a space. */
