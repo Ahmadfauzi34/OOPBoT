@@ -2,7 +2,7 @@
 //! (OOP-style), lalu didaftarkan ke [`ToolRegistry`].
 //!
 //! - [`shell`]: [`RunShell`], [`resolve_command_shell`], [`is_dangerous_shell_command`].
-//! - [`fs`]: [`ReadFile`], [`WriteFile`], [`ListDir`].
+//! - [`fs`]: [`ReadFile`], [`WriteFile`], [`EditFile`], [`ListDir`].
 
 mod fs;
 mod shell;
@@ -10,7 +10,7 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
-pub use fs::{ListDir, ReadFile, WriteFile};
+pub use fs::{EditFile, ListDir, ReadFile, WriteFile};
 pub use shell::{
     is_dangerous_shell_command, resolve_command_shell, resolve_command_shell_with, RunShell,
 };
@@ -70,6 +70,7 @@ impl ToolRegistry {
         r.register(Box::new(RunShell));
         r.register(Box::new(ReadFile));
         r.register(Box::new(WriteFile));
+        r.register(Box::new(EditFile));
         r.register(Box::new(ListDir));
         r
     }

@@ -59,3 +59,30 @@ fn reg_todo_strips_internal_details_from_llm_payload_only() {
     let other = strip_internal_tool_fields_for_llm("read_file", raw.clone());
     assert!(other.get("details").is_some());
 }
+
+#[test]
+fn reg_edit_file_strips_internal_details_from_llm_payload_only() {
+    let raw = json!({
+        "path": "src/main.rs",
+        "edits_applied": 2,
+        "lines_added": 5,
+        "lines_removed": 3,
+        "first_changed_line": 42,
+        "bytes_written": 1840,
+        "details": {
+            "diff": "  41 fn main() {\n- 42     old();\n+ 42     new();\n  43 }",
+            "firstChangedLine": 42
+        }
+    });
+    let for_llm = strip_internal_tool_fields_for_llm("edit_file", raw.clone());
+    assert!(for_llm.get("details").is_none());
+    assert_eq!(for_llm["path"], "src/main.rs");
+    assert_eq!(for_llm["edits_applied"], 2);
+    assert_eq!(for_llm["lines_added"], 5);
+    assert_eq!(for_llm["lines_removed"], 3);
+    assert_eq!(for_llm["first_changed_line"], 42);
+    assert_eq!(for_llm["bytes_written"], 1840);
+
+    let sys = default_system_instruction(&crate::tools::ToolRegistry::with_defaults());
+    assert!(sys.contains("edit_file"));
+}

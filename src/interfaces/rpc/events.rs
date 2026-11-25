@@ -13,6 +13,7 @@ pub(super) fn map_tool_for_oopbot_ui(tool_name: &str, args: &Value) -> (String, 
         "run_shell" => ("bash".to_string(), args.clone()),
         "read_file" => ("read".to_string(), args.clone()),
         "write_file" => ("write".to_string(), args.clone()),
+        "edit_file" => ("edit".to_string(), args.clone()),
         "list_dir" => ("ls".to_string(), args.clone()),
         "todo" => ("todo".to_string(), args.clone()),
         "web_search" => ("web_search".to_string(), args.clone()),
@@ -54,6 +55,26 @@ pub(super) fn format_tool_output(tool_name: &str, val: &Value) -> (String, bool)
         "write_file" => {
             let bytes = val["bytes_written"].as_u64().unwrap_or(0);
             (format!("Wrote {} bytes", bytes), false)
+        }
+        "edit_file" => {
+            let path = val["path"].as_str().unwrap_or("");
+            let edits = val["edits_applied"].as_u64().unwrap_or(0);
+            let added = val["lines_added"].as_u64().unwrap_or(0);
+            let removed = val["lines_removed"].as_u64().unwrap_or(0);
+            if path.is_empty() {
+                (
+                    format!("Edited ({} edit, +{} / -{})", edits, added, removed),
+                    false,
+                )
+            } else {
+                (
+                    format!(
+                        "Edited {} ({} edit, +{} / -{})",
+                        path, edits, added, removed
+                    ),
+                    false,
+                )
+            }
         }
         "list_dir" => {
             if let Some(entries) = val["entries"].as_array() {
@@ -632,6 +653,7 @@ pub(super) fn reverse_map_tool_name(name: &str) -> &str {
         "bash" => "run_shell",
         "read" => "read_file",
         "write" => "write_file",
+        "edit" => "edit_file",
         "ls" => "list_dir",
         other => other,
     }

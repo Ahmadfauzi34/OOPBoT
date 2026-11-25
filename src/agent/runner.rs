@@ -484,6 +484,7 @@ pub(super) fn default_system_instruction(tools: &ToolRegistry) -> String {
          Tool yang tersedia: {tools}.\n\
          Aturan:\n\
          - Gunakan tool untuk memeriksa fakta (isi file, output perintah) daripada menebak.\n\
+         - Untuk perubahan parsial pada file yang sudah ada, prioritaskan `edit_file` dibanding menulis ulang penuh dengan `write_file`.\n\
          - Untuk tugas multi-langkah, kerjakan bertahap dan verifikasi hasilnya.\n\
          - Jangan menjalankan perintah destruktif (rm -rf, format, dsb.) tanpa alasan jelas.\n\
          - Jawab dalam Bahasa Indonesia secara ringkas, gunakan format teks yang enak dibaca.",
@@ -505,7 +506,7 @@ pub(super) fn default_system_instruction(tools: &ToolRegistry) -> String {
 }
 
 pub(super) fn strip_internal_tool_fields_for_llm(tool_name: &str, mut result: Value) -> Value {
-    if tool_name == "todo" {
+    if matches!(tool_name, "todo" | "edit_file") {
         if let Some(obj) = result.as_object_mut() {
             obj.remove("details");
         }
