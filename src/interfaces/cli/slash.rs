@@ -1,6 +1,9 @@
-//! Handler slash command interaktif (`/scan`, `/token`, `/models`, `/model`, `/thinking`, `/tabs`, `/new`, `/tab`, `/close`, `/steps`).
+//! Handler slash command interaktif (`/scan`, `/token`, `/models`, `/model`, `/thinking`, `/tabs`, `/new`, `/tab`, `/close`, `/steps`, `/context`, `/compact`).
 
-use super::ui::{render_models, render_tabs, render_timeline_steps};
+use super::ui::{
+    render_context_budget, render_models, render_tabs, render_timeline_steps,
+    warn_if_persist_failed,
+};
 use crate::agent::AgentHarness;
 
 /// Tangani slash command interaktif; kembalikan `true` jika input sudah ditangani.
@@ -51,6 +54,7 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
                 render_models(agent);
             } else {
                 let new_model = agent.set_active_model(arg);
+                warn_if_persist_failed(agent);
                 println!("✅ Model tab aktif diubah ke: {}\n", new_model);
             }
             true
@@ -76,6 +80,7 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
         "/new" => {
             let model_opt = (!arg.is_empty()).then_some(arg);
             let created = agent.new_tab(model_opt);
+            warn_if_persist_failed(agent);
             println!(
                 "➕ Pindah ke Tab baru #{} ({}) | model: {}\n",
                 created.id, created.title, created.model
@@ -86,6 +91,7 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
             if arg.is_empty() {
                 render_tabs(agent);
             } else if let Some(tab) = agent.switch_tab(arg) {
+                warn_if_persist_failed(agent);
                 println!(
                     "🔀 Aktif di Tab #{} \"{}\" | model: {}\n",
                     tab.id, tab.title, tab.model
@@ -99,6 +105,7 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
             if arg.is_empty() {
                 println!("Gunakan `/close <nomor_tab>`\n");
             } else if agent.close_tab(arg) {
+                warn_if_persist_failed(agent);
                 let (id, title, model) = agent.active_tab_summary();
                 println!(
                     "🗑️  Tab ditutup. Sekarang di Tab #{} \"{}\" ({})\n",
@@ -111,6 +118,32 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
         }
         "/steps" => {
             render_timeline_steps(agent);
+            true
+        }
+        "/context" => {
+            render_context_budget(agent);
+            true
+        }
+        "/compact" => {
+            println!("🗜️  Memadatkan konteks tab aktif...");
+            let instructions = (!arg.is_empty()).then_some(arg);
+            let (_tx, cancel_rx) = tokio::sync::watch::channel(false);
+            match agent.compact_active_tab(instructions, cancel_rx).await {
+                Ok(prep) if prep.compacted => {
+                    warn_if_persist_failed(agent);
+                    println!(
+                        "✅ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan). Estimasi baru: ~{} / {} token.\n",
+                        prep.summarized_messages,
+                        prep.kept_messages,
+                        prep.budget.total_estimated_tokens,
+                        prep.budget.usable_limit
+                    );
+                }
+                Ok(_) => {
+                    println!("ℹ️  Histori tab masih terlalu pendek untuk dipadatkan.\n");
+                }
+                Err(e) => eprintln!("❌ Gagal memadatkan konteks: {}\n", e),
+            }
             true
         }
         _ => false,

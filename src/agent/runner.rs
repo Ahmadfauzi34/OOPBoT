@@ -234,10 +234,15 @@ impl AgentHarness {
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
         steer_hook: Option<SteerHook>,
     ) -> Result<TurnOutcome, BoxError> {
-        let (session_id, active_model, mut history) = {
+        let (session_id, active_model, mut history, mut last_observed_input) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let s = tabs.active();
-            (s.id.clone(), s.model.clone(), s.history.clone())
+            (
+                s.id.clone(),
+                s.model.clone(),
+                s.history.clone(),
+                s.last_context_tokens,
+            )
         };
 
         if push_initial_user {
@@ -276,6 +281,10 @@ impl AgentHarness {
             &collector,
         );
 
+        let context_mgr = self
+            .auto_compact
+            .then(|| crate::context::ContextManager::new(self.context_policy()));
+
         for step_idx in 1..=self.max_steps {
             if *cancel_rx.borrow() {
                 was_aborted = true;
@@ -297,6 +306,68 @@ impl AgentHarness {
                 if *cancel_rx.borrow() {
                     was_aborted = true;
                     break;
+                }
+            }
+
+            // Pre-turn & mid-turn auto-compaction guard (aktif pada jalur CLI).
+            if let Some(mgr) = &context_mgr {
+                let prepared = mgr
+                    .prepare_or_compact(
+                        &self.system_instruction,
+                        &decls,
+                        &history,
+                        last_observed_input,
+                        false,
+                        None,
+                        self,
+                        cancel_rx.clone(),
+                    )
+                    .await;
+                match prepared {
+                    Ok(prep) if prep.compacted => {
+                        history = prep.history;
+                        if history
+                            .last()
+                            .and_then(|m| m["role"].as_str())
+                            == Some("model")
+                        {
+                            history.push(user_text(
+                                "Lanjutkan pengerjaan tugas saat ini berdasarkan ringkasan konteks di atas.",
+                            ));
+                        }
+                        last_observed_input = None;
+                        committed_progress = true;
+                        self.emit(
+                            AgentEvent::Thinking {
+                                step_index: step_idx,
+                                text: format!(
+                                    "🗜️ Auto-compaction konteks ({} pesan diringkas, {} dipertahankan; ~{} token)",
+                                    prep.summarized_messages,
+                                    prep.kept_messages,
+                                    prep.budget.total_estimated_tokens
+                                ),
+                                thought_signature: None,
+                            },
+                            &collector,
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(_) if *cancel_rx.borrow() => {
+                        was_aborted = true;
+                        break;
+                    }
+                    Err(e) => {
+                        // Fail-soft: jangan gagalkan turn bila summarizer sementara bermasalah
+                        // kecuali sudah dibatalkan user.
+                        self.emit(
+                            AgentEvent::Thinking {
+                                step_index: step_idx,
+                                text: format!("⚠️ Auto-compaction dilewati: {}", e),
+                                thought_signature: None,
+                            },
+                            &collector,
+                        );
+                    }
                 }
             }
 
@@ -326,6 +397,7 @@ impl AgentHarness {
                         let active = tabs.active_mut();
                         active.update_title_from_prompt(&input.text);
                         active.history = history;
+                        active.last_context_tokens = last_observed_input;
                         active.timeline.extend(folded);
                         self.persist_tabs(&tabs);
                     }
@@ -339,6 +411,7 @@ impl AgentHarness {
                 cur.input_tokens += u.input_tokens;
                 cur.output_tokens += u.output_tokens;
                 last_usage = Some(u);
+                last_observed_input = Some(u.input_tokens);
             }
 
             for (idx, thought) in turn.thoughts.iter().enumerate() {
@@ -378,6 +451,7 @@ impl AgentHarness {
                 let active = tabs.active_mut();
                 active.update_title_from_prompt(&input.text);
                 active.history = history;
+                active.last_context_tokens = last_observed_input;
                 active.timeline.extend(folded);
                 self.persist_tabs(&tabs);
 
@@ -445,6 +519,7 @@ impl AgentHarness {
         let active = tabs.active_mut();
         active.update_title_from_prompt(&input.text);
         active.history = history;
+        active.last_context_tokens = last_observed_input;
         active.timeline.extend(folded);
         self.persist_tabs(&tabs);
 

@@ -8,6 +8,8 @@
 //! - Riwayat `TimelineEntry` terlipat (`StepsFold`) untuk dirender UI
 
 use super::events::TimelineEntry;
+use crate::common::fs::write_text_atomic;
+use crate::context::ContextStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -20,6 +22,8 @@ pub struct ChatSession {
     pub model: String,
     pub history: Vec<Value>,
     pub timeline: Vec<TimelineEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_context_tokens: Option<u64>,
 }
 
 impl ChatSession {
@@ -30,6 +34,7 @@ impl ChatSession {
             model: model.to_string(),
             history: Vec::new(),
             timeline: Vec::new(),
+            last_context_tokens: None,
         }
     }
 
@@ -47,6 +52,31 @@ impl ChatSession {
     pub fn clear(&mut self) {
         self.history.clear();
         self.timeline.clear();
+        self.last_context_tokens = None;
+    }
+
+    /// Perbarui `history` setelah compaction tanpa menghapus `timeline` visual user.
+    pub fn apply_compacted_history(&mut self, new_history: Vec<Value>, notice: String) {
+        self.history = new_history;
+        self.last_context_tokens = None;
+        self.timeline.push(TimelineEntry::Notice { text: notice });
+    }
+}
+
+/// Adapter [`ContextStore`] untuk persistensi `tabs.json` CLI secara atomik (`0o600`).
+pub struct TabsFileStore {
+    path: PathBuf,
+}
+
+impl TabsFileStore {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl ContextStore for TabsFileStore {
+    fn save_serialized(&self, content: &str) -> Result<(), String> {
+        write_text_atomic(&self.path, content, Some(0o600)).map_err(|e| e.to_string())
     }
 }
 
@@ -126,13 +156,10 @@ impl WorkspaceTabs {
         true
     }
 
-    /// Simpan seluruh state tab ke file JSON.
+    /// Simpan seluruh state tab ke file JSON secara atomik (`0o600` di Unix).
     pub fn save_to_file(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
         let data = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(path, data).map_err(|e| e.to_string())
+        TabsFileStore::new(path.to_path_buf()).save_serialized(&format!("{}\n", data))
     }
 
     /// Muat state tab dari file JSON bila ada.

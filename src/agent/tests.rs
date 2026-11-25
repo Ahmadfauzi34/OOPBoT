@@ -86,3 +86,184 @@ fn reg_edit_file_strips_internal_details_from_llm_payload_only() {
     let sys = default_system_instruction(&crate::tools::ToolRegistry::with_defaults());
     assert!(sys.contains("edit_file"));
 }
+
+#[test]
+fn workspace_tabs_save_is_atomic_0600_and_harness_surfaces_persist_errors() {
+    let dir = std::env::temp_dir().join(format!(
+        "oopbot_tabs_atomic_{}_{}",
+        std::process::id(),
+        crate::common::time::epoch_ms()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let tabs_file = dir.join("tabs.json");
+
+    let mut ws = WorkspaceTabs::new("gemini-2.5-flash");
+    ws.active_mut().history.push(json!({
+        "role": "user",
+        "parts": [{ "text": "rahasia token" }]
+    }));
+    ws.save_to_file(&tabs_file).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&tabs_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    let loaded = WorkspaceTabs::load_from_file(&tabs_file).expect("reload tabs.json");
+    assert_eq!(loaded.active().history.len(), 1);
+
+    // Pointing tabs_path at an existing directory must surface error via take_persist_error()
+    struct NeverApprove;
+    #[async_trait]
+    impl Approver for NeverApprove {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            false
+        }
+    }
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "k".into(),
+        "gemini-2.5-flash".into(),
+        Some("http://127.0.0.1:9".into()),
+    )
+    .unwrap();
+    let harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(NeverApprove),
+        Box::new(NoopEventSink),
+        5,
+        WorkspaceTabs::new("gemini-2.5-flash"),
+        Some(dir.clone()), // directory path triggers write failure
+    );
+    harness.clear_memory_silent();
+    let err = harness
+        .take_persist_error()
+        .expect("persist failure must be surfaced instead of silently ignored");
+    assert!(!err.is_empty());
+    assert!(harness.take_persist_error().is_none());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn agent_compact_active_tab_preserves_timeline_and_auto_compacts_in_runner() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let captured_srv = std::sync::Arc::clone(&captured);
+
+    let srv = tokio::spawn(async move {
+        for _ in 0..3 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 65_536];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let is_summary = req.contains("<conversation>");
+            captured_srv.lock().unwrap().push(req);
+
+            let body = if is_summary {
+                json!({
+                    "choices": [{
+                        "message": { "role": "assistant", "content": "Ringkasan: user sedang uji compaction." }
+                    }],
+                    "usage": { "prompt_tokens": 50, "completion_tokens": 12 }
+                })
+                .to_string()
+            } else {
+                json!({
+                    "choices": [{
+                        "message": { "role": "assistant", "content": "Lanjut dari ringkasan berhasil." }
+                    }],
+                    "usage": { "prompt_tokens": 40, "completion_tokens": 10 }
+                })
+                .to_string()
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "tiny-model".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let mut tabs = WorkspaceTabs::new("tiny-model");
+    tabs.active_mut().history = vec![
+        json!({ "role": "user", "parts": [{ "text": "langkah 1 panjang ".repeat(60) }] }),
+        json!({ "role": "model", "parts": [{ "text": "hasil 1 panjang ".repeat(60) }] }),
+        json!({ "role": "user", "parts": [{ "text": "langkah 2" }] }),
+        json!({ "role": "model", "parts": [{ "text": "hasil 2" }] }),
+    ];
+    tabs.active_mut().timeline.push(TimelineEntry::User {
+        text: "langkah 1".into(),
+    });
+
+    let mut harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        5,
+        tabs,
+        None,
+    );
+    // Small context window so auto-compaction triggers deterministically
+    harness.configure_model(
+        "tiny-model",
+        &json!({ "api": "openai-completions", "contextWindow": 500, "maxTokens": 100 }),
+    );
+    harness.set_auto_compact(true);
+
+    // 1. Manual compact_active_tab preserves prior timeline and appends Notice
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let prep = harness.compact_active_tab(None, rx).await.unwrap();
+    assert!(prep.compacted);
+    let tl = harness.active_timeline();
+    assert_eq!(tl.len(), 2);
+    assert!(matches!(&tl[0], TimelineEntry::User { .. }));
+    assert!(matches!(&tl[1], TimelineEntry::Notice { text } if text.contains("Konteks dipadatkan")));
+
+    // 2. Seed oversized history & verify runner triggers auto-compaction automatically
+    harness.replace_active_history(
+        "1",
+        Some("Tab 1"),
+        vec![
+            json!({ "role": "user", "parts": [{ "text": "payload besar ".repeat(120) }] }),
+            json!({ "role": "model", "parts": [{ "text": "balasan besar ".repeat(120) }] }),
+        ],
+    );
+    let reply = harness.chat("lanjutkan sekarang").await.unwrap();
+    assert_eq!(reply, "Lanjut dari ringkasan berhasil.");
+
+    let reqs = captured.lock().unwrap();
+    assert!(
+        reqs.len() >= 3,
+        "expected manual compact + auto compact + main turn, got {} requests",
+        reqs.len()
+    );
+    assert!(reqs.last().unwrap().contains("<compaction_summary>"));
+    srv.abort();
+}

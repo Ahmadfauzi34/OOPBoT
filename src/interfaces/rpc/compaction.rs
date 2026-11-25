@@ -455,30 +455,10 @@ pub(super) fn select_compaction_cut_point(active_entries: &[Value]) -> Option<Co
     })
 }
 
-const MAX_COMPACTION_TOOL_CHARS: usize = 4_000;
-const MAX_COMPACTION_MSG_CHARS: usize = 8_000;
-const MAX_COMPACTION_PROMPT_CHARS: usize = 120_000;
-
-/// Potong teks secara aman di batas UTF-8 dengan mempertahankan bagian awal dan akhir
-/// agar pesan error atau ringkasan di bagian tail tidak hilang saat compaction.
-fn truncate_head_tail_chars(text: &str, max_chars: usize) -> String {
-    let total_chars = text.chars().count();
-    if total_chars <= max_chars {
-        return text.to_string();
-    }
-    let head_len = (max_chars * 2) / 3;
-    let tail_len = max_chars.saturating_sub(head_len);
-    let head: String = text.chars().take(head_len).collect();
-    let tail: String = text
-        .chars()
-        .skip(total_chars.saturating_sub(tail_len))
-        .collect();
-    let omitted = total_chars.saturating_sub(head_len + tail_len);
-    format!(
-        "{}\n...[{} karakter dipadatkan untuk compaction]...\n{}",
-        head, omitted, tail
-    )
-}
+use crate::context::{
+    truncate_head_tail_chars, MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS,
+    MAX_COMPACTION_TOOL_CHARS,
+};
 
 pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
     match entry["type"].as_str().unwrap_or_default() {

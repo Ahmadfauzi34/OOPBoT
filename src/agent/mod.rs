@@ -23,6 +23,9 @@ pub use session::{ChatSession, WorkspaceTabs};
 use crate::common::BoxError;
 use crate::config::store::save_token_to_user_env;
 use crate::config::{ModelCatalog, ModelInfo};
+use crate::context::{
+    BudgetSnapshot, ContextManager, ContextPolicy, ContextSummarizer, PreparedContext,
+};
 use crate::llm::{user_message_with_images, user_text, LlmClient, TokenUsage};
 use crate::tools::ToolRegistry;
 use async_trait::async_trait;
@@ -99,6 +102,11 @@ pub struct AgentHarness {
     /// dipakai jalur RPC yang store-nya adalah file sesi JSONL, bukan tabs.json).
     tabs_path: Option<PathBuf>,
     thinking_level: Mutex<String>,
+    /// Aktifkan auto-compaction di dalam `runner.rs` (dipakai jalur CLI; RPC mengelola
+    /// compaction tree JSONL-nya sendiri sehingga tetap `false`).
+    auto_compact: bool,
+    /// Error persistensi `tabs.json` terakhir (headless: dibaca & ditampilkan oleh interface).
+    last_persist_error: Mutex<Option<String>>,
 }
 
 impl AgentHarness {
@@ -180,6 +188,8 @@ impl AgentHarness {
             tabs: Mutex::new(tabs),
             tabs_path,
             thinking_level: Mutex::new("medium".to_string()),
+            auto_compact: false,
+            last_persist_error: Mutex::new(None),
         }
     }
 
@@ -444,15 +454,118 @@ impl AgentHarness {
         self.tools.names()
     }
 
+    pub fn set_auto_compact(&mut self, enabled: bool) {
+        self.auto_compact = enabled;
+    }
+
+    pub fn auto_compact_enabled(&self) -> bool {
+        self.auto_compact
+    }
+
+    /// Ambil error persistensi `tabs.json` terakhir (jika ada) untuk ditampilkan interface.
+    pub fn take_persist_error(&self) -> Option<String> {
+        self.last_persist_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// Kebijakan konteks berdasarkan limit model aktif saat ini.
+    pub fn context_policy(&self) -> ContextPolicy {
+        let info = self.active_model_info();
+        ContextPolicy::for_model_limits(info.input_token_limit, info.output_token_limit)
+    }
+
+    /// Evaluasi anggaran konteks tab aktif terhadap limit model aktif.
+    pub fn context_budget(&self) -> BudgetSnapshot {
+        let (history, last_observed) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active();
+            (active.history.clone(), active.last_context_tokens)
+        };
+        let decls = self.tools.declarations();
+        ContextManager::new(self.context_policy()).evaluate(
+            &self.system_instruction,
+            &decls,
+            &history,
+            last_observed,
+        )
+    }
+
+    /// Padatkan konteks tab aktif secara eksplisit (mis. perintah `/compact` di CLI)
+    /// tanpa menghapus `timeline` visual user.
+    pub async fn compact_active_tab(
+        &self,
+        custom_instructions: Option<&str>,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<PreparedContext, BoxError> {
+        let (history, last_observed) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active();
+            (active.history.clone(), active.last_context_tokens)
+        };
+        let decls = self.tools.declarations();
+        let manager = ContextManager::new(self.context_policy());
+        let prepared = manager
+            .prepare_or_compact(
+                &self.system_instruction,
+                &decls,
+                &history,
+                last_observed,
+                true,
+                custom_instructions,
+                self,
+                cancel_rx,
+            )
+            .await?;
+
+        if prepared.compacted {
+            let notice = format!(
+                "🗜️ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan; estimasi baru ~{} token)",
+                prepared.summarized_messages,
+                prepared.kept_messages,
+                prepared.budget.total_estimated_tokens
+            );
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            tabs.active_mut()
+                .apply_compacted_history(prepared.history.clone(), notice);
+            self.persist_tabs(&tabs);
+        }
+
+        Ok(prepared)
+    }
+
     fn persist_tabs(&self, tabs: &WorkspaceTabs) {
         if let Some(path) = &self.tabs_path {
-            let _ = tabs.save_to_file(path);
+            let res = tabs.save_to_file(path);
+            let mut err_slot = self
+                .last_persist_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match res {
+                Ok(()) => *err_slot = None,
+                Err(e) => *err_slot = Some(format!("{} ({})", path.display(), e)),
+            }
         }
     }
 
     fn emit(&self, event: AgentEvent, collector: &MemoryEventCollector) {
         self.event_sink.on_event(&event);
         collector.on_event(&event);
+    }
+}
+
+#[async_trait]
+impl ContextSummarizer for AgentHarness {
+    async fn summarize(
+        &self,
+        compaction_prompt: &str,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<String, BoxError> {
+        let (summary, _usage) = self
+            .generate_compaction_summary_cancellable(compaction_prompt, cancel_rx)
+            .await?;
+        Ok(summary)
     }
 }
 

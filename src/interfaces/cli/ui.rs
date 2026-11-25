@@ -183,9 +183,61 @@ pub fn render_timeline_steps(agent: &AgentHarness) {
                 let first_line = text.lines().next().unwrap_or("");
                 println!("  🤖 Asisten: {}", first_line);
             }
+            TimelineEntry::Notice { text } => {
+                println!("  ℹ️  {}", text);
+            }
         }
     }
     println!();
+}
+
+pub fn render_context_budget(agent: &AgentHarness) {
+    let snap = agent.context_budget();
+    let status_label = match snap.status {
+        crate::context::BudgetStatus::WithinBudget => "OK",
+        crate::context::BudgetStatus::NeedsCompaction => "Perlu Compaction",
+        crate::context::BudgetStatus::OverLimit => "Melebihi Batas",
+    };
+    let auto_state = if agent.auto_compact_enabled() {
+        "aktif"
+    } else {
+        "nonaktif"
+    };
+    println!(
+        "\n📊 Anggaran Konteks Tab Aktif (model: {} | auto-compact: {}):",
+        agent.model(),
+        auto_state
+    );
+    println!(
+        "  • System prompt : ~{} token",
+        snap.system_tokens
+    );
+    println!(
+        "  • Skema tool    : ~{} token",
+        snap.tool_schema_tokens
+    );
+    println!(
+        "  • Histori pesan : ~{} token ({} entri)",
+        snap.history_tokens,
+        agent.active_history_len()
+    );
+    if let Some(obs) = snap.last_observed_input_tokens {
+        println!("  • Observasi LLM : {} token input terakhir", obs);
+    }
+    println!(
+        "  • Efektif       : {} / {} usable token ({:.1}% | max window: {}) → [{}]\n",
+        snap.effective_tokens(),
+        snap.usable_limit,
+        snap.usage_percent(),
+        snap.max_input_tokens,
+        status_label
+    );
+}
+
+pub fn warn_if_persist_failed(agent: &AgentHarness) {
+    if let Some(err) = agent.take_persist_error() {
+        eprintln!("⚠️  Gagal menyimpan state tab ke disk: {}", err);
+    }
 }
 
 pub fn print_error_chain(err: &dyn std::error::Error) {
