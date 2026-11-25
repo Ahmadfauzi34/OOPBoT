@@ -129,13 +129,39 @@ fn rebuild_canonical_history_maintains_user_model_alternation_and_chains_summary
     assert_eq!(extracted, "Tujuan: refactor context.");
 
     // Second compaction must chain previous summary into <previous_summary>
+    // AND preserve real user messages that literally mention <compaction_summary>...</compaction_summary>.
     let mut extended = rebuilt;
+    extended.push(u_msg(
+        "Tolong periksa parser tag <compaction_summary>contoh</compaction_summary> di compactor.rs",
+    ));
+    extended.push(m_msg("siap, saya cek parsernya"));
     extended.push(u_msg("tambah tes"));
     extended.push(m_msg("tes selesai"));
     let plan2 = plan_canonical_compaction(&extended, 10, None, Some("Fokus ke file path")).unwrap();
     assert!(plan2.prompt.contains("<previous_summary>"));
     assert!(plan2.prompt.contains("Tujuan: refactor context."));
     assert!(plan2.prompt.contains("Fokus ke file path"));
+    assert!(
+        plan2
+            .prompt
+            .contains("Tolong periksa parser tag <compaction_summary>contoh</compaction_summary>"),
+        "real user message mentioning literal summary markers must be preserved in compaction prompt"
+    );
+
+    // Non-synthetic history starting with a user message mentioning the markers must NOT be
+    // mistaken for a synthetic compaction summary or dropped.
+    let normal_history = vec![
+        u_msg("Jelaskan format <compaction_summary>abc</compaction_summary>"),
+        m_msg("Format itu dipakai compactor."),
+        u_msg("lanjut"),
+        m_msg("oke"),
+    ];
+    assert_eq!(extract_existing_compaction_summary(&normal_history), None);
+    let plan3 = plan_canonical_compaction(&normal_history, 10, None, None).unwrap();
+    assert!(!plan3.prompt.contains("<previous_summary>"));
+    assert!(plan3
+        .prompt
+        .contains("Jelaskan format <compaction_summary>abc</compaction_summary>"));
 }
 
 #[test]

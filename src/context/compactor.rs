@@ -12,6 +12,8 @@ pub const MAX_COMPACTION_PROMPT_CHARS: usize = 120_000;
 
 pub const COMPACTION_SUMMARY_OPEN: &str = "<compaction_summary>";
 pub const COMPACTION_SUMMARY_CLOSE: &str = "</compaction_summary>";
+const COMPACTION_SUMMARY_ACK_TEXT: &str =
+    "Ringkasan konteks sebelumnya dipahami. Saya siap melanjutkan.";
 
 /// Rencana pemadatan deterministik untuk `history` kanonik.
 /// `history[..cut_index]` akan diringkas; `history[cut_index..]` dipertahankan utuh.
@@ -64,21 +66,34 @@ pub fn is_valid_canonical_cut_point(history: &[Value], idx: usize) -> bool {
     msg["role"].as_str() == Some("user") && !is_function_response_message(msg)
 }
 
-/// Ambil isi `<compaction_summary>...</compaction_summary>` dari pesan awal `history`
-/// hasil compaction sebelumnya agar ringkasan berikutnya berantai (tidak hilang).
-pub fn extract_existing_compaction_summary(history: &[Value]) -> Option<String> {
-    let first = history.first()?;
-    if first["role"].as_str() != Some("user") {
+fn single_text_part(msg: &Value) -> Option<&str> {
+    let parts = msg["parts"].as_array()?;
+    if parts.len() != 1 {
         return None;
     }
-    let text = first["parts"]
-        .as_array()?
-        .iter()
-        .find_map(|p| p["text"].as_str())?;
-    let start = text.find(COMPACTION_SUMMARY_OPEN)? + COMPACTION_SUMMARY_OPEN.len();
-    let rest = &text[start..];
-    let end = rest.find(COMPACTION_SUMMARY_CLOSE)?;
-    let inner = rest[..end].trim();
+    parts[0]["text"].as_str()
+}
+
+/// Ambil isi `<compaction_summary>...</compaction_summary>` hanya dari pasangan prefiks
+/// sintetis `[user(<compaction_summary>...), model(ack)]` buatan `rebuild_canonical_history`,
+/// sehingga pesan user normal yang kebetulan menyebut marker literal tidak salah dianggap summary.
+pub fn extract_existing_compaction_summary(history: &[Value]) -> Option<String> {
+    if history.len() < 2 {
+        return None;
+    }
+    let first = &history[0];
+    let second = &history[1];
+    if first["role"].as_str() != Some("user") || second["role"].as_str() != Some("model") {
+        return None;
+    }
+    if single_text_part(second) != Some(COMPACTION_SUMMARY_ACK_TEXT) {
+        return None;
+    }
+    let text = single_text_part(first)?.trim();
+    let inner = text
+        .strip_prefix(COMPACTION_SUMMARY_OPEN)?
+        .strip_suffix(COMPACTION_SUMMARY_CLOSE)?
+        .trim();
     (!inner.is_empty()).then(|| inner.to_string())
 }
 
@@ -102,12 +117,6 @@ fn format_canonical_message_for_compaction(msg: &Value) -> Option<String> {
                         truncate_head_tail_chars(&resp_str, MAX_COMPACTION_TOOL_CHARS)
                     ));
                 } else if let Some(text) = p["text"].as_str().filter(|s| !s.trim().is_empty()) {
-                    // Lewati wrapper summary lama karena sudah dibawa ke <previous_summary>.
-                    if text.contains(COMPACTION_SUMMARY_OPEN)
-                        && text.contains(COMPACTION_SUMMARY_CLOSE)
-                    {
-                        continue;
-                    }
                     lines.push(format!(
                         "[User]: {}",
                         truncate_head_tail_chars(text, MAX_COMPACTION_MSG_CHARS)
@@ -312,14 +321,15 @@ pub fn plan_canonical_compaction(
         return None;
     }
 
+    let existing_summary = extract_existing_compaction_summary(history);
+    let synthetic_prefix_len = if existing_summary.is_some() { 2 } else { 0 };
     let inherited_summary = previous_summary
         .map(str::to_string)
-        .or_else(|| extract_existing_compaction_summary(history));
+        .or(existing_summary);
 
-    // Hindari menganggap ack summary sebelumnya di indeks 0..=1 sebagai satu-satunya isi yang diringkas.
-    let min_cut_idx = if extract_existing_compaction_summary(history).is_some() && history.len() > 2
-    {
-        2
+    // Hindari menganggap pasangan prefiks summary sintetis di indeks 0..=1 sebagai satu-satunya isi yang diringkas.
+    let min_cut_idx = if synthetic_prefix_len > 0 && history.len() > synthetic_prefix_len {
+        synthetic_prefix_len
     } else {
         1
     };
@@ -368,9 +378,12 @@ pub fn plan_canonical_compaction(
     }
 
     let to_summarize = &history[..cut_index];
+    // Hanya lewati pasangan sintetis `[user(<compaction_summary>), model(ack)]` di indeks 0..2
+    // (yang sudah dibawa ke `<previous_summary>`), bukan pesan user normal mana pun.
+    let conversation_slice = &to_summarize[synthetic_prefix_len.min(to_summarize.len())..];
     let kept_messages = history.len().saturating_sub(cut_index);
     let prompt = build_canonical_compaction_prompt(
-        to_summarize,
+        conversation_slice,
         inherited_summary.as_deref(),
         custom_instructions,
     );
@@ -399,7 +412,7 @@ pub fn rebuild_canonical_history(summary: &str, kept_tail: &[Value]) -> Vec<Valu
     rebuilt.push(json!({
         "role": "model",
         "parts": [{
-            "text": "Ringkasan konteks sebelumnya dipahami. Saya siap melanjutkan."
+            "text": COMPACTION_SUMMARY_ACK_TEXT
         }]
     }));
     rebuilt.extend_from_slice(kept_tail);
