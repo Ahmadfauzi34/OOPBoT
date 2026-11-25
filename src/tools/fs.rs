@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAX_READ_BYTES: usize = 100_000;
 const MAX_DIR_ENTRIES: usize = 500;
@@ -893,9 +893,12 @@ async fn atomic_write_preserving_meta(
     let tmp_path: PathBuf = parent.join(tmp_name);
 
     let write_res: Result<(), String> = async {
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
+        let mut open_opts = tokio::fs::OpenOptions::new();
+        open_opts.write(true).create_new(true);
+        #[cfg(unix)]
+        open_opts.mode(0o600);
+
+        let mut file = open_opts
             .open(&tmp_path)
             .await
             .map_err(|e| format!("gagal membuat file sementara {}: {}", tmp_path.display(), e))?;
@@ -905,12 +908,12 @@ async fn atomic_write_preserving_meta(
         file.flush()
             .await
             .map_err(|e| format!("gagal flush {}: {}", tmp_path.display(), e))?;
-        tokio::fs::set_permissions(&tmp_path, orig_perms)
-            .await
-            .map_err(|e| format!("gagal menyalin permission ke {}: {}", tmp_path.display(), e))?;
         file.sync_all()
             .await
             .map_err(|e| format!("gagal sync {}: {}", tmp_path.display(), e))?;
+        tokio::fs::set_permissions(&tmp_path, orig_perms)
+            .await
+            .map_err(|e| format!("gagal menyalin permission ke {}: {}", tmp_path.display(), e))?;
         drop(file);
         tokio::fs::rename(&tmp_path, target_path)
             .await
@@ -1038,6 +1041,12 @@ impl Tool for EditFile {
         if meta.is_dir() {
             return Err(format!("{} adalah direktori, bukan file", display_path));
         }
+        if !meta.is_file() {
+            return Err(format!(
+                "{} bukan file reguler, tidak bisa diedit dengan edit_file",
+                display_path
+            ));
+        }
 
         if meta.len() > MAX_EDIT_BYTES as u64 {
             return Err(format!(
@@ -1049,7 +1058,12 @@ impl Tool for EditFile {
         }
 
         let orig_perms = meta.permissions();
-        let bytes = tokio::fs::read(&target_path)
+        let file = tokio::fs::File::open(&target_path)
+            .await
+            .map_err(|e| format!("gagal membaca {}: {}", display_path, e))?;
+        let mut bytes = Vec::with_capacity((meta.len() as usize).min(MAX_EDIT_BYTES));
+        file.take((MAX_EDIT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
             .await
             .map_err(|e| format!("gagal membaca {}: {}", display_path, e))?;
 

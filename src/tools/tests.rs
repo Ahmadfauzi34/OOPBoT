@@ -670,3 +670,39 @@ async fn edit_file_diff_truncation_keeps_step_figure_safe_footer() {
     assert!(diff.ends_with("     ... (diff dipotong)"));
     assert!(diff.lines().last().unwrap().starts_with(' '));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn edit_file_rejects_non_regular_files_and_preserves_0600_secrets() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Non-regular device file (/dev/zero) must be rejected immediately without hanging/OOM
+    if std::path::Path::new("/dev/zero").exists() {
+        let err = EditFile
+            .execute(&json!({
+                "path": "/dev/zero",
+                "edits": [{ "oldText": "a", "newText": "b" }]
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.contains("file reguler"), "err: {err}");
+    }
+
+    // Secret file with 0o600 retains 0o600 after edit
+    let tmp = TempEditDir::new("secret_0600");
+    let secret = tmp.path(".env");
+    std::fs::write(&secret, "API_KEY=old_secret\n").unwrap();
+    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    EditFile
+        .execute(&json!({
+            "path": secret.to_string_lossy(),
+            "edits": [{ "oldText": "old_secret", "newText": "new_secret" }]
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&secret).unwrap(), "API_KEY=new_secret\n");
+    let mode = std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
