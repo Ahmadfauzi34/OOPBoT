@@ -150,11 +150,57 @@ fn compaction_prompt_bounds_giant_tool_outputs_and_total_budget() {
     }
     let plan = plan_canonical_compaction(&history, 100, None, None).expect("plan");
     assert!(
-        plan.prompt.chars().count() <= MAX_COMPACTION_PROMPT_CHARS + 512,
+        plan.prompt.chars().count() <= MAX_COMPACTION_PROMPT_CHARS,
         "prompt too large: {}",
         plan.prompt.chars().count()
     );
     assert!(plan.prompt.contains("dipadatkan"));
+}
+
+#[test]
+fn compaction_prompt_caps_oversized_custom_instructions_and_single_giant_message() {
+    // 1. Custom instructions & previous summary jauh di atas MAX_COMPACTION_PROMPT_CHARS
+    let giant_instructions = format!("INST_HEAD_{}_INST_TAIL", "I".repeat(200_000));
+    let giant_prev = format!("PREV_HEAD_{}_PREV_TAIL", "P".repeat(200_000));
+    // 2. Satu pesan user dengan 50 functionResponse besar sekaligus
+    let giant_resp = "R".repeat(10_000);
+    let many_parts: Vec<Value> = (0..50)
+        .map(|i| {
+            json!({
+                "functionResponse": {
+                    "id": format!("c{i}"),
+                    "name": "read_file",
+                    "response": { "content": giant_resp }
+                }
+            })
+        })
+        .collect();
+    let history = vec![
+        u_msg("turn 1"),
+        json!({ "role": "user", "parts": many_parts }),
+        m_msg("done"),
+        u_msg("turn 2"),
+        m_msg("siap"),
+    ];
+
+    let plan = plan_canonical_compaction(
+        &history,
+        10,
+        Some(&giant_prev),
+        Some(&giant_instructions),
+    )
+    .expect("plan");
+    assert!(
+        plan.prompt.chars().count() <= MAX_COMPACTION_PROMPT_CHARS,
+        "prompt exceeded MAX_COMPACTION_PROMPT_CHARS: {} > {}",
+        plan.prompt.chars().count(),
+        MAX_COMPACTION_PROMPT_CHARS
+    );
+    assert!(plan.prompt.contains("INST_HEAD_"));
+    assert!(plan.prompt.contains("_INST_TAIL"));
+    assert!(plan.prompt.contains("PREV_HEAD_"));
+    assert!(plan.prompt.contains("_PREV_TAIL"));
+    assert!(plan.prompt.contains("<conversation>"));
 }
 
 #[tokio::test]

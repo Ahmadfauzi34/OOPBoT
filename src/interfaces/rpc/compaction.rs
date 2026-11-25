@@ -456,7 +456,7 @@ pub(super) fn select_compaction_cut_point(active_entries: &[Value]) -> Option<Co
 }
 
 use crate::context::{
-    truncate_head_tail_chars, MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS,
+    assemble_compaction_prompt, truncate_head_tail_chars, MAX_COMPACTION_MSG_CHARS,
     MAX_COMPACTION_TOOL_CHARS,
 };
 
@@ -547,87 +547,10 @@ pub(super) fn build_compaction_prompt(
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
 ) -> String {
-    let mut prompt = String::from(
-        "Summarize the conversation clearly and preserve key goals, decisions, file paths, and open tasks (Ringkas percakapan sebelumnya secara akurat dan padat).\n",
-    );
-    if let Some(prev) = previous_summary.filter(|s| !s.trim().is_empty()) {
-        prompt.push_str("\n<previous_summary>\n");
-        prompt.push_str(&truncate_head_tail_chars(prev.trim(), 16_000));
-        prompt.push_str("\n</previous_summary>\n");
-    }
-
     let formatted: Vec<String> = to_summarize
         .iter()
         .filter_map(format_entry_for_compaction)
         .collect();
-
-    let instructions_block = custom_instructions
-        .filter(|s| !s.trim().is_empty())
-        .map(|inst| {
-            format!(
-                "\n<custom_instructions>\n{}\n</custom_instructions>\n",
-                inst.trim()
-            )
-        })
-        .unwrap_or_default();
-
-    let fixed_overhead = prompt.chars().count() + instructions_block.chars().count() + 64;
-    let conv_budget = MAX_COMPACTION_PROMPT_CHARS.saturating_sub(fixed_overhead);
-    let total_conv_chars: usize = formatted.iter().map(|l| l.chars().count() + 1).sum();
-
-    prompt.push_str("\n<conversation>\n");
-    if total_conv_chars <= conv_budget {
-        for line in &formatted {
-            prompt.push_str(line);
-            prompt.push('\n');
-        }
-    } else {
-        // Pertahankan pesan awal (tujuan/konteks awal) + pesan paling baru dalam batas budget.
-        let head_budget = conv_budget / 3;
-        let tail_budget = conv_budget.saturating_sub(head_budget);
-        let mut head_lines = Vec::new();
-        let mut head_used = 0usize;
-        for line in &formatted {
-            let cost = line.chars().count() + 1;
-            if head_used + cost > head_budget && !head_lines.is_empty() {
-                break;
-            }
-            head_used += cost;
-            head_lines.push(line.as_str());
-        }
-        let mut tail_lines_rev = Vec::new();
-        let mut tail_used = 0usize;
-        for line in formatted[head_lines.len()..].iter().rev() {
-            let cost = line.chars().count() + 1;
-            if tail_used + cost > tail_budget && !tail_lines_rev.is_empty() {
-                break;
-            }
-            tail_used += cost;
-            tail_lines_rev.push(line.as_str());
-        }
-        tail_lines_rev.reverse();
-        let omitted = formatted
-            .len()
-            .saturating_sub(head_lines.len() + tail_lines_rev.len());
-        for line in head_lines {
-            prompt.push_str(line);
-            prompt.push('\n');
-        }
-        if omitted > 0 {
-            prompt.push_str(&format!(
-                "[... {} entri pertengahan dipadatkan agar prompt compaction aman di dalam context window ...]\n",
-                omitted
-            ));
-        }
-        for line in tail_lines_rev {
-            prompt.push_str(line);
-            prompt.push('\n');
-        }
-    }
-    prompt.push_str("</conversation>\n");
-    if !instructions_block.is_empty() {
-        prompt.push_str(&instructions_block);
-    }
-    prompt
+    assemble_compaction_prompt(&formatted, previous_summary, custom_instructions)
 }
 

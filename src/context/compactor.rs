@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 
 pub const MAX_COMPACTION_TOOL_CHARS: usize = 4_000;
 pub const MAX_COMPACTION_MSG_CHARS: usize = 8_000;
+pub const MAX_COMPACTION_INSTRUCTIONS_CHARS: usize = 4_000;
+pub const MAX_COMPACTION_PREVIOUS_SUMMARY_CHARS: usize = 16_000;
 pub const MAX_COMPACTION_PROMPT_CHARS: usize = 120_000;
 
 pub const COMPACTION_SUMMARY_OPEN: &str = "<compaction_summary>";
@@ -142,8 +144,42 @@ fn format_canonical_message_for_compaction(msg: &Value) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
-fn build_canonical_compaction_prompt(
-    to_summarize: &[Value],
+/// Potong teks secara aman di batas UTF-8 sambil menjamin panjang hasil akhir
+/// (termasuk teks penanda pemadatan) tidak melebihi `max_chars`.
+fn truncate_head_tail_within_chars(text: &str, max_chars: usize) -> String {
+    let total_chars = text.chars().count();
+    if total_chars <= max_chars {
+        return text.to_string();
+    }
+    let marker_probe = format!(
+        "\n...[{} karakter dipadatkan untuk compaction]...\n",
+        total_chars
+    );
+    let marker_len = marker_probe.chars().count();
+    if max_chars <= marker_len + 4 {
+        return text.chars().take(max_chars).collect();
+    }
+    let content_budget = max_chars.saturating_sub(marker_len);
+    let head_len = (content_budget * 2) / 3;
+    let tail_len = content_budget.saturating_sub(head_len);
+    let head: String = text.chars().take(head_len).collect();
+    let tail: String = text
+        .chars()
+        .skip(total_chars.saturating_sub(tail_len))
+        .collect();
+    let omitted = total_chars.saturating_sub(head_len + tail_len);
+    let result = format!(
+        "{}\n...[{} karakter dipadatkan untuk compaction]...\n{}",
+        head, omitted, tail
+    );
+    debug_assert!(result.chars().count() <= max_chars);
+    result
+}
+
+/// Rakit prompt compaction dengan jaminan ketat total karakter `<= MAX_COMPACTION_PROMPT_CHARS`,
+/// termasuk batas untuk `<previous_summary>`, `<custom_instructions>`, dan entri percakapan besar.
+pub fn assemble_compaction_prompt(
+    formatted: &[String],
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
 ) -> String {
@@ -152,63 +188,84 @@ fn build_canonical_compaction_prompt(
     );
     if let Some(prev) = previous_summary.filter(|s| !s.trim().is_empty()) {
         prompt.push_str("\n<previous_summary>\n");
-        prompt.push_str(&truncate_head_tail_chars(prev.trim(), 16_000));
+        prompt.push_str(&truncate_head_tail_within_chars(
+            prev.trim(),
+            MAX_COMPACTION_PREVIOUS_SUMMARY_CHARS,
+        ));
         prompt.push_str("\n</previous_summary>\n");
     }
-
-    let formatted: Vec<String> = to_summarize
-        .iter()
-        .filter_map(format_canonical_message_for_compaction)
-        .collect();
 
     let instructions_block = custom_instructions
         .filter(|s| !s.trim().is_empty())
         .map(|inst| {
             format!(
                 "\n<custom_instructions>\n{}\n</custom_instructions>\n",
-                inst.trim()
+                truncate_head_tail_within_chars(inst.trim(), MAX_COMPACTION_INSTRUCTIONS_CHARS)
             )
         })
         .unwrap_or_default();
 
-    let fixed_overhead = prompt.chars().count() + instructions_block.chars().count() + 64;
+    let conv_open = "\n<conversation>\n";
+    let conv_close = "</conversation>\n";
+    let omitted_probe = format!(
+        "[... {} entri pertengahan dipadatkan agar prompt compaction aman di dalam context window ...]\n",
+        formatted.len()
+    );
+    let fixed_overhead = prompt.chars().count()
+        + instructions_block.chars().count()
+        + conv_open.chars().count()
+        + conv_close.chars().count()
+        + omitted_probe.chars().count();
     let conv_budget = MAX_COMPACTION_PROMPT_CHARS.saturating_sub(fixed_overhead);
     let total_conv_chars: usize = formatted.iter().map(|l| l.chars().count() + 1).sum();
 
-    prompt.push_str("\n<conversation>\n");
+    prompt.push_str(conv_open);
     if total_conv_chars <= conv_budget {
-        for line in &formatted {
+        for line in formatted {
             prompt.push_str(line);
             prompt.push('\n');
         }
     } else {
+        // Pertahankan pesan awal (tujuan/konteks awal) + pesan paling baru dalam batas budget.
         let head_budget = conv_budget / 3;
         let tail_budget = conv_budget.saturating_sub(head_budget);
-        let mut head_lines = Vec::new();
+        let mut head_lines: Vec<String> = Vec::new();
         let mut head_used = 0usize;
-        for line in &formatted {
+        let mut head_count = 0usize;
+        for line in formatted {
             let cost = line.chars().count() + 1;
-            if head_used + cost > head_budget && !head_lines.is_empty() {
+            if head_used + cost > head_budget {
+                if head_lines.is_empty() && head_budget > 1 {
+                    let clipped = truncate_head_tail_within_chars(line, head_budget - 1);
+                    head_lines.push(clipped);
+                    head_count = 1;
+                }
                 break;
             }
             head_used += cost;
-            head_lines.push(line.as_str());
+            head_lines.push(line.clone());
+            head_count += 1;
         }
-        let mut tail_lines_rev = Vec::new();
+        let mut tail_lines_rev: Vec<String> = Vec::new();
         let mut tail_used = 0usize;
-        for line in formatted[head_lines.len()..].iter().rev() {
+        let mut tail_count = 0usize;
+        for line in formatted[head_count..].iter().rev() {
             let cost = line.chars().count() + 1;
-            if tail_used + cost > tail_budget && !tail_lines_rev.is_empty() {
+            if tail_used + cost > tail_budget {
+                if tail_lines_rev.is_empty() && tail_budget > 1 {
+                    let clipped = truncate_head_tail_within_chars(line, tail_budget - 1);
+                    tail_lines_rev.push(clipped);
+                    tail_count = 1;
+                }
                 break;
             }
             tail_used += cost;
-            tail_lines_rev.push(line.as_str());
+            tail_lines_rev.push(line.clone());
+            tail_count += 1;
         }
         tail_lines_rev.reverse();
-        let omitted = formatted
-            .len()
-            .saturating_sub(head_lines.len() + tail_lines_rev.len());
-        for line in head_lines {
+        let omitted = formatted.len().saturating_sub(head_count + tail_count);
+        for line in &head_lines {
             prompt.push_str(line);
             prompt.push('\n');
         }
@@ -218,16 +275,29 @@ fn build_canonical_compaction_prompt(
                 omitted
             ));
         }
-        for line in tail_lines_rev {
+        for line in &tail_lines_rev {
             prompt.push_str(line);
             prompt.push('\n');
         }
     }
-    prompt.push_str("</conversation>\n");
+    prompt.push_str(conv_close);
     if !instructions_block.is_empty() {
         prompt.push_str(&instructions_block);
     }
+    debug_assert!(prompt.chars().count() <= MAX_COMPACTION_PROMPT_CHARS);
     prompt
+}
+
+fn build_canonical_compaction_prompt(
+    to_summarize: &[Value],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+) -> String {
+    let formatted: Vec<String> = to_summarize
+        .iter()
+        .filter_map(format_canonical_message_for_compaction)
+        .collect();
+    assemble_compaction_prompt(&formatted, previous_summary, custom_instructions)
 }
 
 /// Rencanakan pemadatan `history` kanonik secara deterministik.

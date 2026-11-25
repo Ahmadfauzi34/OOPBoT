@@ -939,15 +939,21 @@ fn gate_compaction_prompt_bounds_giant_tool_outputs_and_total_budget() {
         }));
     }
 
-    let prompt = build_compaction_prompt(&entries, Some("Ringkasan sebelumnya"), None);
+    let huge_instructions = format!("CI_START_{}_CI_END", "C".repeat(150_000));
+    let prompt = build_compaction_prompt(
+        &entries,
+        Some("Ringkasan sebelumnya"),
+        Some(&huge_instructions),
+    );
     assert!(
-        prompt.chars().count() <= 125_000,
+        prompt.chars().count() <= crate::context::MAX_COMPACTION_PROMPT_CHARS,
         "GATE: prompt compaction tidak boleh membengkak melampaui budget ({} chars)",
         prompt.chars().count()
     );
     assert!(prompt.contains("HEAD_MARKER_"), "bagian awal output tool harus tetap terjaga");
     assert!(prompt.contains("_TAIL_MARKER"), "bagian akhir output tool harus tetap terjaga");
     assert!(prompt.contains("entry-39:"), "entri paling baru harus tetap masuk ringkasan");
+    assert!(prompt.contains("CI_START_") && prompt.contains("_CI_END"), "custom instructions harus dipadatkan head-tail, bukan dibuang atau dibiarkan melebihi budget");
 }
 
 #[tokio::test]

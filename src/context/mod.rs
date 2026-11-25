@@ -17,10 +17,11 @@ pub use budget::{
     DEFAULT_MAX_INPUT_TOKENS, MIN_RESERVE_OUTPUT_TOKENS,
 };
 pub use compactor::{
-    extract_existing_compaction_summary, is_function_response_message,
+    assemble_compaction_prompt, extract_existing_compaction_summary, is_function_response_message,
     is_valid_canonical_cut_point, plan_canonical_compaction, rebuild_canonical_history,
     truncate_head_tail_chars, CompactionPlan, COMPACTION_SUMMARY_CLOSE, COMPACTION_SUMMARY_OPEN,
-    MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS, MAX_COMPACTION_TOOL_CHARS,
+    MAX_COMPACTION_INSTRUCTIONS_CHARS, MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS,
+    MAX_COMPACTION_TOOL_CHARS,
 };
 
 use crate::common::BoxError;
