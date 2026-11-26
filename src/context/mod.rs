@@ -19,7 +19,7 @@ pub use budget::{
 pub use compactor::{
     assemble_compaction_prompt, assemble_compaction_prompt_with_limit,
     extract_existing_compaction_summary, is_function_response_message,
-    is_valid_canonical_cut_point, plan_canonical_compaction,
+    is_valid_canonical_cut_point, plan_canonical_compaction, plan_canonical_compaction_with_limits,
     plan_canonical_compaction_with_prompt_limit, rebuild_canonical_history,
     truncate_head_tail_chars, truncate_head_tail_within_chars, CompactionPlan,
     COMPACTION_SUMMARY_CLOSE, COMPACTION_SUMMARY_OPEN, MAX_COMPACTION_INLINE_IMAGES,
@@ -101,7 +101,7 @@ impl ContextManager {
     }
 
     /// Evaluasi budget; jika `NeedsCompaction` / `OverLimit` atau `force == true`,
-    /// jalankan `plan_canonical_compaction_with_prompt_limit` → `summarizer.summarize_with_images()` → `rebuild_canonical_history()`.
+    /// jalankan `plan_canonical_compaction_with_limits` → `summarizer.summarize_with_images()` → `rebuild_canonical_history()`.
     #[allow(clippy::too_many_arguments)]
     pub async fn prepare_or_compact(
         &self,
@@ -138,12 +138,13 @@ impl ContextManager {
             });
         }
 
-        let Some(plan) = plan_canonical_compaction_with_prompt_limit(
+        let Some(plan) = plan_canonical_compaction_with_limits(
             history,
             self.policy.keep_recent_tokens,
             None,
             custom_instructions,
             self.policy.max_compaction_prompt_chars(),
+            self.policy.max_compaction_image_tokens(),
         ) else {
             return Ok(PreparedContext {
                 history: history.to_vec(),
@@ -180,14 +181,20 @@ impl ContextManager {
         let summary = summarizer
             .summarize_with_images(&plan.prompt, &plan.inline_images, cancel_rx)
             .await?;
-        let rebuilt = rebuild_canonical_history(&summary, &history[plan.cut_index..]);
+        let trimmed_summary = summary.trim();
+        if trimmed_summary.is_empty() {
+            return Err(
+                "Ringkasan compaction kosong dari provider; histori asli dipertahankan.".into(),
+            );
+        }
+        let rebuilt = rebuild_canonical_history(trimmed_summary, &history[plan.cut_index..]);
         let post_budget = self.evaluate(system_instruction, tool_declarations, &rebuilt, None);
 
         Ok(PreparedContext {
             history: rebuilt,
             budget: post_budget,
             compacted: true,
-            summary: Some(summary),
+            summary: Some(trimmed_summary.to_string()),
             summarized_messages: plan.summarized_messages,
             kept_messages: plan.kept_messages,
         })

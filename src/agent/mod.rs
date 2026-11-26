@@ -105,6 +105,9 @@ pub struct AgentHarness {
     /// Aktifkan auto-compaction di dalam `runner.rs` (dipakai jalur CLI; RPC mengelola
     /// compaction tree JSONL-nya sendiri sehingga tetap `false`).
     auto_compact: bool,
+    /// Peringatan pemulihan saat memuat `tabs.json` korup (terpisah dari `last_persist_error`
+    /// agar tidak terhapus oleh penyimpanan sukses berikutnya seperti `set_active_model`).
+    load_warning: Mutex<Option<String>>,
     /// Error persistensi `tabs.json` terakhir (headless: dibaca & ditampilkan oleh interface).
     last_persist_error: Mutex<Option<String>>,
 }
@@ -137,11 +140,37 @@ impl AgentHarness {
         event_sink: Box<dyn EventSink>,
         max_steps: usize,
     ) -> Self {
+        Self::with_event_sink_at_storage_path(
+            name,
+            client,
+            tools,
+            approver,
+            event_sink,
+            max_steps,
+            WorkspaceTabs::default_storage_path(),
+        )
+    }
+
+    pub(crate) fn with_event_sink_at_storage_path(
+        name: &str,
+        client: LlmClient,
+        tools: ToolRegistry,
+        approver: Box<dyn Approver>,
+        event_sink: Box<dyn EventSink>,
+        max_steps: usize,
+        storage_path: Option<PathBuf>,
+    ) -> Self {
         let default_m = client.model();
-        let tabs = WorkspaceTabs::default_storage_path()
-            .and_then(|p| WorkspaceTabs::load_from_file(&p))
-            .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
-        Self::with_event_sink_and_tabs(
+        let (loaded_tabs, load_warning) = storage_path
+            .as_deref()
+            .map(WorkspaceTabs::load_from_file_checked)
+            .unwrap_or((None, None));
+        let tabs = loaded_tabs.unwrap_or_else(|| {
+            let mut fresh = WorkspaceTabs::new(&default_m);
+            fresh.active_mut().provider_base_url = Some(client.base_url());
+            fresh
+        });
+        let harness = Self::with_event_sink_and_tabs(
             name,
             client,
             tools,
@@ -149,8 +178,15 @@ impl AgentHarness {
             event_sink,
             max_steps,
             tabs,
-            WorkspaceTabs::default_storage_path(),
-        )
+            storage_path,
+        );
+        if let Some(warn) = load_warning {
+            *harness
+                .load_warning
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(warn);
+        }
+        harness
     }
 
     /// Varian konstruktor yang tab-nya disuplai pemanggil beserta lokasi
@@ -189,6 +225,7 @@ impl AgentHarness {
             tabs_path,
             thinking_level: Mutex::new("medium".to_string()),
             auto_compact: false,
+            load_warning: Mutex::new(None),
             last_persist_error: Mutex::new(None),
         }
     }
@@ -330,6 +367,7 @@ impl AgentHarness {
                 query.to_string()
             }
         };
+        let current_base = self.client.base_url();
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let active = tabs.active_mut();
         if active.model != resolved {
@@ -337,6 +375,7 @@ impl AgentHarness {
             // Token input observasi sebelumnya milik tokenizer model/provider lama; reset agar tidak menyesatkan.
             active.clear_observed_context_tokens();
         }
+        active.provider_base_url = Some(current_base);
         self.persist_tabs(&tabs);
         self.client.set_default_model(&resolved);
         resolved
@@ -391,8 +430,11 @@ impl AgentHarness {
 
     pub fn new_tab(&self, model: Option<&str>) -> ChatSession {
         let model_id = model.map(str::to_string).unwrap_or_else(|| self.model());
+        let current_base = self.client.base_url();
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
-        let created = tabs.new_tab(&model_id).clone();
+        tabs.new_tab(&model_id);
+        tabs.active_mut().provider_base_url = Some(current_base);
+        let created = tabs.active().clone();
         self.persist_tabs(&tabs);
         self.client.set_default_model(&created.model);
         created
@@ -410,9 +452,14 @@ impl AgentHarness {
 
     pub fn close_tab(&self, selector: &str) -> bool {
         let fallback = self.client.model();
+        let current_base = self.client.base_url();
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+        let was_single = tabs.list().len() == 1;
         let ok = tabs.close_tab(selector, &fallback);
         if ok {
+            if was_single {
+                tabs.active_mut().provider_base_url = Some(current_base);
+            }
             self.persist_tabs(&tabs);
             self.client.set_default_model(&tabs.active().model);
         }
@@ -485,12 +532,25 @@ impl AgentHarness {
         self.auto_compact
     }
 
-    /// Ambil error persistensi `tabs.json` terakhir (jika ada) untuk ditampilkan interface.
+    /// Ambil peringatan pemulihan muat atau error persistensi `tabs.json` terakhir (jika ada)
+    /// untuk ditampilkan interface.
     pub fn take_persist_error(&self) -> Option<String> {
-        self.last_persist_error
+        let load_warn = self
+            .load_warning
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .take()
+            .take();
+        let persist_err = self
+            .last_persist_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        match (load_warn, persist_err) {
+            (Some(w), Some(e)) => Some(format!("{}\n{}", w, e)),
+            (Some(w), None) => Some(w),
+            (None, Some(e)) => Some(e),
+            (None, None) => None,
+        }
     }
 
     /// Fingerprint deterministik untuk mengikat `last_context_tokens` ke kombinasi aktif
@@ -515,36 +575,124 @@ impl AgentHarness {
         format!("{:016x}", h)
     }
 
-    /// Ambil `last_context_tokens` hanya bila fingerprint observasinya masih cocok dengan
-    /// konfigurasi aktif saat ini (model, provider, system instruction, & deklarasi tool).
-    pub(super) fn observed_context_tokens_for(
+    /// Sinkronkan default model `LlmClient` dan katalog ke model tab aktif yang dimuat dari `tabs.json`
+    /// tanpa menimpa model tab tersimpan atau mereset `last_context_tokens`.
+    pub fn sync_client_to_active_tab_model(&self) -> String {
+        let current_base = self.client.base_url();
+        let active_model = {
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active_mut();
+            if active.provider_base_url.is_none() {
+                active.provider_base_url = Some(current_base);
+            }
+            active.model.clone()
+        };
+        {
+            let mut cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
+            if cat.find(&active_model).is_none() {
+                cat.register_custom(&active_model, &active_model);
+            }
+        }
+        self.client.set_default_model(&active_model);
+        active_model
+    }
+
+    /// Periksa apakah model tab aktif berasal dari provider/endpoint yang berbeda dengan
+    /// `LlmClient` yang sedang dikonfigurasi. Mengembalikan pesan peringatan bila tidak cocok.
+    pub fn check_active_tab_provider_mismatch(&self) -> Option<String> {
+        let current_base = self.client.base_url();
+        let (tab_model, saved_base) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active();
+            (active.model.clone(), active.provider_base_url.clone())
+        };
+        let cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
+        detect_provider_model_mismatch(&tab_model, saved_base.as_deref(), &current_base, &cat)
+    }
+
+    /// Pulihkan model tab aktif saat boot CLI jika cocok dengan provider aktif; bila berasal dari
+    /// provider/endpoint berbeda, alihkan ke `fallback_model` (mereset `last_context_tokens`)
+    /// dan kembalikan pesan peringatan yang jelas untuk user.
+    pub fn sync_client_to_active_tab_model_or_fallback(
+        &self,
+        fallback_model: &str,
+    ) -> (String, Option<String>) {
+        if let Some(reason) = self.check_active_tab_provider_mismatch() {
+            let resolved = self.set_active_model(fallback_model);
+            return (
+                resolved.clone(),
+                Some(format!("{} Dialihkan ke '{}'.", reason, resolved)),
+            );
+        }
+        (self.sync_client_to_active_tab_model(), None)
+    }
+
+    /// Ambil `(last_context_tokens, last_context_estimated_tokens)` hanya bila fingerprint
+    /// observasinya masih cocok dengan konfigurasi aktif saat ini.
+    pub(super) fn observed_context_pair_for(
         &self,
         session: &ChatSession,
         decls: &[Value],
-    ) -> Option<u64> {
-        let tokens = session.last_context_tokens?;
+    ) -> (Option<u64>, Option<u64>) {
+        let Some(tokens) = session.last_context_tokens else {
+            return (None, None);
+        };
         let expected = self.context_observation_fingerprint(&session.model, decls);
-        (session.last_context_fingerprint.as_deref() == Some(expected.as_str())).then_some(tokens)
+        if session.last_context_fingerprint.as_deref() == Some(expected.as_str()) {
+            (Some(tokens), session.last_context_estimated_tokens)
+        } else {
+            (None, None)
+        }
     }
 
-    /// Kebijakan konteks berdasarkan limit model aktif saat ini.
+    /// Kalibrasi `last_observed_input_tokens` dengan menambahkan delta estimasi lokal
+    /// dari pesan baru yang ditambahkan setelah respons provider terakhir.
+    pub(super) fn calibrated_observed_tokens(
+        policy: &ContextPolicy,
+        system_instruction: &str,
+        decls: &[Value],
+        history: &[Value],
+        observed: Option<u64>,
+        baseline_estimated: Option<u64>,
+    ) -> Option<u64> {
+        let obs = observed?;
+        let delta = baseline_estimated
+            .map(|base| {
+                crate::context::evaluate_budget(policy, system_instruction, decls, history, None)
+                    .total_estimated_tokens
+                    .saturating_sub(base)
+            })
+            .unwrap_or(0);
+        Some(obs.saturating_add(delta))
+    }
+
+    /// Kebijakan konteks berdasarkan limit & kapabilitas input model aktif saat ini.
     pub fn context_policy(&self) -> ContextPolicy {
         let info = self.active_model_info();
+        let supports_images = info.input.iter().any(|m| m == "image");
         ContextPolicy::for_model_limits(info.input_token_limit, info.output_token_limit)
+            .with_supports_images(supports_images)
     }
 
     /// Evaluasi anggaran konteks tab aktif terhadap limit model aktif.
     pub fn context_budget(&self) -> BudgetSnapshot {
         let decls = self.tools.declarations();
-        let (history, last_observed) = {
+        let policy = self.context_policy();
+        let (history, observed, baseline) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let active = tabs.active();
-            (
-                active.history.clone(),
-                self.observed_context_tokens_for(active, &decls),
-            )
+            let (obs, base) = self.observed_context_pair_for(active, &decls);
+            (active.history.clone(), obs, base)
         };
-        ContextManager::new(self.context_policy()).evaluate(
+        let last_observed = Self::calibrated_observed_tokens(
+            &policy,
+            &self.system_instruction,
+            &decls,
+            &history,
+            observed,
+            baseline,
+        );
+        ContextManager::new(policy).evaluate(
             &self.system_instruction,
             &decls,
             &history,
@@ -560,15 +708,22 @@ impl AgentHarness {
         cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PreparedContext, BoxError> {
         let decls = self.tools.declarations();
-        let (history, last_observed) = {
+        let policy = self.context_policy();
+        let (history, observed, baseline) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let active = tabs.active();
-            (
-                active.history.clone(),
-                self.observed_context_tokens_for(active, &decls),
-            )
+            let (obs, base) = self.observed_context_pair_for(active, &decls);
+            (active.history.clone(), obs, base)
         };
-        let manager = ContextManager::new(self.context_policy());
+        let last_observed = Self::calibrated_observed_tokens(
+            &policy,
+            &self.system_instruction,
+            &decls,
+            &history,
+            observed,
+            baseline,
+        );
+        let manager = ContextManager::new(policy);
         let prepared = manager
             .prepare_or_compact(
                 &self.system_instruction,
@@ -674,4 +829,130 @@ impl Agent for AgentHarness {
     fn clear_memory(&self) {
         self.clear_memory_silent();
     }
+}
+
+fn normalize_base_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn infer_official_provider_from_base_url(base_url: &str) -> Option<&'static str> {
+    let trimmed = base_url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    let host = authority
+        .split('@')
+        .next_back()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match host.as_str() {
+        "generativelanguage.googleapis.com" => Some("google"),
+        "api.openai.com" => Some("openai"),
+        "api.anthropic.com" => Some("anthropic"),
+        "api.deepseek.com" => Some("deepseek"),
+        _ => None,
+    }
+}
+
+fn infer_official_provider_from_model(
+    model_id: &str,
+    catalog: &ModelCatalog,
+) -> Option<&'static str> {
+    if let Some(info) = catalog.find(model_id) {
+        match info.provider.as_str() {
+            "google" | "google-gemini-cli" => return Some("google"),
+            "openai" => return Some("openai"),
+            "anthropic" => return Some("anthropic"),
+            "deepseek" => return Some("deepseek"),
+            _ => {}
+        }
+    }
+    let lower = model_id.trim().to_ascii_lowercase();
+    if lower.starts_with("gemini-") || lower.starts_with("google/") {
+        Some("google")
+    } else if lower.starts_with("claude-") || lower.starts_with("anthropic/") {
+        Some("anthropic")
+    } else if lower.starts_with("deepseek-") || lower.starts_with("deepseek/") {
+        Some("deepseek")
+    } else if lower.starts_with("gpt-")
+        || lower.starts_with("chatgpt-")
+        || lower.starts_with("openai/")
+        || lower.starts_with("o1-")
+        || lower.starts_with("o3-")
+        || lower.starts_with("o4-")
+        || matches!(lower.as_str(), "o1" | "o3" | "o4")
+    {
+        Some("openai")
+    } else {
+        None
+    }
+}
+
+fn detect_provider_model_mismatch(
+    tab_model: &str,
+    saved_base: Option<&str>,
+    current_base: &str,
+    catalog: &ModelCatalog,
+) -> Option<String> {
+    if let Some(saved) = saved_base.map(str::trim).filter(|s| !s.is_empty()) {
+        if normalize_base_url(saved) != normalize_base_url(current_base) {
+            return Some(format!(
+                "Model tab tersimpan '{}' sebelumnya dipakai di endpoint '{}', bukan endpoint aktif '{}'.",
+                tab_model,
+                saved,
+                current_base.trim()
+            ));
+        }
+    }
+
+    let base_norm = normalize_base_url(current_base);
+    let is_native_google = base_norm.contains("googleapis.com") && !base_norm.contains("/openai");
+    let client_provider = infer_official_provider_from_base_url(current_base);
+
+    if let Some(info) = catalog.find(tab_model) {
+        match info.api.as_str() {
+            "google-generative-ai" if !is_native_google => {
+                return Some(format!(
+                    "Model tab tersimpan '{}' memakai protokol API '{}' yang tidak cocok dengan endpoint aktif '{}'.",
+                    tab_model,
+                    info.api,
+                    current_base.trim()
+                ));
+            }
+            "openai-completions" | "openai-responses" if is_native_google => {
+                return Some(format!(
+                    "Model tab tersimpan '{}' memakai protokol API '{}' yang tidak cocok dengan endpoint aktif '{}'.",
+                    tab_model,
+                    info.api,
+                    current_base.trim()
+                ));
+            }
+            "anthropic-messages" if client_provider.is_some_and(|p| p != "anthropic") => {
+                return Some(format!(
+                    "Model tab tersimpan '{}' memakai protokol API '{}' yang tidak cocok dengan provider aktif '{}'.",
+                    tab_model,
+                    info.api,
+                    client_provider.unwrap_or("unknown")
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(client_provider) = client_provider {
+        if let Some(model_provider) = infer_official_provider_from_model(tab_model, catalog) {
+            if model_provider != client_provider {
+                return Some(format!(
+                    "Model tab tersimpan '{}' terdeteksi untuk provider '{}', tidak cocok dengan provider aktif '{}'.",
+                    tab_model, model_provider, client_provider
+                ));
+            }
+        }
+    }
+    None
 }

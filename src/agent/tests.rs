@@ -681,3 +681,570 @@ async fn agent_compaction_forwards_inline_images_only_to_multimodal_models() {
 
     srv.abort();
 }
+
+#[test]
+fn workspace_tabs_clamps_oob_active_index_and_backs_up_corrupt_file() {
+    let dir = std::env::temp_dir().join(format!(
+        "oopbot_tabs_recovery_{}_{}",
+        std::process::id(),
+        crate::common::time::epoch_ms()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let tabs_path = dir.join("tabs.json");
+
+    // 1. active_index out-of-bounds + stale next_id -> harus di-clamp aman tanpa panic.
+    let oob_json = json!({
+        "tabs": [{
+            "id": "5",
+            "title": "Tab 5",
+            "model": "saved-model",
+            "history": [],
+            "timeline": []
+        }],
+        "active_index": 99,
+        "next_id": 1
+    });
+    std::fs::write(&tabs_path, oob_json.to_string()).unwrap();
+    let (loaded, warn) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+    assert!(warn.is_none());
+    let mut ws = loaded.expect("valid tabs loaded");
+    assert_eq!(ws.active_index(), 0);
+    assert_eq!(ws.active().id, "5");
+    assert_eq!(ws.new_tab("saved-model").id, "6");
+
+    // 2. File korup -> harus dipindah ke *.corrupt-*.bak dan mengembalikan warning.
+    std::fs::write(&tabs_path, "{broken json").unwrap();
+    let (loaded2, warn2) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+    assert!(loaded2.is_none());
+    let warning = warn2.expect("corrupt warning returned");
+    assert!(warning.contains(".corrupt-"));
+    assert!(!tabs_path.exists(), "corrupt tabs.json should be moved to backup");
+    let backups: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+        .collect();
+    assert_eq!(backups.len(), 1);
+
+    // 3. Jalur konstruktor nyata AgentHarness dengan file korup: recovery warning tidak boleh
+    // terhapus oleh persist sukses (mis. --model / set_active_model).
+    struct DenyAll;
+    #[async_trait]
+    impl Approver for DenyAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            false
+        }
+    }
+    let real_corrupt_path = dir.join("tabs_real_ctor.json");
+    std::fs::write(&real_corrupt_path, "{corrupt on startup").unwrap();
+    let client = crate::llm::LlmClient::new("test-key".into(), "model-a".into()).unwrap();
+    let harness = AgentHarness::with_event_sink_at_storage_path(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        Some(real_corrupt_path.clone()),
+    );
+    harness.set_active_model("model-override");
+    assert!(
+        real_corrupt_path.exists(),
+        "set_active_model should persist new tabs.json"
+    );
+    let surfaced = harness
+        .take_persist_error()
+        .expect("real constructor load_warning must survive successful set_active_model save");
+    assert!(surfaced.contains("tabs_real_ctor.json.corrupt-"));
+    assert!(harness.take_persist_error().is_none());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn agent_calibrates_token_delta_avoids_per_step_thrash_and_preserves_saved_tab_model() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let summary_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let main_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let summary_calls_srv = Arc::clone(&summary_calls);
+    let main_calls_srv = Arc::clone(&main_calls);
+
+    let srv = tokio::spawn(async move {
+        for _ in 0..8 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 65_536];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let is_summary = req.contains("Summarize the conversation clearly");
+
+            let body = if is_summary {
+                summary_calls_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // Kembalikan ringkasan yang mendarat di zona NeedsCompaction (~625 token dari usable 750),
+                // belum OverLimit, untuk menguji anti-thrash antar step tool (min_growth = 75).
+                let dense_summary = "ringkasan padat penting ".repeat(90);
+                json!({
+                    "choices": [{
+                        "message": { "role": "assistant", "content": dense_summary }
+                    }],
+                    "usage": { "prompt_tokens": 50, "completion_tokens": 120 }
+                })
+                .to_string()
+            } else {
+                let n_call = main_calls_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n_call == 0 {
+                    // Step 1 memanggil tool kecil (`echo_tool`) agar loop masuk step 2.
+                    json!({
+                        "choices": [{
+                            "message": {
+                                "role": "assistant",
+                                "content": null,
+                                "tool_calls": [{
+                                    "id": "tc_1",
+                                    "type": "function",
+                                    "function": { "name": "echo_tool", "arguments": "{}" }
+                                }]
+                            }
+                        }],
+                        "usage": { "prompt_tokens": 625, "completion_tokens": 10 }
+                    })
+                    .to_string()
+                } else {
+                    json!({
+                        "choices": [{
+                            "message": { "role": "assistant", "content": "Selesai tanpa thrashing." }
+                        }],
+                        "usage": { "prompt_tokens": 660, "completion_tokens": 10 }
+                    })
+                    .to_string()
+                }
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    struct EchoTool;
+    #[async_trait]
+    impl crate::tools::Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "echo_tool"
+        }
+        fn description(&self) -> &'static str {
+            "small echo"
+        }
+        fn parameters(&self) -> Value {
+            json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "ok": true }))
+        }
+    }
+
+    let mut tools = crate::tools::ToolRegistry::new();
+    tools.register(Box::new(EchoTool));
+
+    // Client dimulai dengan default env model berbeda ("env-default"), tetapi tab tersimpan memakai "saved-tab-model".
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "env-default".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let mut tabs = WorkspaceTabs::new("saved-tab-model");
+    tabs.active_mut().history = vec![
+        json!({ "role": "user", "parts": [{ "text": "pesan lama 1" }] }),
+        json!({ "role": "model", "parts": [{ "text": "jawab lama 1" }] }),
+    ];
+
+    let mut harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        tools,
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        4,
+        tabs,
+        None,
+    );
+    harness.set_system_instruction("sys".into());
+    harness.configure_model(
+        "saved-tab-model",
+        &json!({ "api": "openai-completions", "contextWindow": 1000, "maxTokens": 200 }),
+    );
+    harness.set_auto_compact(true);
+
+    // #7: sync_client_to_active_tab_model mempertahankan model tab tersimpan & observasinya.
+    let fp = harness.context_observation_fingerprint("saved-tab-model", &harness.tools.declarations());
+    let base_est = harness.context_budget().total_estimated_tokens;
+    {
+        let mut t = harness.tabs.lock().unwrap();
+        // Provider menokenisasi padat (observed=590 dari usable=750, threshold=600), padahal estimasi lokal kecil.
+        t.active_mut()
+            .set_observed_context_tokens_with_baseline(Some(590), Some(base_est), Some(fp));
+    }
+    assert_eq!(harness.sync_client_to_active_tab_model(), "saved-tab-model");
+    assert_eq!(harness.model(), "saved-tab-model");
+    assert_eq!(harness.context_budget().last_observed_input_tokens, Some(590));
+
+    // #4: Menambahkan pesan baru (~25 token) harus mengkalibrasi observed = 590 + delta -> >= 600 (NeedsCompaction)
+    // sehingga memicu compaction di step 1 (meski estimasi lokal saja jauh di bawah 600),
+    // lalu #3: step 2 (setelah tool kecil) TIDAK memicu compaction ulang meski masih di NeedsCompaction.
+    let reply = harness
+        .chat("tolong jalankan echo tool sekarang ya")
+        .await
+        .unwrap();
+    assert_eq!(reply, "Selesai tanpa thrashing.");
+    assert_eq!(
+        main_calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "expected 2 main LLM steps (tool call + final answer)"
+    );
+    assert_eq!(
+        summary_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "expected exactly 1 auto-compaction without thrashing on step 2"
+    );
+
+    srv.abort();
+}
+
+#[test]
+fn agent_restores_tab_model_only_when_compatible_with_active_provider() {
+    struct DenyAll;
+    #[async_trait]
+    impl Approver for DenyAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            false
+        }
+    }
+
+    // 1. Legacy tab (tanpa provider_base_url) menyimpan model Gemini, tapi CLI dibuka dengan OpenAI endpoint.
+    let openai_client = crate::llm::LlmClient::new_with_base_url(
+        "sk-openai".into(),
+        "gpt-4o-mini".into(),
+        Some("https://api.openai.com/v1".into()),
+    )
+    .unwrap();
+    let legacy_gemini_tabs = WorkspaceTabs::new("gemini-2.5-flash");
+    let harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        openai_client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        legacy_gemini_tabs,
+        None,
+    );
+    let (model, warn) = harness.sync_client_to_active_tab_model_or_fallback("gpt-4o-mini");
+    assert_eq!(model, "gpt-4o-mini");
+    assert_eq!(harness.model(), "gpt-4o-mini");
+    let msg = warn.expect("cross-provider legacy Gemini model on OpenAI must warn and fall back");
+    assert!(msg.contains("gemini-2.5-flash") && msg.contains("gpt-4o-mini"));
+
+    // 2. Tab menyimpan provider_base_url eksplisit yang berbeda (Gemini -> custom local endpoint).
+    let local_client = crate::llm::LlmClient::new_with_base_url(
+        "local-key".into(),
+        "llama3.2".into(),
+        Some("http://127.0.0.1:11434/v1".into()),
+    )
+    .unwrap();
+    let mut saved_tabs = WorkspaceTabs::new("gemini-2.5-pro");
+    saved_tabs.active_mut().provider_base_url =
+        Some("https://generativelanguage.googleapis.com/v1beta".into());
+    let harness2 = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        local_client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        saved_tabs,
+        None,
+    );
+    let (model2, warn2) = harness2.sync_client_to_active_tab_model_or_fallback("llama3.2");
+    assert_eq!(model2, "llama3.2");
+    assert!(warn2.is_some());
+
+    // 3. Tab menyimpan model & provider_base_url yang sama -> model & observasi dipertahankan tanpa warning.
+    let openai_client2 = crate::llm::LlmClient::new_with_base_url(
+        "sk-openai".into(),
+        "gpt-4o-mini".into(),
+        Some("https://api.openai.com/v1".into()),
+    )
+    .unwrap();
+    let mut same_tabs = WorkspaceTabs::new("gpt-4.1");
+    same_tabs.active_mut().provider_base_url = Some("https://api.openai.com/v1/".into());
+    let harness3 = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        openai_client2,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        same_tabs,
+        None,
+    );
+    let (model3, warn3) = harness3.sync_client_to_active_tab_model_or_fallback("gpt-4o-mini");
+    assert_eq!(model3, "gpt-4.1");
+    assert!(warn3.is_none());
+
+    // 4. Mengganti endpoint saat runtime (mis. /token <key> <base_url>) memicu mismatch hingga /model dipanggil.
+    harness3.update_credentials(
+        "sk-ant".into(),
+        Some("https://api.anthropic.com/v1".into()),
+    );
+    assert!(
+        harness3.check_active_tab_provider_mismatch().is_some(),
+        "switching provider base_url at runtime must flag active tab model mismatch"
+    );
+    harness3.set_active_model("claude-sonnet-4-20250514");
+    assert!(
+        harness3.check_active_tab_provider_mismatch().is_none(),
+        "selecting a model under the new provider must clear mismatch"
+    );
+
+    // 5. Same-URL tapi protokol API/provider model bertentangan (Codex P2):
+    // tab menyimpan `gemini-2.5-flash` (api: google-generative-ai) dengan provider_base_url OpenAI yang sama.
+    let openai_client3 = crate::llm::LlmClient::new_with_base_url(
+        "sk-openai".into(),
+        "gpt-4o-mini".into(),
+        Some("https://api.openai.com/v1".into()),
+    )
+    .unwrap();
+    let mut same_url_bad_model = WorkspaceTabs::new("gemini-2.5-flash");
+    same_url_bad_model.active_mut().provider_base_url = Some("https://api.openai.com/v1".into());
+    let harness4 = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        openai_client3,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        same_url_bad_model,
+        None,
+    );
+    let (model4, warn4) = harness4.sync_client_to_active_tab_model_or_fallback("gpt-4o-mini");
+    assert_eq!(model4, "gpt-4o-mini");
+    let msg4 = warn4.expect("same-URL incompatible model API/provider must still warn and fall back");
+    assert!(msg4.contains("gemini-2.5-flash") && msg4.contains("gpt-4o-mini"));
+
+    // 6. Same-URL endpoint custom/local tapi model built-in memakai protokol `google-generative-ai`.
+    let local_client2 = crate::llm::LlmClient::new_with_base_url(
+        "local-key".into(),
+        "llama3.2".into(),
+        Some("http://127.0.0.1:11434/v1".into()),
+    )
+    .unwrap();
+    let mut local_bad_api = WorkspaceTabs::new("gemini-2.5-flash");
+    local_bad_api.active_mut().provider_base_url = Some("http://127.0.0.1:11434/v1".into());
+    let harness5 = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        local_client2,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        local_bad_api,
+        None,
+    );
+    let (model5, warn5) = harness5.sync_client_to_active_tab_model_or_fallback("llama3.2");
+    assert_eq!(model5, "llama3.2");
+    assert!(
+        warn5.is_some(),
+        "same-URL custom endpoint with google-generative-ai catalog model must warn and fall back"
+    );
+}
+
+#[tokio::test]
+async fn anti_thrash_compares_local_estimates_on_dense_provider_tokenizer_and_exact_boundaries() {
+    use crate::context::BudgetStatus;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    // 1. Tes batas eksak `should_skip_redundant_auto_compact` (min_growth = 75 untuk usable = 750).
+    assert!(!runner::should_skip_redundant_auto_compact(
+        BudgetStatus::NeedsCompaction,
+        300,
+        None,
+        750
+    ));
+    assert!(runner::should_skip_redundant_auto_compact(
+        BudgetStatus::NeedsCompaction,
+        300 + 75 - 1,
+        Some(300),
+        750
+    ));
+    assert!(!runner::should_skip_redundant_auto_compact(
+        BudgetStatus::NeedsCompaction,
+        300 + 75,
+        Some(300),
+        750
+    ));
+    assert!(!runner::should_skip_redundant_auto_compact(
+        BudgetStatus::OverLimit,
+        300 + 5,
+        Some(300),
+        750
+    ));
+
+    // 2. Repro M1: ringkasan pasca-compaction kecil secara estimasi lokal (~120 token),
+    // tetapi tokenizer provider padat melaporkan `prompt_tokens = 630` (zona NeedsCompaction,
+    // usable = 750, threshold = 600). Tool kecil menambah ~10 token lokal -> step 2 TIDAK boleh
+    // memicu compaction ulang karena pertumbuhan lokal jauh di bawah min_growth (75).
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let summary_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let main_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let summary_calls_srv = Arc::clone(&summary_calls);
+    let main_calls_srv = Arc::clone(&main_calls);
+
+    let srv = tokio::spawn(async move {
+        for _ in 0..8 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 65_536];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let is_summary = req.contains("Summarize the conversation clearly");
+
+            let body = if is_summary {
+                summary_calls_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({
+                    "choices": [{
+                        "message": { "role": "assistant", "content": "Ringkasan sangat padat dan pendek." }
+                    }],
+                    "usage": { "prompt_tokens": 60, "completion_tokens": 15 }
+                })
+                .to_string()
+            } else {
+                let n_call = main_calls_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n_call == 0 {
+                    // Provider melaporkan prompt_tokens = 630 (jauh di atas estimasi lokal ~120)
+                    // sambil memanggil tool kecil agar masuk step 2.
+                    json!({
+                        "choices": [{
+                            "message": {
+                                "role": "assistant",
+                                "content": null,
+                                "tool_calls": [{
+                                    "id": "tc_m1",
+                                    "type": "function",
+                                    "function": { "name": "tiny_tool", "arguments": "{}" }
+                                }]
+                            }
+                        }],
+                        "usage": { "prompt_tokens": 630, "completion_tokens": 12 }
+                    })
+                    .to_string()
+                } else {
+                    json!({
+                        "choices": [{
+                            "message": { "role": "assistant", "content": "Selesai tanpa thrash M1." }
+                        }],
+                        "usage": { "prompt_tokens": 642, "completion_tokens": 10 }
+                    })
+                    .to_string()
+                }
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    struct TinyTool;
+    #[async_trait]
+    impl crate::tools::Tool for TinyTool {
+        fn name(&self) -> &'static str {
+            "tiny_tool"
+        }
+        fn description(&self) -> &'static str {
+            "tiny"
+        }
+        fn parameters(&self) -> Value {
+            json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "ok": 1 }))
+        }
+    }
+
+    let mut tools = crate::tools::ToolRegistry::new();
+    tools.register(Box::new(TinyTool));
+
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "dense-model".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let mut tabs = WorkspaceTabs::new("dense-model");
+    // Histori awal memicu auto-compaction di step 1 (estimasi lokal > 600 dari usable = 750).
+    tabs.active_mut().history = vec![
+        json!({ "role": "user", "parts": [{ "text": "konteks awal panjang ".repeat(140) }] }),
+        json!({ "role": "model", "parts": [{ "text": "balasan awal panjang ".repeat(140) }] }),
+    ];
+
+    let mut harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        tools,
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        4,
+        tabs,
+        None,
+    );
+    harness.set_system_instruction("sys".into());
+    harness.configure_model(
+        "dense-model",
+        &json!({ "api": "openai-completions", "contextWindow": 1000, "maxTokens": 200 }),
+    );
+    harness.set_auto_compact(true);
+
+    let reply = harness.chat("jalankan tiny_tool").await.unwrap();
+    assert_eq!(reply, "Selesai tanpa thrash M1.");
+    assert_eq!(
+        main_calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "expected 2 main calls (tool + final)"
+    );
+    assert_eq!(
+        summary_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "dense provider prompt_tokens after small tool growth must NOT trigger a 2nd compaction (M1)"
+    );
+
+    srv.abort();
+}

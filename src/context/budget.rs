@@ -21,6 +21,8 @@ pub struct ContextPolicy {
     pub auto_compact_ratio: f32,
     /// Target token pesan terbaru yang tetap dipertahankan utuh saat compaction.
     pub keep_recent_tokens: u64,
+    /// Apakah model aktif mendukung input gambar (`inlineData`).
+    pub supports_images: bool,
 }
 
 impl Default for ContextPolicy {
@@ -53,7 +55,13 @@ impl ContextPolicy {
             reserve_output_tokens: reserve,
             auto_compact_ratio: DEFAULT_AUTO_COMPACT_RATIO,
             keep_recent_tokens: keep_recent,
+            supports_images: true,
         }
+    }
+
+    pub fn with_supports_images(mut self, supports_images: bool) -> Self {
+        self.supports_images = supports_images;
+        self
     }
 
     /// Kapasitas input efektif setelah dikurangi cadangan output.
@@ -77,6 +85,16 @@ impl ContextPolicy {
         let prompt_tokens = usable.saturating_sub(64).max(128);
         let derived = (prompt_tokens as usize).saturating_mul(3);
         derived.clamp(512, super::compactor::MAX_COMPACTION_PROMPT_CHARS)
+    }
+
+    /// Anggaran token maksimum untuk lampiran gambar `inlineData` pada request compaction
+    /// (maksimal 25% dari `usable_limit`; `0` untuk model text-only).
+    pub fn max_compaction_image_tokens(&self) -> u64 {
+        if self.supports_images {
+            self.usable_limit() / 4
+        } else {
+            0
+        }
     }
 }
 

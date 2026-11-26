@@ -235,13 +235,22 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         Box::new(CliEventSink),
         cli.max_steps,
     );
+    ui::warn_if_persist_failed(&agent);
     agent.set_system_instruction(append_cli_system_instruction(
         agent.system_instruction().to_owned(),
         &plugins,
         cli.system_append.as_deref(),
     ));
     agent.set_auto_compact(true);
-    agent.set_active_model(&creds.model);
+    let active_model = if cli.model.is_some() {
+        agent.set_active_model(&creds.model)
+    } else {
+        let (model, mismatch_warn) = agent.sync_client_to_active_tab_model_or_fallback(&creds.model);
+        if let Some(warn) = mismatch_warn {
+            eprintln!("⚠️  {}\n", warn);
+        }
+        model
+    };
     ui::warn_if_persist_failed(&agent);
 
     // Mode satu kali jalan (-p "prompt")
@@ -260,7 +269,7 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         }
     }
 
-    repl::run_repl(&agent, &creds.provider_name, &creds.model, cli.auto_approve).await
+    repl::run_repl(&agent, &creds.provider_name, &active_model, cli.auto_approve).await
 }
 
 #[cfg(test)]
