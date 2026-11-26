@@ -14,7 +14,8 @@ use crate::context::ContextStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,8 +279,8 @@ impl WorkspaceTabs {
 
     /// Coba parse `tabs.json` secara toleran per-entri saat deserialize penuh gagal
     /// (mis. satu entri tab rusak atau metadata top-level rusak, tetapi tab lain masih utuh).
-    /// Mengembalikan `(WorkspaceTabs, jumlah_tab_dilewati)` bila minimal 1 tab sehat berhasil dipulihkan.
-    fn parse_tolerant_from_str(data: &str) -> Option<(Self, usize)> {
+    /// Mengembalikan `(WorkspaceTabs, jumlah_tab_dilewati, active_tab_berubah)` bila minimal 1 tab sehat pulih.
+    fn parse_tolerant_from_str(data: &str) -> Option<(Self, usize, bool)> {
         let root: Value = serde_json::from_str(data).ok()?;
         let obj = root.as_object()?;
         let tabs_arr = obj.get("tabs")?.as_array()?;
@@ -295,9 +296,9 @@ impl WorkspaceTabs {
             .unwrap_or(1);
 
         let mut valid_tabs = Vec::with_capacity(tabs_arr.len());
+        let mut surviving_orig_indices = Vec::with_capacity(tabs_arr.len());
         let mut skipped_tabs = 0usize;
         let mut mapped_active: Option<usize> = None;
-        let mut valid_before_active = 0usize;
 
         for (orig_idx, item) in tabs_arr.iter().enumerate() {
             match serde_json::from_value::<ChatSession>(item.clone()) {
@@ -306,10 +307,8 @@ impl WorkspaceTabs {
                     if raw_active_index == Some(orig_idx) {
                         mapped_active = Some(new_idx);
                     }
-                    if raw_active_index.is_some_and(|a| orig_idx < a) {
-                        valid_before_active += 1;
-                    }
                     valid_tabs.push(tab);
+                    surviving_orig_indices.push(orig_idx);
                 }
                 Err(_) => {
                     skipped_tabs += 1;
@@ -321,11 +320,23 @@ impl WorkspaceTabs {
             return None;
         }
 
-        let active_index = match mapped_active {
-            Some(idx) => idx,
+        let (active_index, active_reassigned) = match mapped_active {
+            Some(idx) => (idx, false),
             None => match raw_active_index {
-                Some(_) => valid_before_active.min(valid_tabs.len() - 1),
-                None => 0,
+                Some(orig_active) => {
+                    // Pilih tab sehat dengan jarak indeks paling dekat ke posisi tab aktif semula
+                    // (bila seri, pilih tetangga lebih awal).
+                    let nearest = surviving_orig_indices
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|&(new_idx, &orig_idx)| {
+                            (orig_idx.abs_diff(orig_active), new_idx)
+                        })
+                        .map(|(new_idx, _)| new_idx)
+                        .unwrap_or(0);
+                    (nearest, true)
+                }
+                None => (0, true),
             },
         };
 
@@ -335,12 +346,12 @@ impl WorkspaceTabs {
             next_id: raw_next_id,
         };
         recovered.sanitize();
-        Some((recovered, skipped_tabs))
+        Some((recovered, skipped_tabs, active_reassigned))
     }
 
     /// Muat state tab dari file JSON dengan sanitasi `active_index`/`next_id`/ID duplikat,
-    /// pemulihan toleran per-entri saat korupsi parsial, dan karantina backup `*.corrupt-<ts>.bak`
-    /// anti-tabrakan agar data tidak pernah tertimpa diam-diam.
+    /// pemulihan toleran per-entri saat korupsi parsial, dan reservasi backup atomik
+    /// tanpa menimpa (`hard_link` / `O_CREAT|O_EXCL`) agar data asli selalu aman.
     pub fn load_from_file_checked(path: &Path) -> (Option<Self>, Option<String>) {
         if !path.exists() {
             return (None, None);
@@ -354,12 +365,14 @@ impl WorkspaceTabs {
                 }
             }
 
-            // Korupsi parsial: pulihkan seluruh tab yang masih sehat, simpan salinan asli
-            // ke backup anti-tabrakan, dan tulis ulang `tabs.json` bersih (0o600).
-            if let Some((recovered, skipped_tabs)) = Self::parse_tolerant_from_str(data) {
+            // Korupsi parsial: pulihkan seluruh tab sehat, arsipkan file asli secara atomik
+            // tanpa menghapus `path` terlebih dahulu, lalu timpa `path` secara atomik (`0o600`)
+            // sehingga tidak ada jendela di mana `tabs.json` hilang dari disk.
+            if let Some((recovered, skipped_tabs, active_reassigned)) =
+                Self::parse_tolerant_from_str(data)
+            {
                 let recovered_count = recovered.tabs.len();
-                let backup_path = allocate_corrupt_backup_path(path);
-                let detail = if skipped_tabs > 0 {
+                let mut detail = if skipped_tabs > 0 {
                     format!(
                         "{} tab rusak dilewati, {} tab sehat dipulihkan",
                         skipped_tabs, recovered_count
@@ -370,38 +383,49 @@ impl WorkspaceTabs {
                         recovered_count
                     )
                 };
-                let warning = match fs::rename(path, &backup_path) {
-                    Ok(()) => match recovered.save_to_file(path) {
-                        Ok(()) => format!(
-                            "File sesi {} sebagian rusak ({}); salinan asli disimpan di {}.",
+                if active_reassigned {
+                    let active = recovered.active();
+                    detail.push_str(&format!(
+                        "; tab aktif dialihkan ke #{} \"{}\"",
+                        active.id, active.title
+                    ));
+                }
+                let warning =
+                    match archive_corrupt_file_no_clobber(path, Some(data.as_bytes()), false) {
+                        Ok(backup_path) => match recovered.save_to_file(path) {
+                            Ok(()) => format!(
+                                "File sesi {} sebagian rusak ({}); salinan asli disimpan di {}.",
+                                path.display(),
+                                detail,
+                                backup_path.display()
+                            ),
+                            Err(save_err) => format!(
+                                "File sesi {} sebagian rusak ({}); salinan asli disimpan di {}, namun gagal menyimpan file hasil pemulihan ({}).",
+                                path.display(),
+                                detail,
+                                backup_path.display(),
+                                save_err
+                            ),
+                        },
+                        Err(e) => format!(
+                            "File sesi {} sebagian rusak ({}), namun gagal membuat backup ({}); file asli masih di tempat dan dapat tertimpa saat penyimpanan berikutnya.",
                             path.display(),
                             detail,
-                            backup_path.display()
+                            e
                         ),
-                        Err(save_err) => format!(
-                            "File sesi {} sebagian rusak ({}); salinan asli dipindahkan ke {}, namun gagal menyimpan file hasil pemulihan ({}).",
-                            path.display(),
-                            detail,
-                            backup_path.display(),
-                            save_err
-                        ),
-                    },
-                    Err(e) => format!(
-                        "File sesi {} sebagian rusak ({}), namun gagal membuat backup ({}).",
-                        path.display(),
-                        detail,
-                        e
-                    ),
-                };
+                    };
                 return (Some(recovered), Some(warning));
             }
         }
 
-        // File ada tetapi tidak bisa dibaca / tidak valid total / kosong: pindahkan ke backup
-        // sebelum sesi baru menimpanya.
-        let backup_path = allocate_corrupt_backup_path(path);
-        let warning = match fs::rename(path, &backup_path) {
-            Ok(()) => format!(
+        // File ada tetapi tidak bisa dibaca / tidak valid total / kosong: arsipkan secara atomik
+        // tanpa menimpa backup lain lalu bersihkan `path` sebelum sesi baru menimpanya.
+        let warning = match archive_corrupt_file_no_clobber(
+            path,
+            raw_data.as_deref().map(str::as_bytes),
+            true,
+        ) {
+            Ok(backup_path) => format!(
                 "File sesi {} rusak; dipindahkan ke {} dan memulai tab baru.",
                 path.display(),
                 backup_path.display()
@@ -426,23 +450,114 @@ impl WorkspaceTabs {
     }
 }
 
-fn allocate_corrupt_backup_path(path: &Path) -> PathBuf {
+/// Arsipkan file `path` ke nama backup `*.corrupt-<ts>[-<pid>-<N>].bak` secara atomik
+/// tanpa pernah menimpa file backup yang sudah ada (menutup celah TOCTOU antar-proses).
+///
+/// Memprioritaskan `fs::hard_link` (atomik, fail-on-exists, mempertahankan inode & mode `0o600`),
+/// lalu fallback ke `OpenOptions::create_new(true)` (`O_CREAT | O_EXCL`, `0o600` di Unix)
+/// pada filesystem yang tidak mendukung hard link. Bila `remove_source` bernilai `true`,
+/// file sumber dihapus setelah arsip benar-benar aman di disk.
+fn archive_corrupt_file_no_clobber(
+    path: &Path,
+    raw_bytes: Option<&[u8]>,
+    remove_source: bool,
+) -> Result<PathBuf, String> {
+    archive_corrupt_file_no_clobber_with_ts(path, raw_bytes, remove_source, epoch_ms())
+}
+
+fn archive_corrupt_file_no_clobber_with_ts(
+    path: &Path,
+    raw_bytes: Option<&[u8]>,
+    remove_source: bool,
+    ts: u64,
+) -> Result<PathBuf, String> {
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("tabs.json");
-    let ts = epoch_ms();
-    let base = path.with_file_name(format!("{}.corrupt-{}.bak", file_name, ts));
-    if !base.exists() {
-        return base;
-    }
-    for suffix in 1u32..=10_000 {
-        let candidate = path.with_file_name(format!("{}.corrupt-{}-{}.bak", file_name, ts, suffix));
-        if !candidate.exists() {
-            return candidate;
+    let pid = std::process::id();
+    let mut cached_fallback_bytes: Option<Vec<u8>> = None;
+
+    for attempt in 0u32..=10_000 {
+        let candidate = if attempt == 0 {
+            path.with_file_name(format!("{}.corrupt-{}.bak", file_name, ts))
+        } else {
+            path.with_file_name(format!(
+                "{}.corrupt-{}-{}-{}.bak",
+                file_name, ts, pid, attempt
+            ))
+        };
+
+        // Jalur 1: atomic hard_link (POSIX link(2) tidak pernah menimpa target yang sudah ada).
+        match fs::hard_link(path, &candidate) {
+            Ok(()) => {
+                if remove_source {
+                    if let Err(e) = fs::remove_file(path) {
+                        if e.kind() != ErrorKind::NotFound {
+                            return Err(format!(
+                                "backup tersimpan di {}, namun gagal menghapus file sumber ({})",
+                                candidate.display(),
+                                e
+                            ));
+                        }
+                    }
+                }
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(format!("file sumber tidak ditemukan ({})", e));
+            }
+            Err(_hard_link_unsupported) => {
+                // Jalur 2 (fallback untuk FS tanpa hard link): atomic create_new (`O_CREAT|O_EXCL`).
+                let payload: &[u8] = if let Some(b) = raw_bytes {
+                    b
+                } else {
+                    if cached_fallback_bytes.is_none() {
+                        cached_fallback_bytes =
+                            Some(fs::read(path).map_err(|e| e.to_string())?);
+                    }
+                    cached_fallback_bytes.as_deref().unwrap_or(&[])
+                };
+
+                let mut opts = OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o600);
+                }
+                match opts.open(&candidate) {
+                    Ok(mut file) => {
+                        if let Err(e) = file.write_all(payload).and_then(|()| file.sync_all()) {
+                            let _ = fs::remove_file(&candidate);
+                            return Err(e.to_string());
+                        }
+                        if remove_source {
+                            if let Err(e) = fs::remove_file(path) {
+                                if e.kind() != ErrorKind::NotFound {
+                                    return Err(format!(
+                                        "backup tersimpan di {}, namun gagal menghapus file sumber ({})",
+                                        candidate.display(),
+                                        e
+                                    ));
+                                }
+                            }
+                        }
+                        return Ok(candidate);
+                    }
+                    Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
         }
     }
-    base
+
+    Err(format!(
+        "tidak menemukan nama file backup yang tersedia untuk {} pada timestamp {}",
+        path.display(),
+        ts
+    ))
 }
 
 #[cfg(test)]
@@ -637,6 +752,88 @@ mod tests {
         // new_tab tidak boleh panic meski next_id berada di usize::MAX.
         let created = ws.new_tab("m5");
         assert!(!ids.contains(&created.id));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nearest_neighbor_remap_and_atomic_no_clobber_backup_reservation() {
+        let dir = std::env::temp_dir().join(format!(
+            "oopbot_nearest_noclobber_{}_{}",
+            std::process::id(),
+            epoch_ms()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let tabs_path = dir.join("tabs.json");
+
+        // 1. Tab valid hanya di indeks 3 ("Dekat") dan indeks 9 ("Jauh"); tab aktif korup di indeks 4 ->
+        // jarak ke 3 adalah 1, jarak ke 9 adalah 5 -> harus memilih "Dekat" dan menyebut pengalihan di warning.
+        let mut entries = vec![json!(null); 10];
+        entries[3] =
+            json!({ "id": "3", "title": "Dekat", "model": "m1", "history": [], "timeline": [] });
+        entries[9] =
+            json!({ "id": "9", "title": "Jauh", "model": "m2", "history": [], "timeline": [] });
+        let sparse = json!({ "tabs": entries, "active_index": 4, "next_id": 10 });
+        fs::write(&tabs_path, sparse.to_string()).unwrap();
+
+        let (loaded, warn) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+        let ws = loaded.expect("2 valid tabs recovered");
+        assert_eq!(ws.active().id, "3");
+        assert_eq!(ws.active().title, "Dekat");
+        let w = warn.expect("partial recovery warning expected");
+        assert!(w.contains("tab aktif dialihkan ke #3 \"Dekat\""));
+
+        // 2. Tab aktif korup di posisi terakhir (indeks 2 dari 0..=2) -> memilih tetangga terdekat indeks 1.
+        let corrupt_last = json!({
+            "tabs": [
+                { "id": "1", "title": "Awal", "model": "m1", "history": [], "timeline": [] },
+                { "id": "2", "title": "Tengah", "model": "m2", "history": [], "timeline": [] },
+                null
+            ],
+            "active_index": 2,
+            "next_id": 3
+        });
+        fs::write(&tabs_path, corrupt_last.to_string()).unwrap();
+        let (loaded_last, warn_last) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+        let ws_last = loaded_last.expect("2 valid tabs recovered");
+        assert_eq!(ws_last.active().id, "2");
+        assert!(warn_last.unwrap().contains("tab aktif dialihkan ke #2"));
+
+        // 3. Reservasi backup atomik no-clobber: file backup dengan timestamp sama sudah ada ->
+        // tidak boleh menimpa backup lama dan harus membuat nama baru dengan suffix pid+counter.
+        let fixed_ts = 1_700_000_000_123u64;
+        let existing_bak = dir.join(format!("tabs.json.corrupt-{}.bak", fixed_ts));
+        fs::write(&existing_bak, "BACKUP_LAMA_JANGAN_TIMPA").unwrap();
+        fs::write(&tabs_path, "DATA_KORUP_BARU").unwrap();
+
+        let reserved = archive_corrupt_file_no_clobber_with_ts(
+            &tabs_path,
+            Some(b"DATA_KORUP_BARU"),
+            true,
+            fixed_ts,
+        )
+        .expect("atomic backup must succeed via suffixed candidate");
+        assert_ne!(reserved, existing_bak);
+        assert_eq!(
+            fs::read_to_string(&existing_bak).unwrap(),
+            "BACKUP_LAMA_JANGAN_TIMPA",
+            "pre-existing backup must never be clobbered"
+        );
+        assert_eq!(fs::read_to_string(&reserved).unwrap(), "DATA_KORUP_BARU");
+        assert!(!tabs_path.exists());
+
+        // 4. Bentuk JSON top-level tidak valid (`tabs` bukan array / hilang / terpotong) -> karantina penuh.
+        for bad_top in [
+            r#"{"active_index": 0}"#,
+            r#"{"tabs": "not-an-array"}"#,
+            r#"{"tabs": [{"id": "1""#,
+        ] {
+            fs::write(&tabs_path, bad_top).unwrap();
+            let (res, warn_bad) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+            assert!(res.is_none());
+            assert!(warn_bad.unwrap().contains("memulai tab baru"));
+            assert!(!tabs_path.exists());
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }
