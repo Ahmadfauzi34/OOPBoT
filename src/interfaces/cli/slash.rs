@@ -154,31 +154,111 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
             let instructions = (!arg.is_empty()).then_some(arg);
             let (_tx, cancel_rx) = tokio::sync::watch::channel(false);
             match agent.compact_active_tab(instructions, cancel_rx).await {
-                Ok(prep) if prep.compacted => {
-                    warn_if_persist_failed(agent);
-                    println!(
-                        "✅ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan). Estimasi baru: ~{} / {} token.",
-                        prep.summarized_messages,
-                        prep.kept_messages,
-                        prep.budget.total_estimated_tokens,
-                        prep.budget.usable_limit
-                    );
-                    if prep.budget.status == crate::context::BudgetStatus::OverLimit {
-                        eprintln!(
-                            "⚠️  Peringatan: konteks masih melampaui batas model (~{} / {} token usable). Giliran berikutnya dapat diblokir; gunakan `reset` atau perpendek pesan/lampiran.",
-                            prep.budget.effective_tokens(),
-                            prep.budget.usable_limit
-                        );
+                Ok(prep) => {
+                    if prep.compacted {
+                        warn_if_persist_failed(agent);
+                    }
+                    let (stdout_msg, stderr_warn) = format_compact_outcome(&prep);
+                    println!("{}", stdout_msg);
+                    if let Some(warn) = stderr_warn {
+                        eprintln!("{}", warn);
                     }
                     println!();
                 }
-                Ok(_) => {
-                    println!("ℹ️  Tidak ada pesan baru yang cukup untuk dipadatkan (gunakan `/compact <instruksi>` untuk memadatkan ulang ringkasan).\n");
+                Err(e) => {
+                    eprintln!("❌ Gagal memadatkan konteks: {}", e);
+                    if let Some(warn) = format_over_limit_warning(&agent.context_budget()) {
+                        eprintln!("{}", warn);
+                    }
+                    eprintln!();
                 }
-                Err(e) => eprintln!("❌ Gagal memadatkan konteks: {}\n", e),
             }
             true
         }
         _ => false,
+    }
+}
+
+fn format_over_limit_warning(budget: &crate::context::BudgetSnapshot) -> Option<String> {
+    (budget.status == crate::context::BudgetStatus::OverLimit).then(|| {
+        format!(
+            "⚠️  Peringatan: konteks masih melampaui batas model (~{} / {} token usable). Giliran berikutnya dapat diblokir; gunakan `reset` atau perpendek pesan/lampiran.",
+            budget.effective_tokens(),
+            budget.usable_limit
+        )
+    })
+}
+
+fn format_compact_outcome(prep: &crate::context::PreparedContext) -> (String, Option<String>) {
+    let stdout_msg = if prep.compacted {
+        format!(
+            "✅ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan). Estimasi baru: ~{} / {} token.",
+            prep.summarized_messages,
+            prep.kept_messages,
+            prep.budget.total_estimated_tokens,
+            prep.budget.usable_limit
+        )
+    } else {
+        "ℹ️  Tidak ada pesan baru yang cukup untuk dipadatkan (gunakan `/compact <instruksi>` untuk memadatkan ulang ringkasan).".to_string()
+    };
+    let stderr_warn = format_over_limit_warning(&prep.budget);
+    (stdout_msg, stderr_warn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::{Approver, NoopEventSink, WorkspaceTabs};
+    use crate::llm::LlmClient;
+    use crate::tools::ToolRegistry;
+    use async_trait::async_trait;
+    use serde_json::json;
+
+    struct DenyAll;
+    #[async_trait]
+    impl Approver for DenyAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            false
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_noop_synthetic_over_limit_still_emits_warning() {
+        let client = LlmClient::new_with_base_url(
+            "test-key".into(),
+            "tiny-model".into(),
+            Some("http://127.0.0.1:9/v1".into()),
+        )
+        .unwrap();
+        let mut tabs = WorkspaceTabs::new("tiny-model");
+        tabs.active_mut().history = crate::context::rebuild_canonical_history(
+            &"ringkasan super panjang ".repeat(220),
+            &[],
+        );
+        let mut agent = AgentHarness::with_event_sink_and_tabs(
+            "OOPBoT",
+            client,
+            ToolRegistry::new(),
+            Box::new(DenyAll),
+            Box::new(NoopEventSink),
+            2,
+            tabs,
+            None,
+        );
+        agent.set_system_instruction("sys".into());
+        agent.configure_model(
+            "tiny-model",
+            &json!({ "api": "openai-completions", "contextWindow": 800, "maxTokens": 100 }),
+        );
+
+        let (_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let prep = agent.compact_active_tab(None, cancel_rx).await.unwrap();
+        assert!(!prep.compacted, "synthetic-only without instructions must be no-op");
+        assert_eq!(prep.budget.status, crate::context::BudgetStatus::OverLimit);
+
+        let (stdout_msg, stderr_warn) = format_compact_outcome(&prep);
+        assert!(stdout_msg.contains("Tidak ada pesan baru"));
+        let warn = stderr_warn.expect("no-op /compact that remains OverLimit MUST emit warning");
+        assert!(warn.contains("melampaui batas model"));
     }
 }

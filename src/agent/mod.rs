@@ -140,8 +140,27 @@ impl AgentHarness {
         event_sink: Box<dyn EventSink>,
         max_steps: usize,
     ) -> Self {
+        Self::with_event_sink_at_storage_path(
+            name,
+            client,
+            tools,
+            approver,
+            event_sink,
+            max_steps,
+            WorkspaceTabs::default_storage_path(),
+        )
+    }
+
+    pub(crate) fn with_event_sink_at_storage_path(
+        name: &str,
+        client: LlmClient,
+        tools: ToolRegistry,
+        approver: Box<dyn Approver>,
+        event_sink: Box<dyn EventSink>,
+        max_steps: usize,
+        storage_path: Option<PathBuf>,
+    ) -> Self {
         let default_m = client.model();
-        let storage_path = WorkspaceTabs::default_storage_path();
         let (loaded_tabs, load_warning) = storage_path
             .as_deref()
             .map(WorkspaceTabs::load_from_file_checked)
@@ -889,10 +908,43 @@ fn detect_provider_model_mismatch(
                 current_base.trim()
             ));
         }
-        return None;
     }
 
-    if let Some(client_provider) = infer_official_provider_from_base_url(current_base) {
+    let base_norm = normalize_base_url(current_base);
+    let is_native_google = base_norm.contains("googleapis.com") && !base_norm.contains("/openai");
+    let client_provider = infer_official_provider_from_base_url(current_base);
+
+    if let Some(info) = catalog.find(tab_model) {
+        match info.api.as_str() {
+            "google-generative-ai" if !is_native_google => {
+                return Some(format!(
+                    "Model tab tersimpan '{}' memakai protokol API '{}' yang tidak cocok dengan endpoint aktif '{}'.",
+                    tab_model,
+                    info.api,
+                    current_base.trim()
+                ));
+            }
+            "openai-completions" | "openai-responses" if is_native_google => {
+                return Some(format!(
+                    "Model tab tersimpan '{}' memakai protokol API '{}' yang tidak cocok dengan endpoint aktif '{}'.",
+                    tab_model,
+                    info.api,
+                    current_base.trim()
+                ));
+            }
+            "anthropic-messages" if client_provider.is_some_and(|p| p != "anthropic") => {
+                return Some(format!(
+                    "Model tab tersimpan '{}' memakai protokol API '{}' yang tidak cocok dengan provider aktif '{}'.",
+                    tab_model,
+                    info.api,
+                    client_provider.unwrap_or("unknown")
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(client_provider) = client_provider {
         if let Some(model_provider) = infer_official_provider_from_model(tab_model, catalog) {
             if model_provider != client_provider {
                 return Some(format!(

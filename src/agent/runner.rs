@@ -415,13 +415,13 @@ impl AgentHarness {
                 );
                 // Cegah thrashing: bila compaction baru saja berjalan di giliran ini dan hasilnya
                 // masih di zona `NeedsCompaction` (belum `OverLimit`), tunda compaction ulang sampai
-                // konteks benar-benar tumbuh signifikan (>= 10% usable_limit) atau mencapai `OverLimit`.
-                let skip_redundant_compact = pre_budget.status
-                    == crate::context::BudgetStatus::NeedsCompaction
-                    && last_auto_compact_tokens.is_some_and(|prev_tok| {
-                        let min_growth = (mgr.policy().usable_limit() / 10).max(1);
-                        pre_budget.effective_tokens() < prev_tok.saturating_add(min_growth)
-                    });
+                // estimasi lokal tumbuh signifikan (>= 10% usable_limit) atau mencapai `OverLimit`.
+                let skip_redundant_compact = should_skip_redundant_auto_compact(
+                    pre_budget.status,
+                    pre_budget.total_estimated_tokens,
+                    last_auto_compact_tokens,
+                    mgr.policy().usable_limit(),
+                );
 
                 if !skip_redundant_compact {
                     let prepared = mgr
@@ -797,4 +797,21 @@ pub(super) fn strip_internal_tool_fields_for_llm(tool_name: &str, mut result: Va
         }
     }
     result
+}
+
+/// Tentukan apakah auto-compaction ulang pada giliran yang sama harus dilewati untuk mencegah
+/// thrashing per-step. Membandingkan metrik estimasi lokal sejenis (`total_estimated_tokens` vs
+/// `last_auto_compact_estimated`) saat status masih `NeedsCompaction`, sementara `OverLimit`
+/// (baik dari estimasi lokal maupun observasi provider yang padat) selalu tetap memicu compaction.
+pub(super) fn should_skip_redundant_auto_compact(
+    status: crate::context::BudgetStatus,
+    current_estimated_tokens: u64,
+    last_auto_compact_estimated: Option<u64>,
+    usable_limit: u64,
+) -> bool {
+    status == crate::context::BudgetStatus::NeedsCompaction
+        && last_auto_compact_estimated.is_some_and(|prev_tok| {
+            let min_growth = (usable_limit / 10).max(1);
+            current_estimated_tokens < prev_tok.saturating_add(min_growth)
+        })
 }
