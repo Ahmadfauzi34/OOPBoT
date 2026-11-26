@@ -1,22 +1,18 @@
 package io.jeph.oopbot.ui.git
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -28,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -38,6 +35,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.jeph.oopbot.R
@@ -151,14 +149,18 @@ private fun CommitsContentRows(
         modifier = Modifier.fillMaxWidth().heightIn(max = listMaxHeight),
         contentPadding = PaddingValues(bottom = OopbotTokens.Spacing.s8),
       ) {
-        itemsIndexed(commits, key = { _, commit -> commit.sha }) { index, commit ->
+        itemsIndexed(
+          items = commits,
+          key = { _, commit -> commit.sha },
+          contentType = { _, _ -> COMMIT_ROW_TYPE },
+        ) { index, commit ->
           CommitRow(commit, isFirst = index == 0, isLast = index == commits.lastIndex, onOpen = {
             onOpenCommit(commit)
           })
         }
         val total = content.commits.total
         if (total > commits.size) {
-          item(key = TRUNCATED_KEY) {
+          item(key = TRUNCATED_KEY, contentType = TRUNCATED_KEY) {
             CommitsNote(
               pluralStringResource(R.plurals.git_commits_truncated, total, commits.size, total),
               colors.foregroundMuted,
@@ -206,16 +208,17 @@ private fun CommitRow(commit: GitCommit, isFirst: Boolean, isLast: Boolean, onOp
   Row(
     modifier = Modifier
       .fillMaxWidth()
-      .height(IntrinsicSize.Min)
+      .heightIn(min = 40.dp)
       .padding(horizontal = OopbotTokens.Spacing.s4)
       // Rounded less than the rail is inset, so the clip never bites into the rail where rows meet.
       .clip(RoundedCornerShape(OopbotTokens.Radius.lg))
       .clickable(onClick = onOpen)
+      .commitGraphRail(colors.accent, isFirst, isLast)
       .padding(horizontal = OopbotTokens.Spacing.s12),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(OopbotTokens.Spacing.s8),
   ) {
-    CommitGraphNode(isFirst, isLast)
+    Spacer(modifier = Modifier.width(GRAPH_MARKER_SIZE))
     Row(
       modifier = Modifier.weight(1f).padding(vertical = OopbotTokens.Spacing.s8),
       verticalAlignment = Alignment.CenterVertically,
@@ -253,29 +256,27 @@ private fun CommitRow(commit: GitCommit, isFirst: Boolean, isLast: Boolean, onOp
   }
 }
 
-/**
- * The commit graph node: an accent dot on an accent rail that joins it to the rows above and below, starting at the
- * first commit's dot and ending at the last one's.
- */
-@Composable
-private fun CommitGraphNode(isFirst: Boolean, isLast: Boolean) {
-  val accent = oopbotColors.accent
-  Canvas(modifier = Modifier.width(GRAPH_MARKER_SIZE).fillMaxHeight()) {
-    val center = Offset(size.width / 2, size.height / 2)
+/** Draws the commit rail and accent dot behind a row without intrinsic re-measurement or a child Canvas. */
+private fun Modifier.commitGraphRail(accent: Color, isFirst: Boolean, isLast: Boolean): Modifier = drawWithCache {
+  val insetPx = OopbotTokens.Spacing.s12.toPx()
+  val radius = GRAPH_MARKER_SIZE.toPx() / 2f
+  val railWidth = GRAPH_RAIL_WIDTH.toPx()
+  val centerX = if (layoutDirection == LayoutDirection.Ltr) insetPx + radius else size.width - insetPx - radius
+  val centerY = size.height / 2f
+  val center = Offset(centerX, centerY)
+  val railStart = Offset(centerX, if (isFirst) centerY else 0f)
+  val railEnd = Offset(centerX, if (isLast) centerY else size.height)
+  onDrawBehind {
     if (!(isFirst && isLast)) {
-      drawLine(
-        color = accent,
-        start = Offset(center.x, if (isFirst) center.y else 0f),
-        end = Offset(center.x, if (isLast) center.y else size.height),
-        strokeWidth = GRAPH_RAIL_WIDTH.toPx(),
-      )
+      drawLine(color = accent, start = railStart, end = railEnd, strokeWidth = railWidth)
     }
-    drawCircle(color = accent, radius = GRAPH_MARKER_SIZE.toPx() / 2, center = center)
+    drawCircle(color = accent, radius = radius, center = center)
   }
 }
 
 /** The lazy-list key of the row saying the host listed only the first commits, which can't clash with a SHA. */
 private const val TRUNCATED_KEY = "/truncated"
+private const val COMMIT_ROW_TYPE = "commit"
 
 private val GRAPH_MARKER_SIZE = 8.dp
 private val GRAPH_RAIL_WIDTH = 2.dp

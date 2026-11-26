@@ -21,12 +21,13 @@ Place every UI file strictly in its matching feature folder:
   - Prefer `Modifier.drawWithCache` over `drawBehind` / `drawWithContent` whenever creating `Brush`, gradient shaders, `Path`, or `Paint` objects per frame.
   - Reuse `Path` buffers via `Path.rewind()` instead of `reset()` on animated shapes (`SimmeringPot.kt`).
   - Cache `Stroke`, `TextStyle`, `NumberFormat`, and style allocations across recompositions with `remember(...)`; keep UI parse/highlight/split/thumbnail caches (`MarkdownCache`, `HighlightCache`, `SourceLinesCache`, `ThumbnailCache`) bounded by entry and memory/char budgets.
-  - Avoid subcomposition (`BoxWithConstraints`) inside scrolling Markdown items (`MarkdownTable.kt` uses `Modifier.layout` + `TableWidthsCache`).
+  - Avoid subcomposition (`BoxWithConstraints`) inside scrolling Markdown items (`MarkdownTable.kt` uses `Modifier.layout` + `TableWidthsCache`) and full-pane wrappers (`ChangesPane.kt` uses `Modifier.onSizeChanged`).
+  - Pause infinite loading animations inside side panels composed off-screen (`MainScreen.kt` provides `LocalSpinnersAnimate` to `PaneExplorer` alongside `LocalPotsSimmer` on `Sidebar`, and `ChangesPane.kt` suppresses the toolbar spinner during initial full-pane loading).
   - Keep swipe-to-remove row chrome (`SwipeAway.kt`) pre-composed for swipeable rows so drag frames run in layer/draw phases without per-frame or pixel-1 recomposition.
   - Wrap `stackTransition` destinations in `TransitionFrame` (`StackTransition.kt`) and defer non-critical refreshes and heavy stream/asset mounts until `LocalTransitionSettled.current` settles; keep `PackageManager` and `AssetManager` reads off the main thread.
   - Keep `SelectionContainer` opt-in on large virtualized code lists (`FileScreen.kt`) and disabled while an assistant message is actively streaming (`OopbotMarkdown.kt`).
-  - Provide stable `key` and `contentType` lambdas on `LazyColumn` / `LazyRow` item lists (`FileScreen.kt`, timelines, diffs, logs).
-  - Annotate immutable UI state/model classes wrapping lists or sealed trees with `@Immutable` (`DiffDocument.kt`, `TimelineModels.kt`).
+  - Provide stable `key` and `contentType` lambdas on `LazyColumn` / `LazyRow` item lists (`FileScreen.kt`, `CommitsSection.kt`, timelines, diffs, logs); avoid `IntrinsicSize.Min` + per-row `Canvas` in `LazyColumn` rows (`CommitsSection.kt` draws the commit rail in `Modifier.drawWithCache`).
+  - Annotate immutable UI state/model classes wrapping lists, sealed trees, or row styling with `@Immutable` (`DiffDocument.kt`, `DiffView.kt` `DiffRowStyle`, `TimelineModels.kt`), and run `DiffView.kt` Tree-Sitter highlighting lazily for visible + ±1 neighbor expanded files via `HighlightCache.shared` with a per-side char cap (`MAX_DIFF_HIGHLIGHT_CHARS`).
 - **Offline Cache & Persistent UI State (`ui/chat/`, `ui/subagents/`, `ui/archive/`):**
   - `ChatViews` hydrates and persists per-session drafts, subagent steer drafts, stream scroll position, and expanded folds to SQLite `chat_drafts`; debounce text draft saves and flush on disposal / scroll settle. Read-only `ArchivedChatScreen` and `SubagentScreen` views leave `ChatView.onSave == null`.
   - `SubagentScreen` fetches transcripts with `preferCache = !live` so running subagents poll Termux directly while finished runs use cached transcripts & offline fallback.

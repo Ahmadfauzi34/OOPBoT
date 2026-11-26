@@ -28,6 +28,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -263,20 +264,26 @@ private fun Chevron(expanded: Boolean) {
   )
 }
 
+/** Whether [Spinner] runs its infinite progress animation; false for side panels composed off-screen. */
+internal val LocalSpinnersAnimate = compositionLocalOf { true }
+
 /** A loading spinner in a 16dp icon slot; [contentDescription] names it when nothing else says what loads. */
 @Composable
 internal fun Spinner(size: Dp, contentDescription: String?) {
+  val animate = LocalSpinnersAnimate.current
   Box(
     modifier = Modifier
       .size(OopbotTokens.IconSize.md)
       .semantics { if (contentDescription != null) this.contentDescription = contentDescription },
     contentAlignment = Alignment.Center,
   ) {
-    CircularProgressIndicator(
-      modifier = Modifier.size(size),
-      color = oopbotColors.foregroundMuted,
-      strokeWidth = 1.5.dp,
-    )
+    if (animate) {
+      CircularProgressIndicator(
+        modifier = Modifier.size(size),
+        color = oopbotColors.foregroundMuted,
+        strokeWidth = 1.5.dp,
+      )
+    }
   }
 }
 

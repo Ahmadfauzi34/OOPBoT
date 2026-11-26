@@ -1,5 +1,6 @@
 package io.jeph.oopbot.ui.git
 
+import android.content.res.AssetManager
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -10,6 +11,12 @@ import io.jeph.oopbot.host.GitDiff
 import io.jeph.oopbot.host.GitFile
 import io.jeph.oopbot.host.GitFileKind
 import io.jeph.oopbot.host.GitHunk
+import io.jeph.oopbot.syntax.Grammar
+import io.jeph.oopbot.syntax.LoadedGrammar
+import io.jeph.oopbot.syntax.loadGrammar
+import io.jeph.oopbot.ui.components.HighlightCache
+import io.jeph.oopbot.ui.components.highlightCode
+import io.jeph.oopbot.ui.components.splitLines
 import io.jeph.oopbot.ui.theme.OopbotColors
 
 internal enum class DiffLineKind { Context, Added, Removed }
@@ -61,6 +68,11 @@ internal class DiffSection(
 
   /** Set once the sides are highlighted off the main thread; until then, or without a grammar, lines show plain. */
   var highlight by mutableStateOf<SideHighlight?>(null)
+
+  /** Whether this section still needs highlighting for [theme] and stays within the per-side char budget. */
+  fun canHighlightFor(theme: OopbotColors): Boolean = highlight?.theme != theme &&
+    oldSide.length <= MAX_DIFF_HIGHLIGHT_CHARS &&
+    newSide.length <= MAX_DIFF_HIGHLIGHT_CHARS
 }
 
 /**
@@ -170,3 +182,30 @@ private class SideText {
 
   fun text(): String = builder.toString()
 }
+
+/** Highlights both sides of [section] with [HighlightCache.shared] reuse for [grammar] and [theme]. */
+internal fun highlightDiffSection(
+  section: DiffSection,
+  grammar: Grammar,
+  assets: AssetManager,
+  theme: OopbotColors,
+): SideHighlight {
+  var loaded: LoadedGrammar? = null
+  fun highlightSide(text: String): List<AnnotatedString> = if (text.isEmpty()) {
+    emptyList()
+  } else {
+    val cached = HighlightCache.shared.get(grammar, theme, text)
+    val painted = cached ?: run {
+      val active = loaded ?: loadGrammar(grammar, assets).also { loaded = it }
+      highlightCode(text, active, theme).also { HighlightCache.shared.put(grammar, theme, text, it) }
+    }
+    painted.splitLines()
+  }
+  return SideHighlight(
+    theme = theme,
+    oldLines = highlightSide(section.oldSide),
+    newLines = highlightSide(section.newSide),
+  )
+}
+
+internal const val MAX_DIFF_HIGHLIGHT_CHARS = 120_000

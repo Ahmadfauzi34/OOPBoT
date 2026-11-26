@@ -59,6 +59,7 @@ import io.jeph.oopbot.ui.components.SnackbarStack
 import io.jeph.oopbot.ui.components.SnackbarStackState
 import io.jeph.oopbot.ui.files.ExplorerPanel
 import io.jeph.oopbot.ui.files.FileScreen
+import io.jeph.oopbot.ui.files.LocalSpinnersAnimate
 import io.jeph.oopbot.ui.git.CommitScreen
 import io.jeph.oopbot.ui.sidebar.Sidebar
 import io.jeph.oopbot.ui.sidebar.SidebarLinks
@@ -504,13 +505,21 @@ private fun WorkspacePaneSlot(
       )
     },
     explorer = {
-      PaneExplorer(
-        pane = pane,
-        item = item,
-        isOpen = { panelState.settledValue == Panel.Explorer },
-        snackbar = snackbar,
-        onSwapPanes = swapPanes,
-      ) { panels.show(pane, Panel.Chat) }
+      // The explorer stays composed off-screen, where loading spinners would otherwise redraw at 60/120fps.
+      val explorerVisible by remember(panelState) {
+        derivedStateOf {
+          panelState.currentValue == Panel.Explorer || panelState.targetValue == Panel.Explorer
+        }
+      }
+      CompositionLocalProvider(LocalSpinnersAnimate provides explorerVisible) {
+        PaneExplorer(
+          pane = pane,
+          item = item,
+          isOpen = { panelState.settledValue == Panel.Explorer },
+          snackbar = snackbar,
+          onSwapPanes = swapPanes,
+        ) { panels.show(pane, Panel.Chat) }
+      }
     },
   )
   if (tabsOpen && item != null) {

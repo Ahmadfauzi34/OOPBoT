@@ -6,10 +6,13 @@ import io.jeph.oopbot.host.GitDiff
 import io.jeph.oopbot.host.GitFile
 import io.jeph.oopbot.host.GitFileKind
 import io.jeph.oopbot.host.GitHunk
+import io.jeph.oopbot.ui.theme.ObsidianColors
 import io.jeph.oopbot.ui.theme.StoneColors
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DiffDocumentTest {
@@ -173,5 +176,38 @@ class DiffDocumentTest {
 
     assertNull(after.sections.first { it.file.path == "changed.kt" }.highlight)
     assertSame(highlight, after.sections.first { it.file.path == "same.kt" }.highlight)
+  }
+
+  @Test
+  fun `canHighlightFor enforces char cap boundary and theme match`() {
+    val atCap = DiffSection(
+      file("cap.kt"),
+      rows = emptyList(),
+      oldSide = "a".repeat(MAX_DIFF_HIGHLIGHT_CHARS),
+      newSide = "b".repeat(MAX_DIFF_HIGHLIGHT_CHARS),
+      maxLineNumber = 1,
+    )
+    assertTrue(atCap.canHighlightFor(StoneColors))
+
+    atCap.highlight = SideHighlight(StoneColors, emptyList(), emptyList())
+    assertFalse(atCap.canHighlightFor(StoneColors))
+    assertTrue(atCap.canHighlightFor(ObsidianColors))
+
+    val overOld = DiffSection(
+      file("big_old.kt"),
+      rows = emptyList(),
+      oldSide = "a".repeat(MAX_DIFF_HIGHLIGHT_CHARS + 1),
+      newSide = "",
+      maxLineNumber = 1,
+    )
+    val overNew = DiffSection(
+      file("big_new.kt"),
+      rows = emptyList(),
+      oldSide = "",
+      newSide = "b".repeat(MAX_DIFF_HIGHLIGHT_CHARS + 1),
+      maxLineNumber = 1,
+    )
+    assertFalse(overOld.canHighlightFor(StoneColors))
+    assertFalse(overNew.canHighlightFor(StoneColors))
   }
 }

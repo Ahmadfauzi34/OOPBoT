@@ -17,12 +17,15 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -49,25 +52,25 @@ import androidx.compose.ui.unit.dp
 import io.jeph.oopbot.R
 import io.jeph.oopbot.host.GitFileKind
 import io.jeph.oopbot.syntax.Grammar
-import io.jeph.oopbot.syntax.loadGrammar
 import io.jeph.oopbot.ui.components.fileLanguage
-import io.jeph.oopbot.ui.components.highlightCode
-import io.jeph.oopbot.ui.components.splitLines
 import io.jeph.oopbot.ui.theme.OopbotColors
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import io.jeph.oopbot.ui.theme.OopbotTokens
 import io.jeph.oopbot.ui.theme.oopbotColors
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 
 /**
  * A diff document: each file of [document] as a card, under a header that sticks to the top while its lines scroll,
  * then its hunks as unified rows in a well, with one gutter of line numbers, added and removed lines on green and red,
  * coloured by the file's grammar. Long lines wrap with [wrapLines], otherwise the code scrolls sideways together, under
  * a gutter that stays put. With [onToggle] a header's tap folds or unfolds its file, folded ones being [collapsed];
- * without it every file shows unfolded. Only the rows on screen are composed, and highlighting runs off the main
- * thread a file at a time.
+ * without it every file shows unfolded. Only the rows on screen are composed, and highlighting runs lazily off the main
+ * thread for visible expanded files first.
  */
 @Composable
 internal fun DiffView(
@@ -79,7 +82,7 @@ internal fun DiffView(
   modifier: Modifier = Modifier,
   contentPadding: PaddingValues = PaddingValues(bottom = CARD_GAP),
 ) {
-  HighlightEffect(document)
+  HighlightEffect(document, collapsed, state)
   val colors = oopbotColors
   val style = codeStyle()
   val measurer = rememberTextMeasurer()
@@ -124,31 +127,58 @@ private fun codeStyle(): TextStyle {
   }
 }
 
-/** Colours each file of [document] whose grammar is known and that isn't coloured for the current palette yet. */
+/**
+ * Colours visible expanded files of [document] lazily off the main thread, reusing the shared highlight cache and
+ * skipping collapsed or oversized files so giant diffs stay responsive.
+ */
 @Composable
-private fun HighlightEffect(document: DiffDocument) {
+private fun HighlightEffect(document: DiffDocument, collapsed: Set<String>, state: LazyListState) {
   val theme = oopbotColors
   val assets = LocalContext.current.assets
-  LaunchedEffect(document, theme) {
-    for (section in document.sections) {
-      val grammar = fileLanguage(section.file.path)?.let(Grammar::forName)
-      if (grammar == null || section.highlight?.theme == theme) continue
-      section.highlight = withContext(Dispatchers.Default) {
-        val loaded = loadGrammar(grammar, assets)
-        SideHighlight(
-          theme = theme,
-          oldLines = section.oldSide.takeIf { it.isNotEmpty() }?.let { highlightCode(it, loaded, theme).splitLines() }
-            .orEmpty(),
-          newLines = section.newSide.takeIf { it.isNotEmpty() }?.let { highlightCode(it, loaded, theme).splitLines() }
-            .orEmpty(),
-        )
+  val latestCollapsed by rememberUpdatedState(collapsed)
+  val sectionsByPath = remember(document) { document.sections.associateBy { it.file.path } }
+  val indexByPath = remember(document) {
+    document.sections.withIndex().associate { (idx, sec) -> sec.file.path to idx }
+  }
+  LaunchedEffect(document, theme, state) {
+    snapshotFlow {
+      val hidden = latestCollapsed
+      val visibleIndices = state.layoutInfo.visibleItemsInfo.mapNotNullTo(LinkedHashSet()) { item ->
+        val rawKey = item.key as? String ?: return@mapNotNullTo null
+        val path = rawKey.substringBefore('\n')
+        indexByPath[path]
       }
+      val targets = LinkedHashSet<String>()
+      for (idx in visibleIndices) {
+        val lo = (idx - 1).coerceAtLeast(0)
+        val hi = (idx + 1).coerceAtMost(document.sections.lastIndex)
+        for (neighbor in lo..hi) {
+          val path = document.sections[neighbor].file.path
+          if (path !in hidden) targets += path
+        }
+      }
+      targets.toList()
     }
+      .distinctUntilChanged()
+      .conflate()
+      .collect { targetPaths ->
+        for (path in targetPaths) {
+          val section = sectionsByPath[path]
+          val grammar = fileLanguage(path)?.let(Grammar::forName)
+          if (section != null && grammar != null && section.canHighlightFor(theme)) {
+            section.highlight = withContext(Dispatchers.Default) {
+              highlightDiffSection(section, grammar, assets, theme)
+            }
+            yield()
+          }
+        }
+      }
   }
 }
 
 /** What every row of a file's body is drawn with. */
-private class DiffRowStyle(
+@Immutable
+private data class DiffRowStyle(
   val colors: OopbotColors,
   val code: TextStyle,
   val gutterWidth: Dp,
@@ -194,9 +224,10 @@ private fun Modifier.cardRow(colors: OopbotColors, first: Boolean, last: Boolean
 /** The `@@` line, faint and slanted, on the hunk band. */
 @Composable
 private fun HunkHeaderRow(header: String, style: DiffRowStyle, modifier: Modifier) {
+  val styledHeader = remember(header) { AnnotatedString(header, HunkHeaderStyle) }
   Row(modifier = modifier.fillMaxWidth().background(style.colors.surface2)) {
     CodeText(
-      text = AnnotatedString(header, HunkHeaderStyle),
+      text = styledHeader,
       style = style,
       color = style.colors.foregroundExtraMuted,
       modifier = Modifier.padding(
@@ -227,6 +258,7 @@ private fun LineRow(line: DiffRow.Line, highlight: SideHighlight?, style: DiffRo
       drawRect(background, topLeft = Offset(start, 0f), size = Size(width, size.height))
     }
   }
+  val text = remember(line, highlight) { highlightedLine(line, highlight) }
   Row(modifier = modifier.fillMaxWidth().background(background).then(gutter)) {
     Text(
       text = line.number?.toString().orEmpty(),
@@ -236,7 +268,6 @@ private fun LineRow(line: DiffRow.Line, highlight: SideHighlight?, style: DiffRo
       textAlign = TextAlign.End,
       maxLines = 1,
     )
-    val text = highlightedLine(line, highlight)
     CodeText(
       text = text,
       style = style,

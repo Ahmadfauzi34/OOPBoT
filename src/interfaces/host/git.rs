@@ -1,9 +1,167 @@
 use crate::common::time::epoch_ms;
 use crate::common::BoxError;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const GIT_CMD_TIMEOUT: Duration = Duration::from_secs(30);
+const GIT_HELPER_TIMEOUT: Duration = Duration::from_secs(10);
+const READER_JOIN_GRACE: Duration = Duration::from_millis(200);
+const MAX_HELPER_GIT_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_RAW_DIFF_BYTES: usize = 10 * 1024 * 1024;
+const MAX_SMALL_GIT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_FILE_HUNK_BYTES: usize = 1024 * 1024;
+const MAX_TOTAL_PARSED_DIFF_BYTES: usize = 7 * 1024 * 1024;
+const MAX_CONCURRENT_HEAVY_GIT_REQUESTS: usize = 2;
+const MAX_CONCURRENT_FAST_GIT_REQUESTS: usize = 4;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum GitCmdOutput {
+    Ok(Vec<u8>),
+    TooLarge,
+    TimedOut,
+    Failed,
+}
+
+fn kill_child_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id();
+        if pid > 0 {
+            let target = format!("-{}", pid);
+            let ok = Command::new("kill")
+                .args(["-s", "KILL", "--", &target])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                let _ = Command::new("sh")
+                    .args(["-c", &format!("kill -KILL -{} 2>/dev/null || true", pid)])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: usize) -> GitCmdOutput {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let Ok(mut child) = cmd.spawn() else {
+        return GitCmdOutput::Failed;
+    };
+    let Some(mut stdout) = child.stdout.take() else {
+        kill_child_tree(&mut child);
+        return GitCmdOutput::Failed;
+    };
+
+    let exceeded = Arc::new(AtomicBool::new(false));
+    let exceeded_reader = Arc::clone(&exceeded);
+    let reader_done = Arc::new((Mutex::new(false), Condvar::new()));
+    let reader_done_bg = Arc::clone(&reader_done);
+    let reader_handle = thread::spawn(move || {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if out.len().saturating_add(n) > max_bytes {
+                        exceeded_reader.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    out.extend_from_slice(&buf[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+        let (lock, cvar) = &*reader_done_bg;
+        *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        cvar.notify_all();
+        out
+    });
+
+    let start = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        if exceeded.load(Ordering::SeqCst) {
+            kill_child_tree(&mut child);
+            break None;
+        }
+        match child.try_wait() {
+            Ok(Some(st)) => break Some(st),
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    timed_out = true;
+                    kill_child_tree(&mut child);
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => {
+                kill_child_tree(&mut child);
+                break None;
+            }
+        }
+    };
+
+    if exceeded.load(Ordering::SeqCst) || timed_out {
+        // Wait briefly for the reader thread to observe EOF after the process group is killed,
+        // without blocking forever if a detached setsid() descendant still holds stdout.
+        let (lock, cvar) = &*reader_done;
+        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let (done, _) = cvar
+            .wait_timeout_while(guard, READER_JOIN_GRACE, |done| !*done)
+            .unwrap_or_else(|e| e.into_inner());
+        if *done {
+            let _ = reader_handle.join();
+        }
+        return if exceeded.load(Ordering::SeqCst) {
+            GitCmdOutput::TooLarge
+        } else {
+            GitCmdOutput::TimedOut
+        };
+    }
+    let bytes = reader_handle.join().unwrap_or_default();
+    if exceeded.load(Ordering::SeqCst) {
+        return GitCmdOutput::TooLarge;
+    }
+    match status {
+        Some(st) if st.success() => GitCmdOutput::Ok(bytes),
+        _ => GitCmdOutput::Failed,
+    }
+}
+
+/// Menjalankan subperintah metadata git kecil (`rev-parse`, `symbolic-ref`, `merge-base`, `--version`)
+/// dengan timeout 10 dtk dan batas output 64 KiB agar tidak pernah menggantung selamanya.
+fn run_git_small(args: &[&str]) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.args(args);
+    match run_git_bounded(cmd, GIT_HELPER_TIMEOUT, MAX_HELPER_GIT_OUTPUT_BYTES) {
+        GitCmdOutput::Ok(bytes) => Some(String::from_utf8_lossy(&bytes).trim().to_string()),
+        _ => None,
+    }
+}
 
 /// Hitung SHA-256 hash dan format sebagai lowercase hex string (FIPS 180-2 self-contained)
 pub fn sha256_hex(data: &[u8]) -> String {
@@ -90,8 +248,15 @@ pub fn sha256_hex(data: &[u8]) -> String {
     out
 }
 
-/// Parser teks diff patch git terpadu (unified diff) menjadi format objek berkas Paseo / OOPBoT
+/// Parser teks diff patch git terpadu (unified diff) menjadi format objek berkas Paseo / OOPBoT.
 pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
+    parse_git_diff_bounded(diff_text, usize::MAX).unwrap_or_default()
+}
+
+/// Parser diff dengan batas total byte terakumulasi (`max_total_bytes`).
+/// Mengembalikan `None` segera bila total byte hunk yang dipertahankan melampaui batas
+/// agar tidak mengalokasi ratusan MB RAM sebelum mengirim `tooLarge: true`.
+pub(super) fn parse_git_diff_bounded(diff_text: &str, max_total_bytes: usize) -> Option<Vec<Value>> {
     let mut files = Vec::new();
     let mut current_path = String::new();
     let mut current_change = "modified".to_string();
@@ -104,10 +269,21 @@ pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
     let mut current_hunk_new_start: i64 = 0;
     let mut current_hunk_lines: Vec<String> = Vec::new();
     let mut hunk_bytes_total: usize = 0;
+    let mut total_retained_bytes: usize = 0;
+    let mut file_too_large = false;
     let mut in_hunk = false;
     let mut in_file = false;
 
-    let flush_hunk = |hunks: &mut Vec<Value>, header: &str, old_s: i64, new_s: i64, lines: &mut Vec<String>| {
+    let flush_hunk = |hunks: &mut Vec<Value>,
+                      header: &str,
+                      old_s: i64,
+                      new_s: i64,
+                      lines: &mut Vec<String>,
+                      skip: bool| {
+        if skip {
+            lines.clear();
+            return;
+        }
         if !header.is_empty() || !lines.is_empty() {
             hunks.push(json!({
                 "header": header,
@@ -118,13 +294,30 @@ pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
         }
     };
 
-    let flush_file = |files: &mut Vec<Value>, path: &str, change: &str, additions: i64, deletions: i64, kind: &str, hunks: &mut Vec<Value>, bytes: usize| {
+    let flush_file = |files: &mut Vec<Value>,
+                      path: &str,
+                      change: &str,
+                      additions: i64,
+                      deletions: i64,
+                      kind: &str,
+                      hunks: &mut Vec<Value>,
+                      too_large: bool,
+                      bytes: usize,
+                      total_retained: &mut usize| -> bool {
         if !path.is_empty() {
-            let final_kind = if bytes > 1024 * 1024 {
+            let final_kind = if too_large || bytes > MAX_FILE_HUNK_BYTES {
                 "too_large"
             } else {
                 kind
             };
+            if final_kind == "too_large" {
+                hunks.clear();
+            } else {
+                *total_retained = total_retained.saturating_add(bytes);
+                if *total_retained > max_total_bytes {
+                    return false;
+                }
+            }
             files.push(json!({
                 "path": path,
                 "change": change,
@@ -134,16 +327,37 @@ pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
                 "hunks": if final_kind == "too_large" { vec![] } else { std::mem::take(hunks) }
             }));
         }
+        true
     };
 
     for line in diff_text.lines() {
         if let Some(rest) = line.strip_prefix("diff --git ") {
             if in_hunk {
-                flush_hunk(&mut current_hunks, &current_hunk_header, current_hunk_old_start, current_hunk_new_start, &mut current_hunk_lines);
+                flush_hunk(
+                    &mut current_hunks,
+                    &current_hunk_header,
+                    current_hunk_old_start,
+                    current_hunk_new_start,
+                    &mut current_hunk_lines,
+                    file_too_large,
+                );
                 in_hunk = false;
             }
-            if in_file {
-                flush_file(&mut files, &current_path, &current_change, current_additions, current_deletions, &current_kind, &mut current_hunks, hunk_bytes_total);
+            if in_file
+                && !flush_file(
+                    &mut files,
+                    &current_path,
+                    &current_change,
+                    current_additions,
+                    current_deletions,
+                    &current_kind,
+                    &mut current_hunks,
+                    file_too_large,
+                    hunk_bytes_total,
+                    &mut total_retained_bytes,
+                )
+            {
+                return None;
             }
             in_file = true;
             current_change = "modified".to_string();
@@ -151,6 +365,7 @@ pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
             current_additions = 0;
             current_deletions = 0;
             hunk_bytes_total = 0;
+            file_too_large = false;
             current_hunk_header.clear();
 
             // Ekstrak b/ path: "diff --git a/foo.txt b/foo.txt"
@@ -205,9 +420,19 @@ pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
 
         if let Some(after_at) = line.strip_prefix("@@ ") {
             if in_hunk {
-                flush_hunk(&mut current_hunks, &current_hunk_header, current_hunk_old_start, current_hunk_new_start, &mut current_hunk_lines);
+                flush_hunk(
+                    &mut current_hunks,
+                    &current_hunk_header,
+                    current_hunk_old_start,
+                    current_hunk_new_start,
+                    &mut current_hunk_lines,
+                    file_too_large,
+                );
             }
             in_hunk = true;
+            if file_too_large {
+                continue;
+            }
             let header = if let Some(end) = after_at.find("@@") {
                 line[..3 + end + 2].to_string()
             } else {
@@ -232,103 +457,106 @@ pub fn parse_git_diff(diff_text: &str) -> Vec<Value> {
         }
 
         if in_hunk {
-            hunk_bytes_total += line.len() + 1;
+            hunk_bytes_total = hunk_bytes_total.saturating_add(line.len() + 1);
             if line.starts_with('+') {
                 current_additions += 1;
-                current_hunk_lines.push(line.to_string());
             } else if line.starts_with('-') {
                 current_deletions += 1;
-                current_hunk_lines.push(line.to_string());
-            } else if line.starts_with(' ') || line.starts_with('\\') {
+            }
+            if !file_too_large && hunk_bytes_total > MAX_FILE_HUNK_BYTES {
+                file_too_large = true;
+                current_hunk_lines.clear();
+                current_hunks.clear();
+                continue;
+            }
+            if !file_too_large
+                && (line.starts_with('+')
+                    || line.starts_with('-')
+                    || line.starts_with(' ')
+                    || line.starts_with('\\'))
+            {
                 current_hunk_lines.push(line.to_string());
             }
         }
     }
 
     if in_hunk {
-        flush_hunk(&mut current_hunks, &current_hunk_header, current_hunk_old_start, current_hunk_new_start, &mut current_hunk_lines);
+        flush_hunk(
+            &mut current_hunks,
+            &current_hunk_header,
+            current_hunk_old_start,
+            current_hunk_new_start,
+            &mut current_hunk_lines,
+            file_too_large,
+        );
     }
-    if in_file {
-        flush_file(&mut files, &current_path, &current_change, current_additions, current_deletions, &current_kind, &mut current_hunks, hunk_bytes_total);
+    if in_file
+        && !flush_file(
+            &mut files,
+            &current_path,
+            &current_change,
+            current_additions,
+            current_deletions,
+            &current_kind,
+            &mut current_hunks,
+            file_too_large,
+            hunk_bytes_total,
+            &mut total_retained_bytes,
+        )
+    {
+        return None;
     }
 
-    files
+    Some(files)
 }
 
 /// Deteksi apakah direktori adalah repository git dan git tersedia di sistem
 pub(super) fn git_detect(root: &str, trusted: bool) -> (bool, bool) {
-    let has_git = std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let has_git = run_git_small(&["--version"]).is_some();
     let dot_git = Path::new(root).join(".git").exists();
     if !trusted || !has_git || !dot_git {
         return (dot_git, has_git);
     }
-    let toplevel = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--show-toplevel"])
-        .output();
-    if let Ok(out) = toplevel {
-        if out.status.success() {
-            let top_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let real_root = std::fs::canonicalize(root)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| root.to_string());
-            let top_canon = std::fs::canonicalize(&top_str)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or(top_str);
-            return (top_canon == real_root, true);
-        }
+    if let Some(top_str) = run_git_small(&["-C", root, "rev-parse", "--show-toplevel"]) {
+        let real_root = std::fs::canonicalize(root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| root.to_string());
+        let top_canon = std::fs::canonicalize(&top_str)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(top_str);
+        return (top_canon == real_root, true);
     }
     (false, true)
 }
 
 /// Nama branch git saat ini
 pub(super) fn git_current_branch(root: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !b.is_empty() {
-            return Some(b);
-        }
+    let b = run_git_small(&["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    if !b.is_empty() {
+        Some(b)
+    } else {
+        None
     }
-    None
 }
 
 /// Default branch (origin/HEAD atau main / master)
 pub(super) fn git_default_branch(root: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-        .output()
-        .ok();
-    if let Some(o) = out {
-        if o.status.success() {
-            let ref_name = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !ref_name.is_empty() {
-                let remote_name = ref_name.trim_start_matches("refs/remotes/");
-                let local_name = remote_name.trim_start_matches("origin/");
-                return Some(local_name.to_string());
-            }
+    if let Some(ref_name) =
+        run_git_small(&["-C", root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+    {
+        if !ref_name.is_empty() {
+            let remote_name = ref_name.trim_start_matches("refs/remotes/");
+            let local_name = remote_name.trim_start_matches("origin/");
+            return Some(local_name.to_string());
         }
     }
-    let has_main = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/main"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_main {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).is_some()
+    {
         return Some("main".to_string());
     }
-    let has_master = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/master"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_master {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/master"])
+        .is_some()
+    {
         return Some("master".to_string());
     }
     None
@@ -338,21 +566,11 @@ pub(super) fn git_default_branch(root: &str) -> Option<String> {
 pub(super) fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
     let name = base.trim_start_matches("refs/heads/").trim_start_matches("origin/");
     let origin_ref = format!("refs/remotes/origin/{}", name);
-    let has_origin = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", &origin_ref])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_origin {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &origin_ref]).is_some() {
         return Some(format!("origin/{}", name));
     }
     let local_ref = format!("refs/heads/{}", name);
-    let has_local = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", &local_ref])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_local {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &local_ref]).is_some() {
         return Some(name.to_string());
     }
     None
@@ -360,112 +578,39 @@ pub(super) fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
 
 /// Merge-base ref HEAD
 pub(super) fn git_merge_base(root: &str, comp_ref: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "merge-base", comp_ref, "HEAD"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
+    let s = run_git_small(&["-C", root, "merge-base", comp_ref, "HEAD"])?;
+    if !s.is_empty() {
+        Some(s)
+    } else {
+        None
     }
-    None
 }
 
 /// Commit HEAD
 pub(super) fn git_head_commit(root: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
+    let s = run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?;
+    if !s.is_empty() {
+        Some(s)
+    } else {
+        None
     }
-    None
 }
 
 /// Menangani permintaan perubahan berkas git (mode: uncommitted atau base)
-pub(super) fn handle_git_changes(root: &str, mode: &str, ignore_whitespace: bool, known: Option<&str>) -> Value {
+pub(super) fn handle_git_changes(
+    root: &str,
+    mode: &str,
+    ignore_whitespace: bool,
+    known: Option<&str>,
+) -> Value {
+    use std::sync::atomic::AtomicU64;
+    static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
+
     let branch = git_current_branch(root);
     let base = git_default_branch(root);
     let base_ref = base.as_deref().and_then(|b| git_comparison_ref(root, b));
 
-    let diff_output = if mode == "base" {
-        if let Some(ref comp) = base_ref {
-            let from = git_merge_base(root, comp).unwrap_or_else(|| comp.clone());
-            let mut cmd = std::process::Command::new("git");
-            cmd.args(["-C", root, "diff", "--no-color", "--no-ext-diff", "-M"]);
-            if ignore_whitespace {
-                cmd.arg("-w");
-            }
-            cmd.args([&from, "HEAD", "--"]);
-            cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
-        } else {
-            String::new()
-        }
-    } else {
-        // mode uncommitted: gunakan scratch index agar berkas untracked terdeteksi tanpa mengubah repo
-        let temp_dir = std::env::temp_dir().join(format!("oopbot_git_scratch_{}_{}", std::process::id(), epoch_ms()));
-        let temp_objects = temp_dir.join("objects");
-        let temp_index = temp_dir.join("index");
-        let _ = std::fs::create_dir_all(&temp_objects);
-
-        let real_index = std::process::Command::new("git")
-            .args(["-C", root, "rev-parse", "--git-path", "index"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|| ".git/index".into());
-        let real_objects = std::process::Command::new("git")
-            .args(["-C", root, "rev-parse", "--git-path", "objects"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|| ".git/objects".into());
-
-        let abs_index = Path::new(root).join(&real_index);
-        let abs_objects = Path::new(root).join(&real_objects);
-
-        if abs_index.exists() {
-            let _ = std::fs::copy(&abs_index, &temp_index);
-        }
-
-        let mut add_cmd = std::process::Command::new("git");
-        add_cmd.args(["-C", root, "add", "--intent-to-add", "--all"])
-            .env("GIT_INDEX_FILE", &temp_index)
-            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
-            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
-        let _ = add_cmd.output();
-
-        let from = git_head_commit(root).unwrap_or_else(|| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string());
-        let mut diff_cmd = std::process::Command::new("git");
-        diff_cmd.args(["-C", root, "diff", "--no-color", "--no-ext-diff", "-M"]);
-        if ignore_whitespace {
-            diff_cmd.arg("-w");
-        }
-        diff_cmd.args([&from, "--"])
-            .env("GIT_INDEX_FILE", &temp_index)
-            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
-            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
-
-        let out = diff_cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        out
-    };
-
-    let files = parse_git_diff(&diff_output);
-    let body = json!({
-        "branch": branch,
-        "baseRef": base_ref,
-        "files": files,
-        "tooLarge": false
-    });
-    let body_str = serde_json::to_string(&body).unwrap_or_default();
-    if body_str.len() > 8 * 1024 * 1024 {
+    let make_too_large = || {
         let too_large_body = json!({
             "branch": branch,
             "baseRef": base_ref,
@@ -478,7 +623,125 @@ pub(super) fn handle_git_changes(root: &str, mode: &str, ignore_whitespace: bool
         }
         let mut res = too_large_body;
         res["fingerprint"] = json!(fp);
-        return res;
+        res
+    };
+
+    let diff_result = if mode == "base" {
+        if let Some(ref comp) = base_ref {
+            let from = git_merge_base(root, comp).unwrap_or_else(|| comp.clone());
+            let mut cmd = Command::new("git");
+            cmd.args([
+                "-C",
+                root,
+                "-c",
+                "diff.renameLimit=200",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+            ]);
+            if ignore_whitespace {
+                cmd.arg("-w");
+            }
+            cmd.args([&from, "HEAD", "--"]);
+            run_git_bounded(cmd, GIT_CMD_TIMEOUT, MAX_RAW_DIFF_BYTES)
+        } else {
+            GitCmdOutput::Ok(Vec::new())
+        }
+    } else {
+        // mode uncommitted: gunakan scratch index unik agar berkas untracked terdeteksi tanpa mengubah repo
+        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "oopbot_git_scratch_{}_{}_{}",
+            std::process::id(),
+            epoch_ms(),
+            seq
+        ));
+        let temp_objects = temp_dir.join("objects");
+        let temp_index = temp_dir.join("index");
+        let _ = std::fs::create_dir_all(&temp_objects);
+
+        let real_index = run_git_small(&["-C", root, "rev-parse", "--git-path", "index"])
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| ".git/index".into());
+        let real_objects = run_git_small(&["-C", root, "rev-parse", "--git-path", "objects"])
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| ".git/objects".into());
+
+        let abs_index = Path::new(root).join(&real_index);
+        let abs_objects = Path::new(root).join(&real_objects);
+
+        if abs_index.exists() {
+            let _ = std::fs::copy(&abs_index, &temp_index);
+        }
+
+        let mut add_cmd = Command::new("git");
+        add_cmd
+            .args(["-C", root, "add", "--intent-to-add", "--all"])
+            .env("GIT_INDEX_FILE", &temp_index)
+            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
+            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
+        let add_res = run_git_bounded(add_cmd, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES);
+        if matches!(add_res, GitCmdOutput::TimedOut) {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return json!({
+                "code": "failed",
+                "error": "git status/add timed out after 30s"
+            });
+        }
+
+        let from = git_head_commit(root)
+            .unwrap_or_else(|| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string());
+        let mut diff_cmd = Command::new("git");
+        diff_cmd.args([
+            "-C",
+            root,
+            "-c",
+            "diff.renameLimit=200",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-M",
+        ]);
+        if ignore_whitespace {
+            diff_cmd.arg("-w");
+        }
+        diff_cmd
+            .args([&from, "--"])
+            .env("GIT_INDEX_FILE", &temp_index)
+            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
+            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
+
+        let res = run_git_bounded(diff_cmd, GIT_CMD_TIMEOUT, MAX_RAW_DIFF_BYTES);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        res
+    };
+
+    let diff_bytes = match diff_result {
+        GitCmdOutput::Ok(bytes) => bytes,
+        GitCmdOutput::TooLarge => return make_too_large(),
+        GitCmdOutput::TimedOut => {
+            return json!({
+                "code": "failed",
+                "error": "git diff timed out after 30s"
+            });
+        }
+        GitCmdOutput::Failed => Vec::new(),
+    };
+
+    let diff_output = String::from_utf8_lossy(&diff_bytes);
+    let Some(files) = parse_git_diff_bounded(&diff_output, MAX_TOTAL_PARSED_DIFF_BYTES) else {
+        return make_too_large();
+    };
+    let body = json!({
+        "branch": branch,
+        "baseRef": base_ref,
+        "files": files,
+        "tooLarge": false
+    });
+    let body_str = serde_json::to_string(&body).unwrap_or_default();
+    if body_str.len() > 8 * 1024 * 1024 {
+        return make_too_large();
     }
 
     let fp = sha256_hex(body_str.as_bytes());
@@ -518,17 +781,39 @@ pub(super) fn handle_git_commits(root: &str, known: Option<&str>) -> Value {
     };
     let range = format!("{}..HEAD", comp_ref);
 
-    let log_out = std::process::Command::new("git")
-        .args(["-C", root, "log", "--no-color", "--no-show-signature", "-z", "--max-count=500", "--format=%H%x00%at%x00%s", &range, "--"])
-        .output()
-        .map(|o| o.stdout)
-        .unwrap_or_default();
+    let mut log_cmd = Command::new("git");
+    log_cmd.args([
+        "-C",
+        root,
+        "log",
+        "--no-color",
+        "--no-show-signature",
+        "-z",
+        "--max-count=500",
+        "--format=%H%x00%at%x00%s",
+        &range,
+        "--",
+    ]);
+    let log_out = match run_git_bounded(log_cmd, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES) {
+        GitCmdOutput::Ok(bytes) => bytes,
+        GitCmdOutput::TimedOut => {
+            return json!({
+                "code": "failed",
+                "error": "git log timed out after 30s"
+            });
+        }
+        GitCmdOutput::TooLarge | GitCmdOutput::Failed => Vec::new(),
+    };
 
-    let count_out = std::process::Command::new("git")
-        .args(["-C", root, "rev-list", "--count", &range, "--"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<i64>().unwrap_or(0))
-        .unwrap_or(0);
+    let mut count_cmd = Command::new("git");
+    count_cmd.args(["-C", root, "rev-list", "--count", &range, "--"]);
+    let count_out = match run_git_bounded(count_cmd, GIT_CMD_TIMEOUT, 64 * 1024) {
+        GitCmdOutput::Ok(bytes) => String::from_utf8_lossy(&bytes)
+            .trim()
+            .parse::<i64>()
+            .unwrap_or(0),
+        _ => 0,
+    };
 
     let fields: Vec<&[u8]> = log_out.split(|&b| b == 0).collect();
     let mut commits = Vec::new();
@@ -575,36 +860,61 @@ pub(super) fn handle_git_commit_diff(root: &str, sha: &str, ignore_whitespace: b
         });
     }
 
-    let commit_verify = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", sha)])
-        .output();
-    let full_sha = match commit_verify {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => {
-            return json!({
-                "code": "commit_not_found",
-                "error": format!("Commit {} not found.", sha)
-            });
-        }
+    let commit_spec = format!("{}^{{commit}}", sha);
+    let Some(full_sha) =
+        run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &commit_spec])
+            .filter(|s| !s.is_empty())
+    else {
+        return json!({
+            "code": "commit_not_found",
+            "error": format!("Commit {} not found.", sha)
+        });
     };
 
-    let parent_verify = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", &format!("{}^1", full_sha)])
-        .output();
-    let from = match parent_verify {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string(),
-    };
+    let parent_spec = format!("{}^1", full_sha);
+    let from = run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &parent_spec])
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string());
 
-    let mut diff_cmd = std::process::Command::new("git");
-    diff_cmd.args(["-C", root, "diff", "--no-color", "--no-ext-diff", "-M"]);
+    let mut diff_cmd = Command::new("git");
+    diff_cmd.args([
+        "-C",
+        root,
+        "-c",
+        "diff.renameLimit=200",
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "-M",
+    ]);
     if ignore_whitespace {
         diff_cmd.arg("-w");
     }
     diff_cmd.args([&from, &full_sha, "--"]);
 
-    let diff_out = diff_cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-    let files = parse_git_diff(&diff_out);
+    let diff_bytes = match run_git_bounded(diff_cmd, GIT_CMD_TIMEOUT, MAX_RAW_DIFF_BYTES) {
+        GitCmdOutput::Ok(bytes) => bytes,
+        GitCmdOutput::TooLarge => {
+            return json!({
+                "files": [],
+                "tooLarge": true
+            });
+        }
+        GitCmdOutput::TimedOut => {
+            return json!({
+                "code": "failed",
+                "error": "git diff timed out after 30s"
+            });
+        }
+        GitCmdOutput::Failed => Vec::new(),
+    };
+    let diff_out = String::from_utf8_lossy(&diff_bytes);
+    let Some(files) = parse_git_diff_bounded(&diff_out, MAX_TOTAL_PARSED_DIFF_BYTES) else {
+        return json!({
+            "files": [],
+            "tooLarge": true
+        });
+    };
     let body = json!({
         "files": files,
         "tooLarge": false
@@ -618,14 +928,207 @@ pub(super) fn handle_git_commit_diff(root: &str, sha: &str, ignore_whitespace: b
     body
 }
 
-/// Menangani mode `git`: backend tab Git Changes di UI Android
+fn dispatch_git_request(req: &Value) -> Option<Value> {
+    let id = req["id"].as_i64().unwrap_or(0);
+    let root = req["root"].as_str().unwrap_or(".");
+
+    match req["type"].as_str() {
+        Some("oopbot_git_detect") => {
+            let trusted = req["trusted"].as_bool().unwrap_or(false);
+            let (repo, git) = git_detect(root, trusted);
+            Some(json!({
+                "type": "oopbot_git_detected",
+                "id": id,
+                "repo": repo,
+                "git": git
+            }))
+        }
+        Some("oopbot_git_changes") => {
+            let mode = req["mode"].as_str().unwrap_or("uncommitted");
+            let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
+            let known = req["known"].as_str();
+            let mut data = handle_git_changes(root, mode, ignore_whitespace, known);
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("type".to_string(), json!("oopbot_git_changes_result"));
+                obj.insert("id".to_string(), json!(id));
+            }
+            Some(data)
+        }
+        Some("oopbot_git_commits") => {
+            let known = req["known"].as_str();
+            let mut data = handle_git_commits(root, known);
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("type".to_string(), json!("oopbot_git_commits_result"));
+                obj.insert("id".to_string(), json!(id));
+            }
+            Some(data)
+        }
+        Some("oopbot_git_commit_diff") => {
+            let sha = req["sha"].as_str().unwrap_or("");
+            let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
+            let mut data = handle_git_commit_diff(root, sha, ignore_whitespace);
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("type".to_string(), json!("oopbot_git_commit_diff_result"));
+                obj.insert("id".to_string(), json!(id));
+            }
+            Some(data)
+        }
+        _ => None,
+    }
+}
+
+struct GitLaneState {
+    queue: VecDeque<Value>,
+    closed: bool,
+}
+
+struct GitLane {
+    state: Arc<(Mutex<GitLaneState>, Condvar)>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+
+impl GitLane {
+    fn spawn<W, F>(worker_count: usize, writer: Arc<Mutex<W>>, dispatch: Arc<F>) -> Self
+    where
+        W: Write + Send + 'static,
+        F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
+    {
+        let state = Arc::new((
+            Mutex::new(GitLaneState {
+                queue: VecDeque::new(),
+                closed: false,
+            }),
+            Condvar::new(),
+        ));
+        let mut workers = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let state_clone = Arc::clone(&state);
+            let writer_clone = Arc::clone(&writer);
+            let dispatch_clone = Arc::clone(&dispatch);
+            workers.push(thread::spawn(move || loop {
+                let req = {
+                    let (lock, cvar) = &*state_clone;
+                    let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                    while guard.queue.is_empty() && !guard.closed {
+                        guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                    }
+                    match guard.queue.pop_front() {
+                        Some(req) => req,
+                        None => break,
+                    }
+                };
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    dispatch_clone(&req)
+                }));
+                if let Ok(Some(reply)) = result {
+                    if let Ok(serialized) = serde_json::to_string(&reply) {
+                        let mut w = writer_clone.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = writeln!(w, "{}", serialized);
+                        let _ = w.flush();
+                    }
+                }
+            }));
+        }
+        Self { state, workers }
+    }
+
+    fn push(&self, req: Value) {
+        let (lock, cvar) = &*self.state;
+        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        guard.queue.push_back(req);
+        cvar.notify_one();
+    }
+
+    fn close_and_join(self) {
+        {
+            let (lock, cvar) = &*self.state;
+            let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            guard.closed = true;
+            cvar.notify_all();
+        }
+        for handle in self.workers {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn is_heavy_git_request(req: &Value) -> bool {
+    matches!(
+        req["type"].as_str(),
+        Some("oopbot_git_changes" | "oopbot_git_commit_diff")
+    )
+}
+
+/// Inti dispatcher konkuren mode `git` dengan jalur terpisah:
+/// - **heavy lane** (`oopbot_git_changes`, `oopbot_git_commit_diff`): antrean khusus max 2 worker.
+/// - **fast lane** (`oopbot_git_detect`, `oopbot_git_commits`): antrean khusus max 4 worker.
+///
+/// Loop pembaca tidak pernah terblokir saat heavy lane jenuh, sehingga request cepat tetap terjawab segera.
+pub(super) fn run_git_mode_concurrent<R, W, F>(
+    mut reader: R,
+    mut writer: W,
+    dispatch: F,
+) -> Result<(), BoxError>
+where
+    R: BufRead,
+    W: Write + Send + 'static,
+    F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
+{
+    let ready = json!({ "type": "oopbot_git_ready" });
+    writeln!(writer, "{}", serde_json::to_string(&ready)?)?;
+    writer.flush()?;
+
+    let shared_writer = Arc::new(Mutex::new(writer));
+    let dispatch = Arc::new(dispatch);
+    let heavy_lane = GitLane::spawn(
+        MAX_CONCURRENT_HEAVY_GIT_REQUESTS,
+        Arc::clone(&shared_writer),
+        Arc::clone(&dispatch),
+    );
+    let fast_lane = GitLane::spawn(
+        MAX_CONCURRENT_FAST_GIT_REQUESTS,
+        shared_writer,
+        dispatch,
+    );
+
+    let mut line = String::new();
+    while let Ok(bytes) = reader.read_line(&mut line) {
+        if bytes == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            line.clear();
+            continue;
+        }
+        let Ok(req) = serde_json::from_str::<Value>(trimmed) else {
+            line.clear();
+            continue;
+        };
+        line.clear();
+
+        if is_heavy_git_request(&req) {
+            heavy_lane.push(req);
+        } else {
+            fast_lane.push(req);
+        }
+    }
+
+    fast_lane.close_and_join();
+    heavy_lane.close_and_join();
+    Ok(())
+}
+
+/// Menangani mode `git`: backend tab Git Changes di UI Android dengan jalur fast/heavy terpisah
+/// agar `oopbot_git_commits` / `oopbot_git_detect` tidak pernah terblokir oleh `oopbot_git_changes`.
 pub(super) async fn handle_git_mode(
     reader: BufReader<TcpStream>,
     writer: BufWriter<TcpStream>,
 ) -> Result<(), BoxError> {
-    run_git_loop(reader, writer)
+    run_git_mode_concurrent(reader, writer, dispatch_git_request)
 }
 
+#[cfg(test)]
 pub(super) fn run_git_loop<R: BufRead, W: Write>(
     mut reader: R,
     mut writer: W,
@@ -650,56 +1153,9 @@ pub(super) fn run_git_loop<R: BufRead, W: Write>(
             continue;
         };
 
-        let id = req["id"].as_i64().unwrap_or(0);
-        let root = req["root"].as_str().unwrap_or(".");
-
-        match req["type"].as_str() {
-            Some("oopbot_git_detect") => {
-                let trusted = req["trusted"].as_bool().unwrap_or(false);
-                let (repo, git) = git_detect(root, trusted);
-                let reply = json!({
-                    "type": "oopbot_git_detected",
-                    "id": id,
-                    "repo": repo,
-                    "git": git
-                });
-                writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
-                writer.flush()?;
-            }
-            Some("oopbot_git_changes") => {
-                let mode = req["mode"].as_str().unwrap_or("uncommitted");
-                let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
-                let known = req["known"].as_str();
-                let mut data = handle_git_changes(root, mode, ignore_whitespace, known);
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert("type".to_string(), json!("oopbot_git_changes_result"));
-                    obj.insert("id".to_string(), json!(id));
-                }
-                writeln!(writer, "{}", serde_json::to_string(&data)?)?;
-                writer.flush()?;
-            }
-            Some("oopbot_git_commits") => {
-                let known = req["known"].as_str();
-                let mut data = handle_git_commits(root, known);
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert("type".to_string(), json!("oopbot_git_commits_result"));
-                    obj.insert("id".to_string(), json!(id));
-                }
-                writeln!(writer, "{}", serde_json::to_string(&data)?)?;
-                writer.flush()?;
-            }
-            Some("oopbot_git_commit_diff") => {
-                let sha = req["sha"].as_str().unwrap_or("");
-                let ignore_whitespace = req["ignoreWhitespace"].as_bool().unwrap_or(false);
-                let mut data = handle_git_commit_diff(root, sha, ignore_whitespace);
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert("type".to_string(), json!("oopbot_git_commit_diff_result"));
-                    obj.insert("id".to_string(), json!(id));
-                }
-                writeln!(writer, "{}", serde_json::to_string(&data)?)?;
-                writer.flush()?;
-            }
-            _ => {}
+        if let Some(reply) = dispatch_git_request(&req) {
+            writeln!(writer, "{}", serde_json::to_string(&reply)?)?;
+            writer.flush()?;
         }
 
         line.clear();

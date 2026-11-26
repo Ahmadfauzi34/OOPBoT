@@ -501,6 +501,252 @@ Binary files a/image.png and b/image.png differ
 }
 
 #[test]
+fn test_parse_git_diff_bounded_drops_oversized_file_and_enforces_total_cap() {
+    // Build a single file exceeding the 1 MiB per-file hunk cap (~1.2 MiB) plus a small neighbor file.
+    let mut big_diff = String::from(
+        "diff --git a/huge.txt b/huge.txt\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/huge.txt\n\
+         @@ -0,0 +1,1200 @@\n",
+    );
+    let payload_line = format!("+{}\n", "x".repeat(1024));
+    for _ in 0..1200 {
+        big_diff.push_str(&payload_line);
+    }
+    big_diff.push_str(
+        "diff --git a/small.txt b/small.txt\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/small.txt\n\
+         @@ -0,0 +1,2 @@\n\
+         +hello\n\
+         +world\n",
+    );
+
+    let files = parse_git_diff_bounded(&big_diff, 4096).expect("oversized file should not trip total cap");
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0]["path"], "huge.txt");
+    assert_eq!(files[0]["kind"], "too_large");
+    assert_eq!(files[0]["additions"], 1200);
+    assert_eq!(files[0]["hunks"].as_array().unwrap().len(), 0);
+
+    assert_eq!(files[1]["path"], "small.txt");
+    assert_eq!(files[1]["kind"], "text");
+    assert_eq!(files[1]["additions"], 2);
+    assert_eq!(files[1]["hunks"].as_array().unwrap().len(), 1);
+
+    // When retained small files exceed max_total_bytes, parser short-circuits with None.
+    assert!(parse_git_diff_bounded(&big_diff, 4).is_none());
+}
+
+#[test]
+fn test_run_git_bounded_enforces_byte_cap_and_timeout() {
+    let mut ok_cmd = std::process::Command::new("sh");
+    ok_cmd.args(["-c", "printf hello"]);
+    assert_eq!(
+        run_git_bounded(ok_cmd, std::time::Duration::from_secs(5), 5),
+        GitCmdOutput::Ok(b"hello".to_vec()),
+        "exact byte cap boundary should succeed"
+    );
+
+    let mut over_by_one = std::process::Command::new("sh");
+    over_by_one.args(["-c", "printf hello"]);
+    assert_eq!(
+        run_git_bounded(over_by_one, std::time::Duration::from_secs(5), 4),
+        GitCmdOutput::TooLarge,
+        "output exceeding byte cap by 1 byte should return TooLarge"
+    );
+
+    let mut huge_cmd = std::process::Command::new("sh");
+    huge_cmd.args(["-c", "head -c 65536 /dev/zero"]);
+    assert_eq!(
+        run_git_bounded(huge_cmd, std::time::Duration::from_secs(5), 1024),
+        GitCmdOutput::TooLarge
+    );
+
+    // Spawn a child + grandchild process group; both must be killed promptly on timeout.
+    let pid_file = std::env::temp_dir().join(format!(
+        "oopbot_git_grandchild_{}_{}.pid",
+        std::process::id(),
+        epoch_ms()
+    ));
+    let start = std::time::Instant::now();
+    let mut slow_cmd = std::process::Command::new("sh");
+    slow_cmd.args([
+        "-c",
+        &format!("sleep 30 & echo $! > '{}' && wait", pid_file.display()),
+    ]);
+    assert_eq!(
+        run_git_bounded(slow_cmd, std::time::Duration::from_millis(150), 1024),
+        GitCmdOutput::TimedOut
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "timed-out child and grandchild must be killed promptly"
+    );
+    if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            assert!(!alive, "grandchild pid {} should have been killed", pid);
+        }
+    }
+    let _ = std::fs::remove_file(&pid_file);
+}
+
+#[test]
+fn test_run_git_mode_concurrent_fast_lane_never_blocked_by_saturated_heavy_lane() {
+    use std::sync::Condvar;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let gate_server = Arc::clone(&gate);
+    let heavy_started = Arc::new((Mutex::new(0usize), Condvar::new()));
+    let heavy_started_server = Arc::clone(&heavy_started);
+
+    let server_handle = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let reader = BufReader::new(stream.try_clone().unwrap());
+        let writer = BufWriter::new(stream);
+        run_git_mode_concurrent(reader, writer, move |req| {
+            let id = req["id"].as_i64().unwrap_or(0);
+            let kind = req["type"].as_str().unwrap_or("");
+            if kind == "oopbot_git_changes" {
+                {
+                    let (lock, cvar) = &*heavy_started_server;
+                    let mut n = lock.lock().unwrap();
+                    *n += 1;
+                    cvar.notify_all();
+                }
+                let (lock, cvar) = &*gate_server;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cvar.wait(open).unwrap();
+                }
+                Some(json!({ "type": "oopbot_git_changes_result", "id": id }))
+            } else {
+                Some(json!({ "type": format!("{}_result", kind), "id": id }))
+            }
+        })
+        .unwrap();
+    });
+
+    let mut client = std::net::TcpStream::connect(addr).unwrap();
+    client
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    let mut client_reader = BufReader::new(client.try_clone().unwrap());
+
+    // 1. Read ready handshake.
+    let mut line = String::new();
+    client_reader.read_line(&mut line).unwrap();
+    assert!(line.contains("oopbot_git_ready"));
+
+    // 2. Saturate heavy lane (4 slow diff jobs > 2 heavy workers).
+    for id in 1..=4 {
+        writeln!(
+            client,
+            "{{\"type\":\"oopbot_git_changes\",\"id\":{},\"root\":\".\"}}",
+            id
+        )
+        .unwrap();
+    }
+    client.flush().unwrap();
+
+    // Wait until both heavy worker slots are occupied.
+    {
+        let (lock, cvar) = &*heavy_started;
+        let mut n = lock.lock().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while *n < 2 {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            assert!(!remaining.is_zero(), "heavy workers did not start in time");
+            let (guard, _) = cvar.wait_timeout(n, remaining).unwrap();
+            n = guard;
+        }
+    }
+
+    // 3. Send fast requests while all heavy slots are blocked; they must reply immediately out-of-order.
+    writeln!(
+        client,
+        "{{\"type\":\"oopbot_git_detect\",\"id\":10,\"root\":\".\"}}\n\
+         {{\"type\":\"oopbot_git_commits\",\"id\":11,\"root\":\".\"}}"
+    )
+    .unwrap();
+    client.flush().unwrap();
+
+    let mut fast_ids = Vec::new();
+    for _ in 0..2 {
+        line.clear();
+        client_reader.read_line(&mut line).unwrap();
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        fast_ids.push(v["id"].as_i64().unwrap());
+    }
+    fast_ids.sort();
+    assert_eq!(
+        fast_ids,
+        vec![10, 11],
+        "fast detect/commits must complete before blocked heavy diff jobs"
+    );
+
+    // 4. Release heavy jobs, close client write side, and verify all 4 heavy replies drain cleanly.
+    {
+        let (lock, cvar) = &*gate;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+    client.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let mut heavy_ids = Vec::new();
+    loop {
+        line.clear();
+        let n = client_reader.read_line(&mut line).unwrap();
+        if n == 0 {
+            break;
+        }
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        heavy_ids.push(v["id"].as_i64().unwrap());
+    }
+    heavy_ids.sort();
+    assert_eq!(heavy_ids, vec![1, 2, 3, 4]);
+    server_handle.join().unwrap();
+}
+
+#[test]
+fn test_run_git_mode_concurrent_recovers_from_worker_panic_and_drains() {
+    let input = concat!(
+        "{\"type\":\"oopbot_git_changes\",\"id\":1,\"panic\":true}\n",
+        "{\"type\":\"oopbot_git_changes\",\"id\":2}\n",
+        "{\"type\":\"oopbot_git_detect\",\"id\":3,\"panic\":true}\n",
+        "{\"type\":\"oopbot_git_detect\",\"id\":4}\n",
+    );
+    let cursor = Cursor::new(input.as_bytes());
+    let raw = Arc::new(Mutex::new(Vec::new()));
+    let res = run_git_mode_concurrent(cursor, SharedBuf(Arc::clone(&raw)), |req| {
+        if req["panic"].as_bool().unwrap_or(false) {
+            panic!("simulated worker panic");
+        }
+        Some(json!({ "type": "ok", "id": req["id"] }))
+    });
+    assert!(res.is_ok());
+
+    let out = String::from_utf8_lossy(&raw.lock().unwrap()).to_string();
+    let mut ids: Vec<i64> = out
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|v| v["id"].as_i64())
+        .collect();
+    ids.sort();
+    assert_eq!(ids, vec![2, 4]);
+}
+
+#[test]
 fn test_run_git_loop_detect_and_changes() {
     let repo_root = env!("CARGO_MANIFEST_DIR");
     let input = format!(
