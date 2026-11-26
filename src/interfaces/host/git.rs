@@ -1,6 +1,7 @@
 use crate::common::time::epoch_ms;
 use crate::common::BoxError;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
@@ -11,11 +12,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const GIT_CMD_TIMEOUT: Duration = Duration::from_secs(30);
+const GIT_HELPER_TIMEOUT: Duration = Duration::from_secs(10);
+const READER_JOIN_GRACE: Duration = Duration::from_millis(200);
+const MAX_HELPER_GIT_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_RAW_DIFF_BYTES: usize = 10 * 1024 * 1024;
 const MAX_SMALL_GIT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FILE_HUNK_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_PARSED_DIFF_BYTES: usize = 7 * 1024 * 1024;
-const MAX_CONCURRENT_GIT_REQUESTS: usize = 4;
+const MAX_CONCURRENT_HEAVY_GIT_REQUESTS: usize = 2;
+const MAX_CONCURRENT_FAST_GIT_REQUESTS: usize = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum GitCmdOutput {
@@ -72,6 +77,8 @@ pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: us
 
     let exceeded = Arc::new(AtomicBool::new(false));
     let exceeded_reader = Arc::clone(&exceeded);
+    let reader_done = Arc::new((Mutex::new(false), Condvar::new()));
+    let reader_done_bg = Arc::clone(&reader_done);
     let reader_handle = thread::spawn(move || {
         let mut out = Vec::new();
         let mut buf = [0u8; 64 * 1024];
@@ -88,6 +95,9 @@ pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: us
                 Err(_) => break,
             }
         }
+        let (lock, cvar) = &*reader_done_bg;
+        *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        cvar.notify_all();
         out
     });
 
@@ -115,13 +125,22 @@ pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: us
         }
     };
 
-    if exceeded.load(Ordering::SeqCst) {
-        let _ = reader_handle.join();
-        return GitCmdOutput::TooLarge;
-    }
-    if timed_out {
-        let _ = reader_handle.join();
-        return GitCmdOutput::TimedOut;
+    if exceeded.load(Ordering::SeqCst) || timed_out {
+        // Wait briefly for the reader thread to observe EOF after the process group is killed,
+        // without blocking forever if a detached setsid() descendant still holds stdout.
+        let (lock, cvar) = &*reader_done;
+        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let (done, _) = cvar
+            .wait_timeout_while(guard, READER_JOIN_GRACE, |done| !*done)
+            .unwrap_or_else(|e| e.into_inner());
+        if *done {
+            let _ = reader_handle.join();
+        }
+        return if exceeded.load(Ordering::SeqCst) {
+            GitCmdOutput::TooLarge
+        } else {
+            GitCmdOutput::TimedOut
+        };
     }
     let bytes = reader_handle.join().unwrap_or_default();
     if exceeded.load(Ordering::SeqCst) {
@@ -130,6 +149,17 @@ pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: us
     match status {
         Some(st) if st.success() => GitCmdOutput::Ok(bytes),
         _ => GitCmdOutput::Failed,
+    }
+}
+
+/// Menjalankan subperintah metadata git kecil (`rev-parse`, `symbolic-ref`, `merge-base`, `--version`)
+/// dengan timeout 10 dtk dan batas output 64 KiB agar tidak pernah menggantung selamanya.
+fn run_git_small(args: &[&str]) -> Option<String> {
+    let mut cmd = Command::new("git");
+    cmd.args(args);
+    match run_git_bounded(cmd, GIT_HELPER_TIMEOUT, MAX_HELPER_GIT_OUTPUT_BYTES) {
+        GitCmdOutput::Ok(bytes) => Some(String::from_utf8_lossy(&bytes).trim().to_string()),
+        _ => None,
     }
 }
 
@@ -482,78 +512,51 @@ pub(super) fn parse_git_diff_bounded(diff_text: &str, max_total_bytes: usize) ->
 
 /// Deteksi apakah direktori adalah repository git dan git tersedia di sistem
 pub(super) fn git_detect(root: &str, trusted: bool) -> (bool, bool) {
-    let has_git = std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let has_git = run_git_small(&["--version"]).is_some();
     let dot_git = Path::new(root).join(".git").exists();
     if !trusted || !has_git || !dot_git {
         return (dot_git, has_git);
     }
-    let toplevel = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--show-toplevel"])
-        .output();
-    if let Ok(out) = toplevel {
-        if out.status.success() {
-            let top_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            let real_root = std::fs::canonicalize(root)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| root.to_string());
-            let top_canon = std::fs::canonicalize(&top_str)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or(top_str);
-            return (top_canon == real_root, true);
-        }
+    if let Some(top_str) = run_git_small(&["-C", root, "rev-parse", "--show-toplevel"]) {
+        let real_root = std::fs::canonicalize(root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| root.to_string());
+        let top_canon = std::fs::canonicalize(&top_str)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(top_str);
+        return (top_canon == real_root, true);
     }
     (false, true)
 }
 
 /// Nama branch git saat ini
 pub(super) fn git_current_branch(root: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !b.is_empty() {
-            return Some(b);
-        }
+    let b = run_git_small(&["-C", root, "symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    if !b.is_empty() {
+        Some(b)
+    } else {
+        None
     }
-    None
 }
 
 /// Default branch (origin/HEAD atau main / master)
 pub(super) fn git_default_branch(root: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-        .output()
-        .ok();
-    if let Some(o) = out {
-        if o.status.success() {
-            let ref_name = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !ref_name.is_empty() {
-                let remote_name = ref_name.trim_start_matches("refs/remotes/");
-                let local_name = remote_name.trim_start_matches("origin/");
-                return Some(local_name.to_string());
-            }
+    if let Some(ref_name) =
+        run_git_small(&["-C", root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+    {
+        if !ref_name.is_empty() {
+            let remote_name = ref_name.trim_start_matches("refs/remotes/");
+            let local_name = remote_name.trim_start_matches("origin/");
+            return Some(local_name.to_string());
         }
     }
-    let has_main = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/main"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_main {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).is_some()
+    {
         return Some("main".to_string());
     }
-    let has_master = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/master"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_master {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/master"])
+        .is_some()
+    {
         return Some("master".to_string());
     }
     None
@@ -563,21 +566,11 @@ pub(super) fn git_default_branch(root: &str) -> Option<String> {
 pub(super) fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
     let name = base.trim_start_matches("refs/heads/").trim_start_matches("origin/");
     let origin_ref = format!("refs/remotes/origin/{}", name);
-    let has_origin = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", &origin_ref])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_origin {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &origin_ref]).is_some() {
         return Some(format!("origin/{}", name));
     }
     let local_ref = format!("refs/heads/{}", name);
-    let has_local = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", &local_ref])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    if has_local {
+    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &local_ref]).is_some() {
         return Some(name.to_string());
     }
     None
@@ -585,32 +578,22 @@ pub(super) fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
 
 /// Merge-base ref HEAD
 pub(super) fn git_merge_base(root: &str, comp_ref: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "merge-base", comp_ref, "HEAD"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
+    let s = run_git_small(&["-C", root, "merge-base", comp_ref, "HEAD"])?;
+    if !s.is_empty() {
+        Some(s)
+    } else {
+        None
     }
-    None
 }
 
 /// Commit HEAD
 pub(super) fn git_head_commit(root: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
+    let s = run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?;
+    if !s.is_empty() {
+        Some(s)
+    } else {
+        None
     }
-    None
 }
 
 /// Menangani permintaan perubahan berkas git (mode: uncommitted atau base)
@@ -678,17 +661,11 @@ pub(super) fn handle_git_changes(
         let temp_index = temp_dir.join("index");
         let _ = std::fs::create_dir_all(&temp_objects);
 
-        let real_index = Command::new("git")
-            .args(["-C", root, "rev-parse", "--git-path", "index"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        let real_index = run_git_small(&["-C", root, "rev-parse", "--git-path", "index"])
+            .filter(|s| !s.is_empty())
             .unwrap_or_else(|| ".git/index".into());
-        let real_objects = Command::new("git")
-            .args(["-C", root, "rev-parse", "--git-path", "objects"])
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        let real_objects = run_git_small(&["-C", root, "rev-parse", "--git-path", "objects"])
+            .filter(|s| !s.is_empty())
             .unwrap_or_else(|| ".git/objects".into());
 
         let abs_index = Path::new(root).join(&real_index);
@@ -883,40 +860,21 @@ pub(super) fn handle_git_commit_diff(root: &str, sha: &str, ignore_whitespace: b
         });
     }
 
-    let commit_verify = Command::new("git")
-        .args([
-            "-C",
-            root,
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{}^{{commit}}", sha),
-        ])
-        .output();
-    let full_sha = match commit_verify {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => {
-            return json!({
-                "code": "commit_not_found",
-                "error": format!("Commit {} not found.", sha)
-            });
-        }
+    let commit_spec = format!("{}^{{commit}}", sha);
+    let Some(full_sha) =
+        run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &commit_spec])
+            .filter(|s| !s.is_empty())
+    else {
+        return json!({
+            "code": "commit_not_found",
+            "error": format!("Commit {} not found.", sha)
+        });
     };
 
-    let parent_verify = Command::new("git")
-        .args([
-            "-C",
-            root,
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{}^1", full_sha),
-        ])
-        .output();
-    let from = match parent_verify {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string(),
-    };
+    let parent_spec = format!("{}^1", full_sha);
+    let from = run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &parent_spec])
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string());
 
     let mut diff_cmd = Command::new("git");
     diff_cmd.args([
@@ -1019,20 +977,121 @@ fn dispatch_git_request(req: &Value) -> Option<Value> {
     }
 }
 
-/// Menangani mode `git`: backend tab Git Changes di UI Android dengan eksekusi konkuren terbatas
-/// agar `oopbot_git_commits` / `oopbot_git_detect` tidak terblokir di belakang `oopbot_git_changes`.
-pub(super) async fn handle_git_mode(
-    mut reader: BufReader<TcpStream>,
-    mut writer: BufWriter<TcpStream>,
-) -> Result<(), BoxError> {
+struct GitLaneState {
+    queue: VecDeque<Value>,
+    closed: bool,
+}
+
+struct GitLane {
+    state: Arc<(Mutex<GitLaneState>, Condvar)>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+
+impl GitLane {
+    fn spawn<W, F>(worker_count: usize, writer: Arc<Mutex<W>>, dispatch: Arc<F>) -> Self
+    where
+        W: Write + Send + 'static,
+        F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
+    {
+        let state = Arc::new((
+            Mutex::new(GitLaneState {
+                queue: VecDeque::new(),
+                closed: false,
+            }),
+            Condvar::new(),
+        ));
+        let mut workers = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let state_clone = Arc::clone(&state);
+            let writer_clone = Arc::clone(&writer);
+            let dispatch_clone = Arc::clone(&dispatch);
+            workers.push(thread::spawn(move || loop {
+                let req = {
+                    let (lock, cvar) = &*state_clone;
+                    let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                    while guard.queue.is_empty() && !guard.closed {
+                        guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                    }
+                    match guard.queue.pop_front() {
+                        Some(req) => req,
+                        None => break,
+                    }
+                };
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    dispatch_clone(&req)
+                }));
+                if let Ok(Some(reply)) = result {
+                    if let Ok(serialized) = serde_json::to_string(&reply) {
+                        let mut w = writer_clone.lock().unwrap_or_else(|e| e.into_inner());
+                        let _ = writeln!(w, "{}", serialized);
+                        let _ = w.flush();
+                    }
+                }
+            }));
+        }
+        Self { state, workers }
+    }
+
+    fn push(&self, req: Value) {
+        let (lock, cvar) = &*self.state;
+        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        guard.queue.push_back(req);
+        cvar.notify_one();
+    }
+
+    fn close_and_join(self) {
+        {
+            let (lock, cvar) = &*self.state;
+            let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            guard.closed = true;
+            cvar.notify_all();
+        }
+        for handle in self.workers {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn is_heavy_git_request(req: &Value) -> bool {
+    matches!(
+        req["type"].as_str(),
+        Some("oopbot_git_changes" | "oopbot_git_commit_diff")
+    )
+}
+
+/// Inti dispatcher konkuren mode `git` dengan jalur terpisah:
+/// - **heavy lane** (`oopbot_git_changes`, `oopbot_git_commit_diff`): antrean khusus max 2 worker.
+/// - **fast lane** (`oopbot_git_detect`, `oopbot_git_commits`): antrean khusus max 4 worker.
+///
+/// Loop pembaca tidak pernah terblokir saat heavy lane jenuh, sehingga request cepat tetap terjawab segera.
+pub(super) fn run_git_mode_concurrent<R, W, F>(
+    mut reader: R,
+    mut writer: W,
+    dispatch: F,
+) -> Result<(), BoxError>
+where
+    R: BufRead,
+    W: Write + Send + 'static,
+    F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
+{
     let ready = json!({ "type": "oopbot_git_ready" });
     writeln!(writer, "{}", serde_json::to_string(&ready)?)?;
     writer.flush()?;
 
     let shared_writer = Arc::new(Mutex::new(writer));
-    let active = Arc::new((Mutex::new(0usize), Condvar::new()));
-    let mut line = String::new();
+    let dispatch = Arc::new(dispatch);
+    let heavy_lane = GitLane::spawn(
+        MAX_CONCURRENT_HEAVY_GIT_REQUESTS,
+        Arc::clone(&shared_writer),
+        Arc::clone(&dispatch),
+    );
+    let fast_lane = GitLane::spawn(
+        MAX_CONCURRENT_FAST_GIT_REQUESTS,
+        shared_writer,
+        dispatch,
+    );
 
+    let mut line = String::new();
     while let Ok(bytes) = reader.read_line(&mut line) {
         if bytes == 0 {
             break;
@@ -1048,47 +1107,25 @@ pub(super) async fn handle_git_mode(
         };
         line.clear();
 
-        // Batasi jumlah worker paralel agar tidak membanjiri CPU/RAM perangkat.
-        {
-            let (lock, cvar) = &*active;
-            let mut count = lock.lock().unwrap_or_else(|e| e.into_inner());
-            while *count >= MAX_CONCURRENT_GIT_REQUESTS {
-                count = cvar.wait(count).unwrap_or_else(|e| e.into_inner());
-            }
-            *count += 1;
+        if is_heavy_git_request(&req) {
+            heavy_lane.push(req);
+        } else {
+            fast_lane.push(req);
         }
-
-        struct ActiveSlotGuard(Arc<(Mutex<usize>, Condvar)>);
-        impl Drop for ActiveSlotGuard {
-            fn drop(&mut self) {
-                let (lock, cvar) = &*self.0;
-                let mut count = lock.lock().unwrap_or_else(|e| e.into_inner());
-                *count = count.saturating_sub(1);
-                cvar.notify_one();
-            }
-        }
-
-        let writer_clone = Arc::clone(&shared_writer);
-        let guard = ActiveSlotGuard(Arc::clone(&active));
-        thread::spawn(move || {
-            let _guard = guard;
-            if let Some(reply) = dispatch_git_request(&req) {
-                if let Ok(serialized) = serde_json::to_string(&reply) {
-                    let mut w = writer_clone.lock().unwrap_or_else(|e| e.into_inner());
-                    let _ = writeln!(w, "{}", serialized);
-                    let _ = w.flush();
-                }
-            }
-        });
     }
 
-    // Tunggu seluruh worker yang sedang berjalan sebelum menutup koneksi.
-    let (lock, cvar) = &*active;
-    let mut count = lock.lock().unwrap_or_else(|e| e.into_inner());
-    while *count > 0 {
-        count = cvar.wait(count).unwrap_or_else(|e| e.into_inner());
-    }
+    fast_lane.close_and_join();
+    heavy_lane.close_and_join();
     Ok(())
+}
+
+/// Menangani mode `git`: backend tab Git Changes di UI Android dengan jalur fast/heavy terpisah
+/// agar `oopbot_git_commits` / `oopbot_git_detect` tidak pernah terblokir oleh `oopbot_git_changes`.
+pub(super) async fn handle_git_mode(
+    reader: BufReader<TcpStream>,
+    writer: BufWriter<TcpStream>,
+) -> Result<(), BoxError> {
+    run_git_mode_concurrent(reader, writer, dispatch_git_request)
 }
 
 #[cfg(test)]
