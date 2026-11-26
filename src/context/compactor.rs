@@ -9,6 +9,7 @@ pub const MAX_COMPACTION_MSG_CHARS: usize = 8_000;
 pub const MAX_COMPACTION_INSTRUCTIONS_CHARS: usize = 4_000;
 pub const MAX_COMPACTION_PREVIOUS_SUMMARY_CHARS: usize = 16_000;
 pub const MAX_COMPACTION_PROMPT_CHARS: usize = 120_000;
+pub const MAX_COMPACTION_INLINE_IMAGES: usize = 4;
 
 pub const COMPACTION_SUMMARY_OPEN: &str = "<compaction_summary>";
 pub const COMPACTION_SUMMARY_CLOSE: &str = "</compaction_summary>";
@@ -23,6 +24,9 @@ pub struct CompactionPlan {
     pub summarized_messages: usize,
     pub kept_messages: usize,
     pub prompt: String,
+    /// Lampiran `inlineData` terbaru dari pesan yang diringkas agar summarizer multimodal
+    /// tetap dapat membaca detail visual sebelum pesan aslinya dipadatkan.
+    pub inline_images: Vec<Value>,
 }
 
 /// Potong teks secara aman di batas UTF-8 dengan mempertahankan 2/3 awal dan 1/3 akhir
@@ -97,14 +101,63 @@ pub fn extract_existing_compaction_summary(history: &[Value]) -> Option<String> 
     (!inner.is_empty()).then(|| inner.to_string())
 }
 
-fn format_canonical_message_for_compaction(msg: &Value) -> Option<String> {
+fn is_valid_inline_image_part(part: &Value) -> bool {
+    part.get("inlineData")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.get("data"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|data| !data.is_empty())
+}
+
+fn collect_compaction_inline_images(slice: &[Value]) -> (Vec<(usize, usize)>, Vec<Value>) {
+    let mut locations = Vec::new();
+    for (msg_idx, msg) in slice.iter().enumerate() {
+        if msg["role"].as_str() != Some("user") {
+            continue;
+        }
+        if let Some(parts) = msg["parts"].as_array() {
+            for (part_idx, part) in parts.iter().enumerate() {
+                if is_valid_inline_image_part(part) {
+                    locations.push((msg_idx, part_idx));
+                }
+            }
+        }
+    }
+    let start = locations.len().saturating_sub(MAX_COMPACTION_INLINE_IMAGES);
+    let selected = locations[start..].to_vec();
+    let images = selected
+        .iter()
+        .filter_map(|&(msg_idx, part_idx)| {
+            let part = slice.get(msg_idx)?["parts"].as_array()?.get(part_idx)?;
+            let inline = part.get("inlineData")?.as_object()?;
+            let mime = inline
+                .get("mimeType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("image/png");
+            let data = inline.get("data").and_then(|v| v.as_str())?;
+            Some(json!({
+                "inlineData": {
+                    "mimeType": mime,
+                    "data": data
+                }
+            }))
+        })
+        .collect();
+    (selected, images)
+}
+
+fn format_canonical_message_for_compaction(
+    msg_idx: usize,
+    msg: &Value,
+    attached_images: &[(usize, usize)],
+) -> Option<String> {
     let role = msg["role"].as_str().unwrap_or_default();
     let parts = msg["parts"].as_array()?;
     let mut lines = Vec::new();
 
     match role {
         "user" => {
-            for p in parts {
+            for (part_idx, p) in parts.iter().enumerate() {
                 if let Some(fr) = p.get("functionResponse").and_then(|v| v.as_object()) {
                     let name = fr.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
                     let resp_str = fr
@@ -122,7 +175,17 @@ fn format_canonical_message_for_compaction(msg: &Value) -> Option<String> {
                         truncate_head_tail_chars(text, MAX_COMPACTION_MSG_CHARS)
                     ));
                 } else if p.get("inlineData").is_some() {
-                    lines.push("[User]: [gambar inline]".to_string());
+                    if let Some(pos) = attached_images
+                        .iter()
+                        .position(|&loc| loc == (msg_idx, part_idx))
+                    {
+                        lines.push(format!(
+                            "[User]: [gambar inline #{} (terlampir pada input ringkasan)]",
+                            pos + 1
+                        ));
+                    } else {
+                        lines.push("[User]: [gambar inline sebelumnya]".to_string());
+                    }
                 }
             }
         }
@@ -339,17 +402,22 @@ fn build_canonical_compaction_prompt(
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
     max_prompt_chars: usize,
-) -> String {
+) -> (String, Vec<Value>) {
+    let (attached_locs, inline_images) = collect_compaction_inline_images(to_summarize);
     let formatted: Vec<String> = to_summarize
         .iter()
-        .filter_map(format_canonical_message_for_compaction)
+        .enumerate()
+        .filter_map(|(msg_idx, msg)| {
+            format_canonical_message_for_compaction(msg_idx, msg, &attached_locs)
+        })
         .collect();
-    assemble_compaction_prompt_with_limit(
+    let prompt = assemble_compaction_prompt_with_limit(
         &formatted,
         previous_summary,
         custom_instructions,
         max_prompt_chars,
-    )
+    );
+    (prompt, inline_images)
 }
 
 /// Rencanakan pemadatan `history` kanonik secara deterministik dengan batas prompt default.
@@ -443,7 +511,7 @@ pub fn plan_canonical_compaction_with_prompt_limit(
     // (yang sudah dibawa ke `<previous_summary>`), bukan pesan user normal mana pun.
     let conversation_slice = &to_summarize[synthetic_prefix_len.min(to_summarize.len())..];
     let kept_messages = history.len().saturating_sub(cut_index);
-    let prompt = build_canonical_compaction_prompt(
+    let (prompt, inline_images) = build_canonical_compaction_prompt(
         conversation_slice,
         inherited_summary.as_deref(),
         custom_instructions,
@@ -455,6 +523,7 @@ pub fn plan_canonical_compaction_with_prompt_limit(
         summarized_messages: to_summarize.len(),
         kept_messages,
         prompt,
+        inline_images,
     })
 }
 

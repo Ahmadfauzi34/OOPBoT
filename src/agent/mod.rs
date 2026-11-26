@@ -630,6 +630,22 @@ impl ContextSummarizer for AgentHarness {
             .await?;
         Ok(summary)
     }
+
+    async fn summarize_with_images(
+        &self,
+        compaction_prompt: &str,
+        inline_images: &[Value],
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<String, BoxError> {
+        let (summary, _usage) = self
+            .generate_compaction_summary_with_images_cancellable(
+                compaction_prompt,
+                inline_images,
+                cancel_rx,
+            )
+            .await?;
+        Ok(summary)
+    }
 }
 
 #[async_trait]

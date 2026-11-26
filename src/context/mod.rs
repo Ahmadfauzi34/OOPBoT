@@ -22,8 +22,9 @@ pub use compactor::{
     is_valid_canonical_cut_point, plan_canonical_compaction,
     plan_canonical_compaction_with_prompt_limit, rebuild_canonical_history,
     truncate_head_tail_chars, truncate_head_tail_within_chars, CompactionPlan,
-    COMPACTION_SUMMARY_CLOSE, COMPACTION_SUMMARY_OPEN, MAX_COMPACTION_INSTRUCTIONS_CHARS,
-    MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS, MAX_COMPACTION_TOOL_CHARS,
+    COMPACTION_SUMMARY_CLOSE, COMPACTION_SUMMARY_OPEN, MAX_COMPACTION_INLINE_IMAGES,
+    MAX_COMPACTION_INSTRUCTIONS_CHARS, MAX_COMPACTION_MSG_CHARS, MAX_COMPACTION_PROMPT_CHARS,
+    MAX_COMPACTION_TOOL_CHARS,
 };
 
 use crate::common::BoxError;
@@ -38,6 +39,18 @@ pub trait ContextSummarizer: Send + Sync {
         compaction_prompt: &str,
         cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<String, BoxError>;
+
+    /// Varian multimodal yang meneruskan lampiran `inlineData` dari pesan yang diringkas
+    /// agar detail visual ikut ditangkap dalam ringkasan konteks.
+    async fn summarize_with_images(
+        &self,
+        compaction_prompt: &str,
+        inline_images: &[Value],
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<String, BoxError> {
+        let _ = inline_images;
+        self.summarize(compaction_prompt, cancel_rx).await
+    }
 }
 
 /// Adapter persistensi konteks per interface (mis. `tabs.json` atomik di CLI atau in-memory di tes).
@@ -88,7 +101,7 @@ impl ContextManager {
     }
 
     /// Evaluasi budget; jika `NeedsCompaction` / `OverLimit` atau `force == true`,
-    /// jalankan `plan_canonical_compaction_with_prompt_limit` → `summarizer.summarize()` → `rebuild_canonical_history()`.
+    /// jalankan `plan_canonical_compaction_with_prompt_limit` → `summarizer.summarize_with_images()` → `rebuild_canonical_history()`.
     #[allow(clippy::too_many_arguments)]
     pub async fn prepare_or_compact(
         &self,
@@ -164,7 +177,9 @@ impl ContextManager {
             }
         }
 
-        let summary = summarizer.summarize(&plan.prompt, cancel_rx).await?;
+        let summary = summarizer
+            .summarize_with_images(&plan.prompt, &plan.inline_images, cancel_rx)
+            .await?;
         let rebuilt = rebuild_canonical_history(&summary, &history[plan.cut_index..]);
         let post_budget = self.evaluate(system_instruction, tool_declarations, &rebuilt, None);
 

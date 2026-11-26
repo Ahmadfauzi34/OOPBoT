@@ -541,3 +541,143 @@ async fn agent_resets_observed_tokens_on_model_or_provider_switch_and_bounds_sum
 
     srv.abort();
 }
+
+#[tokio::test]
+async fn agent_compaction_forwards_inline_images_only_to_multimodal_models() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let captured_bodies: Arc<std::sync::Mutex<Vec<String>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured_srv = Arc::clone(&captured_bodies);
+
+    let srv = tokio::spawn(async move {
+        for _ in 0..2 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 65_536];
+            let mut full = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                full.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&full);
+                if let Some((hdrs, body)) = text.split_once("\r\n\r\n") {
+                    let content_len = hdrs
+                        .lines()
+                        .find_map(|l| {
+                            let (k, v) = l.split_once(':')?;
+                            k.eq_ignore_ascii_case("content-length")
+                                .then(|| v.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= content_len {
+                        captured_srv.lock().unwrap().push(body.to_string());
+                        break;
+                    }
+                }
+            }
+            let resp_body = json!({
+                "choices": [{
+                    "message": { "role": "assistant", "content": "Ringkasan visual: tombol biru." }
+                }],
+                "usage": { "prompt_tokens": 100, "completion_tokens": 10 }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "vision-model".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let img_history = vec![
+        json!({
+            "role": "user",
+            "parts": [
+                { "text": "lihat warna tombol di screenshot ini" },
+                { "inlineData": { "mimeType": "image/png", "data": "iVBORw0KGgo=" } }
+            ]
+        }),
+        json!({ "role": "model", "parts": [{ "text": "terlihat." }] }),
+        json!({ "role": "user", "parts": [{ "text": "lanjutkan" }] }),
+        json!({ "role": "model", "parts": [{ "text": "siap." }] }),
+    ];
+    let mut tabs = WorkspaceTabs::new("vision-model");
+    tabs.active_mut().history = img_history.clone();
+
+    let harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        3,
+        tabs,
+        None,
+    );
+    harness.configure_model(
+        "vision-model",
+        &json!({
+            "api": "openai-completions",
+            "contextWindow": 16000,
+            "maxTokens": 2000,
+            "input": ["text", "image"]
+        }),
+    );
+    harness.configure_model(
+        "text-only-model",
+        &json!({
+            "api": "openai-completions",
+            "contextWindow": 16000,
+            "maxTokens": 2000,
+            "input": ["text"]
+        }),
+    );
+
+    // 1. Model multimodal -> payload compaction wajib membawa image_url (inlineData)
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let prep1 = harness.compact_active_tab(None, rx.clone()).await.unwrap();
+    assert!(prep1.compacted);
+
+    // 2. Model text-only -> payload compaction TIDAK boleh menyertakan image_url
+    harness.set_active_model("text-only-model");
+    harness.replace_active_history("1", Some("Tab 1"), img_history);
+    let prep2 = harness.compact_active_tab(None, rx).await.unwrap();
+    assert!(prep2.compacted);
+
+    let bodies = captured_bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    assert!(
+        bodies[0].contains("data:image/png;base64,iVBORw0KGgo="),
+        "multimodal summarizer must receive inline image data"
+    );
+    assert!(
+        !bodies[1].contains("data:image/png;base64,iVBORw0KGgo="),
+        "text-only summarizer must omit inline image data"
+    );
+
+    srv.abort();
+}

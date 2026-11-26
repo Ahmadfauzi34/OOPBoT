@@ -352,3 +352,68 @@ fn compaction_prompt_scales_down_for_small_context_window_models() {
     assert!(plan.prompt.contains("<previous_summary>"));
     assert!(plan.prompt.contains("<custom_instructions>"));
 }
+
+#[tokio::test]
+async fn compaction_plan_extracts_bounded_recent_inline_images_for_summarizer() {
+    struct ImageCaptureSummarizer {
+        images_seen: std::sync::Mutex<Vec<Value>>,
+    }
+
+    #[async_trait]
+    impl ContextSummarizer for ImageCaptureSummarizer {
+        async fn summarize(
+            &self,
+            _compaction_prompt: &str,
+            _cancel_rx: tokio::sync::watch::Receiver<bool>,
+        ) -> Result<String, BoxError> {
+            Ok("fallback".into())
+        }
+
+        async fn summarize_with_images(
+            &self,
+            _compaction_prompt: &str,
+            inline_images: &[Value],
+            _cancel_rx: tokio::sync::watch::Receiver<bool>,
+        ) -> Result<String, BoxError> {
+            *self.images_seen.lock().unwrap() = inline_images.to_vec();
+            Ok("Ringkasan termasuk detail gambar.".into())
+        }
+    }
+
+    let mut history = Vec::new();
+    // 6 gambar pada pesan yang diringkas -> hanya 4 terbaru (MAX_COMPACTION_INLINE_IMAGES) dilampirkan.
+    for i in 1..=6 {
+        history.push(json!({
+            "role": "user",
+            "parts": [
+                { "text": format!("lihat screenshot #{i}") },
+                { "inlineData": { "mimeType": "image/png", "data": format!("IMG_DATA_{i}") } }
+            ]
+        }));
+        history.push(m_msg(&format!("oke screenshot #{i}")));
+    }
+    history.push(u_msg("pertanyaan lanjutan"));
+    history.push(m_msg("siap"));
+
+    let plan = plan_canonical_compaction(&history, 20, None, None).expect("plan");
+    assert_eq!(plan.inline_images.len(), MAX_COMPACTION_INLINE_IMAGES);
+    assert_eq!(plan.inline_images[0]["inlineData"]["data"], "IMG_DATA_3");
+    assert_eq!(plan.inline_images[3]["inlineData"]["data"], "IMG_DATA_6");
+    assert!(plan.prompt.contains("[gambar inline #1 (terlampir pada input ringkasan)]"));
+    assert!(plan.prompt.contains("[gambar inline sebelumnya]"));
+
+    let mgr = ContextManager::new(ContextPolicy::for_model_limits(Some(16_000), Some(2_000)));
+    let summarizer = ImageCaptureSummarizer {
+        images_seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let prep = mgr
+        .prepare_or_compact("sys", &[], &history, None, true, None, &summarizer, rx)
+        .await
+        .unwrap();
+    assert!(prep.compacted);
+    assert_eq!(
+        summarizer.images_seen.lock().unwrap().len(),
+        MAX_COMPACTION_INLINE_IMAGES
+    );
+}
