@@ -72,6 +72,14 @@ jobs:
         with:
           gradle-version: '9.8.2'
 
+      - name: Cache Robolectric Maven artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-robolectric-m2-${{ hashFiles('android/app/build.gradle.kts', 'android/app/src/test/**/AndroidSqlDbTest.kt') }}
+          restore-keys: |
+            ${{ runner.os }}-robolectric-m2-
+
       - name: Run Android ktlint, detekt & JVM unit tests
         working-directory: android
         env:
