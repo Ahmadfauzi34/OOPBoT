@@ -84,7 +84,10 @@ jobs:
         working-directory: android
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gradle :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue
+        run: >-
+          gradle :app:ktlintCheck :app:detektDebug :app:detektDebugUnitTest :app:testDebugUnitTest
+          -Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2
+          --no-daemon --stacktrace --continue
 
       - name: Generate and verify Compose stability reports
         working-directory: android
