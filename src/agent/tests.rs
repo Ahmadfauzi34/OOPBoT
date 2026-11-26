@@ -758,6 +758,46 @@ fn workspace_tabs_clamps_oob_active_index_and_backs_up_corrupt_file() {
     assert!(surfaced.contains("tabs_real_ctor.json.corrupt-"));
     assert!(harness.take_persist_error().is_none());
 
+    // 4. Jalur konstruktor nyata AgentHarness dengan korupsi parsial: tab sehat dipulihkan utuh
+    // dan peringatan pemulihan parsial tetap muncul meski --model / set_active_model langsung menyimpan.
+    let partial_path = dir.join("tabs_partial_ctor.json");
+    let partial_payload = json!({
+        "tabs": [
+            {
+                "id": "1",
+                "title": "Percakapan Penting",
+                "model": "model-a",
+                "history": [{ "role": "user", "parts": [{ "text": "jangan hilang" }] }],
+                "timeline": []
+            },
+            {
+                "id": 404,
+                "history": "rusak"
+            }
+        ],
+        "active_index": 0,
+        "next_id": 3
+    });
+    std::fs::write(&partial_path, partial_payload.to_string()).unwrap();
+    let client2 = crate::llm::LlmClient::new("test-key".into(), "model-a".into()).unwrap();
+    let harness_partial = AgentHarness::with_event_sink_at_storage_path(
+        "OOPBoT",
+        client2,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        Some(partial_path.clone()),
+    );
+    assert_eq!(harness_partial.active_history().len(), 1);
+    assert_eq!(harness_partial.active_tab_summary().1, "Percakapan Penting");
+    harness_partial.set_active_model("model-override");
+    let partial_warn = harness_partial
+        .take_persist_error()
+        .expect("partial recovery warning must survive set_active_model save");
+    assert!(partial_warn.contains("1 tab rusak dilewati, 1 tab sehat dipulihkan"));
+    assert!(partial_warn.contains("tabs_partial_ctor.json.corrupt-"));
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
