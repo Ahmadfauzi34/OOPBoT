@@ -15,10 +15,22 @@ use serde_json::{json, Value};
 use std::time::Instant;
 
 impl AgentHarness {
-    /// Buat ringkasan konteks (untuk `compact` RPC) dengan dukungan pembatalan asinkron.
+    /// Buat ringkasan konteks (untuk `compact` RPC/CLI) dengan dukungan pembatalan asinkron.
     pub async fn generate_compaction_summary_cancellable(
         &self,
         prompt: &str,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(String, Option<TokenUsage>), BoxError> {
+        self.generate_compaction_summary_with_images_cancellable(prompt, &[], cancel_rx)
+            .await
+    }
+
+    /// Buat ringkasan konteks sambil meneruskan lampiran gambar `inlineData` terbaru
+    /// ke model multimodal (dibatasi agar total teks + gambar tetap aman dalam `usable_limit`).
+    pub async fn generate_compaction_summary_with_images_cancellable(
+        &self,
+        prompt: &str,
+        inline_images: &[Value],
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<(String, Option<TokenUsage>), BoxError> {
         let (session_id, active_model) = {
@@ -27,6 +39,36 @@ impl AgentHarness {
             (s.id.clone(), s.model.clone())
         };
         let model_info = self.active_model_info();
+        let policy = crate::context::ContextPolicy::for_model_limits(
+            model_info.input_token_limit,
+            model_info.output_token_limit,
+        );
+
+        let supports_images = model_info.input.iter().any(|m| m == "image");
+        let mut attached_images: Vec<Value> = Vec::new();
+        let mut used_image_tokens = 0u64;
+        if supports_images && !inline_images.is_empty() {
+            let image_token_budget = policy.usable_limit() / 4;
+            for img in inline_images.iter().rev() {
+                let cost = crate::context::estimate_value_tokens(img);
+                if used_image_tokens.saturating_add(cost) > image_token_budget {
+                    continue;
+                }
+                used_image_tokens = used_image_tokens.saturating_add(cost);
+                attached_images.push(img.clone());
+            }
+            attached_images.reverse();
+        }
+
+        let remaining_tokens = policy
+            .usable_limit()
+            .saturating_sub(used_image_tokens)
+            .saturating_sub(64)
+            .max(128);
+        let prompt_cap = ((remaining_tokens as usize).saturating_mul(3))
+            .clamp(512, policy.max_compaction_prompt_chars());
+        let bounded_prompt = crate::context::truncate_head_tail_within_chars(prompt, prompt_cap);
+
         let gen_options = GenerationOptions {
             api: Some(model_info.api.clone()),
             max_tokens: model_info.output_token_limit,
@@ -35,8 +77,11 @@ impl AgentHarness {
             thinking_level_map: model_info.thinking_level_map.clone(),
             session_id: Some(session_id),
         };
-        let contents = vec![user_text(prompt)];
-        let sys = "Kamu adalah asisten peringkas percakapan yang akurat dan ringkas.";
+        let mut parts = Vec::with_capacity(1 + attached_images.len());
+        parts.push(json!({ "text": bounded_prompt }));
+        parts.extend(attached_images);
+        let contents = vec![json!({ "role": "user", "parts": parts })];
+        let sys = "Kamu adalah asisten peringkas percakapan yang akurat dan ringkas. Bila ada gambar terlampir, rangkum detail visual pentingnya.";
         let turn = tokio::select! {
             biased;
             _ = wait_cancelled(&mut cancel_rx) => {
@@ -234,10 +279,13 @@ impl AgentHarness {
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
         steer_hook: Option<SteerHook>,
     ) -> Result<TurnOutcome, BoxError> {
-        let (session_id, active_model, mut history) = {
+        let decls = self.tools.declarations();
+        let (session_id, active_model, mut history, mut last_observed_input, obs_fingerprint) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let s = tabs.active();
-            (s.id.clone(), s.model.clone(), s.history.clone())
+            let fp = self.context_observation_fingerprint(&s.model, &decls);
+            let observed = self.observed_context_tokens_for(s, &decls);
+            (s.id.clone(), s.model.clone(), s.history.clone(), observed, fp)
         };
 
         if push_initial_user {
@@ -249,7 +297,6 @@ impl AgentHarness {
             history.push(user_msg);
         }
 
-        let decls = self.tools.declarations();
         let collector = MemoryEventCollector::new();
         let turn_started = Instant::now();
         let mut tool_steps = 0usize;
@@ -276,6 +323,10 @@ impl AgentHarness {
             &collector,
         );
 
+        let context_mgr = self
+            .auto_compact
+            .then(|| crate::context::ContextManager::new(self.context_policy()));
+
         for step_idx in 1..=self.max_steps {
             if *cancel_rx.borrow() {
                 was_aborted = true;
@@ -297,6 +348,131 @@ impl AgentHarness {
                 if *cancel_rx.borrow() {
                     was_aborted = true;
                     break;
+                }
+            }
+
+            // Pre-turn & mid-turn auto-compaction guard (aktif pada jalur CLI).
+            if let Some(mgr) = &context_mgr {
+                let prepared = mgr
+                    .prepare_or_compact(
+                        &self.system_instruction,
+                        &decls,
+                        &history,
+                        last_observed_input,
+                        false,
+                        None,
+                        self,
+                        cancel_rx.clone(),
+                    )
+                    .await;
+                match prepared {
+                    Ok(prep) => {
+                        let mut post_budget = prep.budget;
+                        if prep.compacted {
+                            history = prep.history;
+                            if history
+                                .last()
+                                .and_then(|m| m["role"].as_str())
+                                == Some("model")
+                            {
+                                history.push(user_text(
+                                    "Lanjutkan pengerjaan tugas saat ini berdasarkan ringkasan konteks di atas.",
+                                ));
+                                post_budget = mgr.evaluate(
+                                    &self.system_instruction,
+                                    &decls,
+                                    &history,
+                                    None,
+                                );
+                            }
+                            last_observed_input = None;
+                            self.emit(
+                                AgentEvent::Thinking {
+                                    step_index: step_idx,
+                                    text: format!(
+                                        "🗜️ Auto-compaction konteks ({} pesan diringkas, {} dipertahankan; ~{} token)",
+                                        prep.summarized_messages,
+                                        prep.kept_messages,
+                                        post_budget.total_estimated_tokens
+                                    ),
+                                    thought_signature: None,
+                                },
+                                &collector,
+                            );
+                        }
+                        if post_budget.status == crate::context::BudgetStatus::OverLimit {
+                            if committed_progress {
+                                let events = collector.take_events();
+                                let folded = MemoryEventCollector::fold_turn(&input.text, &events);
+                                let mut tabs =
+                                    self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+                                let active = tabs.active_mut();
+                                active.update_title_from_prompt(&input.text);
+                                active.history = history;
+                                active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
+                                active.timeline.extend(folded);
+                                self.persist_tabs(&tabs);
+                            }
+                            let stage = if prep.compacted {
+                                " setelah compaction"
+                            } else {
+                                ""
+                            };
+                            return Err(format!(
+                                "Konteks masih melampaui batas model{} (~{} / {} token usable) sehingga request LLM dibatalkan. Gunakan /compact atau perpendek pesan/lampiran.",
+                                stage,
+                                post_budget.effective_tokens(),
+                                post_budget.usable_limit
+                            )
+                            .into());
+                        }
+                        if prep.compacted {
+                            committed_progress = true;
+                        }
+                    }
+                    Err(_) if *cancel_rx.borrow() => {
+                        was_aborted = true;
+                        break;
+                    }
+                    Err(e) => {
+                        let current_budget = mgr.evaluate(
+                            &self.system_instruction,
+                            &decls,
+                            &history,
+                            last_observed_input,
+                        );
+                        if current_budget.status == crate::context::BudgetStatus::OverLimit {
+                            if committed_progress {
+                                let events = collector.take_events();
+                                let folded = MemoryEventCollector::fold_turn(&input.text, &events);
+                                let mut tabs =
+                                    self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+                                let active = tabs.active_mut();
+                                active.update_title_from_prompt(&input.text);
+                                active.history = history;
+                                active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
+                                active.timeline.extend(folded);
+                                self.persist_tabs(&tabs);
+                            }
+                            return Err(format!(
+                                "Auto-compaction gagal ({}) saat konteks melampaui batas model (~{} / {} token usable). Request LLM dibatalkan.",
+                                e,
+                                current_budget.effective_tokens(),
+                                current_budget.usable_limit
+                            )
+                            .into());
+                        }
+                        // Fail-soft: hanya lanjut bila konteks masih di bawah usable_limit
+                        // (mis. status NeedsCompaction, belum OverLimit).
+                        self.emit(
+                            AgentEvent::Thinking {
+                                step_index: step_idx,
+                                text: format!("⚠️ Auto-compaction dilewati: {}", e),
+                                thought_signature: None,
+                            },
+                            &collector,
+                        );
+                    }
                 }
             }
 
@@ -326,6 +502,7 @@ impl AgentHarness {
                         let active = tabs.active_mut();
                         active.update_title_from_prompt(&input.text);
                         active.history = history;
+                        active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
                         active.timeline.extend(folded);
                         self.persist_tabs(&tabs);
                     }
@@ -339,6 +516,7 @@ impl AgentHarness {
                 cur.input_tokens += u.input_tokens;
                 cur.output_tokens += u.output_tokens;
                 last_usage = Some(u);
+                last_observed_input = Some(u.input_tokens);
             }
 
             for (idx, thought) in turn.thoughts.iter().enumerate() {
@@ -378,6 +556,7 @@ impl AgentHarness {
                 let active = tabs.active_mut();
                 active.update_title_from_prompt(&input.text);
                 active.history = history;
+                active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
                 active.timeline.extend(folded);
                 self.persist_tabs(&tabs);
 
@@ -445,6 +624,7 @@ impl AgentHarness {
         let active = tabs.active_mut();
         active.update_title_from_prompt(&input.text);
         active.history = history;
+        active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
         active.timeline.extend(folded);
         self.persist_tabs(&tabs);
 

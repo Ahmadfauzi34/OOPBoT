@@ -77,6 +77,8 @@ oopbot [-m MODEL] [-p "PROMPT"] [-y] [--max-steps N] [--mode rpc|host|scan-model
 | `/tab <nomor\|id>` | Berpindah antar-tab sesi |
 | `/close <nomor\|id>` | Tutup tab sesi |
 | `/steps` | Lihat ringkasan *StepsFold* (`Thinking` + `ToolCall` + durasi) |
+| `/context` | Lihat estimasi pemakaian token & status anggaran konteks tab aktif |
+| `/compact [instruksi]` | Padatkan konteks tab aktif secara manual tanpa menghapus timeline visual |
 | `/clear` / `/reset` | Bersihkan riwayat pesan pada tab saat ini |
 
 ### Pemetaan Tool UI Android
@@ -97,6 +99,7 @@ oopbot [-m MODEL] [-p "PROMPT"] [-y] [--max-steps N] [--mode rpc|host|scan-model
 |---|---|
 | [`src/common/`](src/common/) | Fondasi netral: `BoxError`, utilitas I/O atomik (`fs.rs`), waktu ISO/epoch (`time.rs`) |
 | [`src/config/`](src/config/) | Katalog model, builtin providers, auto-discovery `/models`, store config (`auth.json`, `models.json`, `settings.json`), katalog engine eksternal (`engines.rs`) |
+| [`src/context/`](src/context/) | Layer 1 manajemen konteks: estimator token (`budget.rs`), compactor kanonik anti-belah tool call (`compactor.rs`), & `ContextManager` |
 | [`src/llm/`](src/llm/) | Klien HTTP/2 multi-protokol (`gemini.rs`, `openai_chat.rs`, `openai_responses.rs`, `anthropic.rs`) |
 | [`src/tools/`](src/tools/) | Trait `Tool`, `ToolRegistry`, implementasi tool filesystem & shell |
 | [`src/agent/`](src/agent/) | Headless agent loop (`runner.rs`, `events.rs`, `session.rs`), tanpa I/O terminal |

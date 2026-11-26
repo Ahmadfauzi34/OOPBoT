@@ -1,7 +1,7 @@
 //! Loop REPL interaktif di terminal CLI.
 
 use super::slash::handle_slash_command;
-use super::ui::print_error_chain;
+use super::ui::{print_error_chain, warn_if_persist_failed};
 use crate::agent::{Agent, AgentHarness};
 use crate::common::BoxError;
 use std::io::{self, Write};
@@ -21,7 +21,7 @@ pub async fn run_repl(
         model,
         agent.tool_names().join(", ")
     );
-    println!("💡 Perintah: /scan, /token <key>, /models, /model <id>, /tabs, /new, /tab <no>, /steps, reset, keluar");
+    println!("💡 Perintah: /scan, /token <key>, /models, /model <id>, /tabs, /new, /tab <no>, /steps, /context, /compact, reset, keluar");
     if auto_approve {
         println!("⚠️  Mode --yes: semua tool dijalankan tanpa konfirmasi!");
     }
@@ -47,6 +47,7 @@ pub async fn run_repl(
             }
             "reset" => {
                 agent.clear_memory();
+                warn_if_persist_failed(agent);
                 println!(
                     "🧠 Memori Tab #{} ({}) telah dibersihkan.",
                     tab_id,
@@ -67,10 +68,14 @@ pub async fn run_repl(
 
         match agent.chat(input).await {
             Ok(reply) => {
+                warn_if_persist_failed(agent);
                 println!("\n🤖 {}:\n{}\n", agent.get_name(), reply);
                 println!("--------------------------------------------------");
             }
-            Err(err) => print_error_chain(err.as_ref()),
+            Err(err) => {
+                warn_if_persist_failed(agent);
+                print_error_chain(err.as_ref());
+            }
         }
     }
 

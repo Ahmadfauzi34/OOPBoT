@@ -57,10 +57,17 @@ impl RpcRuntime {
             return Err((false, "Tidak cukup pesan untuk dikompak.".to_string()));
         };
 
-        let compaction_prompt = build_compaction_prompt(
+        let active_info = self.active_model_info();
+        let max_prompt_chars = crate::context::ContextPolicy::for_model_limits(
+            active_info.input_token_limit,
+            active_info.output_token_limit,
+        )
+        .max_compaction_prompt_chars();
+        let compaction_prompt = build_compaction_prompt_with_limit(
             &cut_decision.to_summarize,
             rebuilt_before.previous_compaction_summary.as_deref(),
             custom_instructions,
+            max_prompt_chars,
         );
 
         let emit_started = reason == "threshold";
@@ -455,30 +462,12 @@ pub(super) fn select_compaction_cut_point(active_entries: &[Value]) -> Option<Co
     })
 }
 
-const MAX_COMPACTION_TOOL_CHARS: usize = 4_000;
-const MAX_COMPACTION_MSG_CHARS: usize = 8_000;
-const MAX_COMPACTION_PROMPT_CHARS: usize = 120_000;
-
-/// Potong teks secara aman di batas UTF-8 dengan mempertahankan bagian awal dan akhir
-/// agar pesan error atau ringkasan di bagian tail tidak hilang saat compaction.
-fn truncate_head_tail_chars(text: &str, max_chars: usize) -> String {
-    let total_chars = text.chars().count();
-    if total_chars <= max_chars {
-        return text.to_string();
-    }
-    let head_len = (max_chars * 2) / 3;
-    let tail_len = max_chars.saturating_sub(head_len);
-    let head: String = text.chars().take(head_len).collect();
-    let tail: String = text
-        .chars()
-        .skip(total_chars.saturating_sub(tail_len))
-        .collect();
-    let omitted = total_chars.saturating_sub(head_len + tail_len);
-    format!(
-        "{}\n...[{} karakter dipadatkan untuk compaction]...\n{}",
-        head, omitted, tail
-    )
-}
+#[cfg(test)]
+use crate::context::assemble_compaction_prompt;
+use crate::context::{
+    assemble_compaction_prompt_with_limit, truncate_head_tail_chars, MAX_COMPACTION_MSG_CHARS,
+    MAX_COMPACTION_TOOL_CHARS,
+};
 
 pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
     match entry["type"].as_str().unwrap_or_default() {
@@ -562,92 +551,34 @@ pub(super) fn format_entry_for_compaction(entry: &Value) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn build_compaction_prompt(
     to_summarize: &[Value],
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
 ) -> String {
-    let mut prompt = String::from(
-        "Summarize the conversation clearly and preserve key goals, decisions, file paths, and open tasks (Ringkas percakapan sebelumnya secara akurat dan padat).\n",
-    );
-    if let Some(prev) = previous_summary.filter(|s| !s.trim().is_empty()) {
-        prompt.push_str("\n<previous_summary>\n");
-        prompt.push_str(&truncate_head_tail_chars(prev.trim(), 16_000));
-        prompt.push_str("\n</previous_summary>\n");
-    }
-
     let formatted: Vec<String> = to_summarize
         .iter()
         .filter_map(format_entry_for_compaction)
         .collect();
+    assemble_compaction_prompt(&formatted, previous_summary, custom_instructions)
+}
 
-    let instructions_block = custom_instructions
-        .filter(|s| !s.trim().is_empty())
-        .map(|inst| {
-            format!(
-                "\n<custom_instructions>\n{}\n</custom_instructions>\n",
-                inst.trim()
-            )
-        })
-        .unwrap_or_default();
-
-    let fixed_overhead = prompt.chars().count() + instructions_block.chars().count() + 64;
-    let conv_budget = MAX_COMPACTION_PROMPT_CHARS.saturating_sub(fixed_overhead);
-    let total_conv_chars: usize = formatted.iter().map(|l| l.chars().count() + 1).sum();
-
-    prompt.push_str("\n<conversation>\n");
-    if total_conv_chars <= conv_budget {
-        for line in &formatted {
-            prompt.push_str(line);
-            prompt.push('\n');
-        }
-    } else {
-        // Pertahankan pesan awal (tujuan/konteks awal) + pesan paling baru dalam batas budget.
-        let head_budget = conv_budget / 3;
-        let tail_budget = conv_budget.saturating_sub(head_budget);
-        let mut head_lines = Vec::new();
-        let mut head_used = 0usize;
-        for line in &formatted {
-            let cost = line.chars().count() + 1;
-            if head_used + cost > head_budget && !head_lines.is_empty() {
-                break;
-            }
-            head_used += cost;
-            head_lines.push(line.as_str());
-        }
-        let mut tail_lines_rev = Vec::new();
-        let mut tail_used = 0usize;
-        for line in formatted[head_lines.len()..].iter().rev() {
-            let cost = line.chars().count() + 1;
-            if tail_used + cost > tail_budget && !tail_lines_rev.is_empty() {
-                break;
-            }
-            tail_used += cost;
-            tail_lines_rev.push(line.as_str());
-        }
-        tail_lines_rev.reverse();
-        let omitted = formatted
-            .len()
-            .saturating_sub(head_lines.len() + tail_lines_rev.len());
-        for line in head_lines {
-            prompt.push_str(line);
-            prompt.push('\n');
-        }
-        if omitted > 0 {
-            prompt.push_str(&format!(
-                "[... {} entri pertengahan dipadatkan agar prompt compaction aman di dalam context window ...]\n",
-                omitted
-            ));
-        }
-        for line in tail_lines_rev {
-            prompt.push_str(line);
-            prompt.push('\n');
-        }
-    }
-    prompt.push_str("</conversation>\n");
-    if !instructions_block.is_empty() {
-        prompt.push_str(&instructions_block);
-    }
-    prompt
+pub(super) fn build_compaction_prompt_with_limit(
+    to_summarize: &[Value],
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    max_prompt_chars: usize,
+) -> String {
+    let formatted: Vec<String> = to_summarize
+        .iter()
+        .filter_map(format_entry_for_compaction)
+        .collect();
+    assemble_compaction_prompt_with_limit(
+        &formatted,
+        previous_summary,
+        custom_instructions,
+        max_prompt_chars,
+    )
 }
 

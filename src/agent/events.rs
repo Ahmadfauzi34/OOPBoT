@@ -95,6 +95,10 @@ pub enum TimelineEntry {
     Assistant {
         text: String,
     },
+    /// Catatan sistem/observabilitas (mis. compaction konteks); tidak pernah dikirim ke LLM.
+    Notice {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

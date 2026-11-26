@@ -76,6 +76,8 @@ PERINTAH DI DALAM CHAT:
     /tab <NO|ID>           Pindah ke tab tertentu
     /close <NO|ID>         Tutup tab tertentu
     /steps                 Tampilkan lipatan proses kerja (StepsFold) di tab aktif
+    /context               Lihat estimasi penggunaan token & anggaran konteks tab aktif
+    /compact [INSTRUKSI]   Padatkan konteks tab aktif secara manual (opsional instruksi)
     tools                  Lihat daftar tool
     reset                  Hapus memori tab aktif
     keluar / exit          Keluar",
@@ -238,16 +240,20 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         &plugins,
         cli.system_append.as_deref(),
     ));
+    agent.set_auto_compact(true);
     agent.set_active_model(&creds.model);
+    ui::warn_if_persist_failed(&agent);
 
     // Mode satu kali jalan (-p "prompt")
     if let Some(prompt) = cli.prompt {
         match agent.chat(&prompt).await {
             Ok(reply) => {
+                ui::warn_if_persist_failed(&agent);
                 println!("\n{}", reply);
                 return Ok(());
             }
             Err(err) => {
+                ui::warn_if_persist_failed(&agent);
                 print_error_chain(err.as_ref());
                 std::process::exit(1);
             }

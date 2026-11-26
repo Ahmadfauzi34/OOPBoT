@@ -23,6 +23,9 @@ pub use session::{ChatSession, WorkspaceTabs};
 use crate::common::BoxError;
 use crate::config::store::save_token_to_user_env;
 use crate::config::{ModelCatalog, ModelInfo};
+use crate::context::{
+    BudgetSnapshot, ContextManager, ContextPolicy, ContextSummarizer, PreparedContext,
+};
 use crate::llm::{user_message_with_images, user_text, LlmClient, TokenUsage};
 use crate::tools::ToolRegistry;
 use async_trait::async_trait;
@@ -99,6 +102,11 @@ pub struct AgentHarness {
     /// dipakai jalur RPC yang store-nya adalah file sesi JSONL, bukan tabs.json).
     tabs_path: Option<PathBuf>,
     thinking_level: Mutex<String>,
+    /// Aktifkan auto-compaction di dalam `runner.rs` (dipakai jalur CLI; RPC mengelola
+    /// compaction tree JSONL-nya sendiri sehingga tetap `false`).
+    auto_compact: bool,
+    /// Error persistensi `tabs.json` terakhir (headless: dibaca & ditampilkan oleh interface).
+    last_persist_error: Mutex<Option<String>>,
 }
 
 impl AgentHarness {
@@ -180,6 +188,8 @@ impl AgentHarness {
             tabs: Mutex::new(tabs),
             tabs_path,
             thinking_level: Mutex::new("medium".to_string()),
+            auto_compact: false,
+            last_persist_error: Mutex::new(None),
         }
     }
 
@@ -232,7 +242,17 @@ impl AgentHarness {
     /// Ganti system instruction (jalur RPC memakai instruksinya sendiri,
     /// bukan default CLI yang dibangun di konstruktor).
     pub fn set_system_instruction(&mut self, instruction: String) {
-        self.system_instruction = instruction;
+        if self.system_instruction != instruction {
+            self.system_instruction = instruction;
+            let decls = self.tools.declarations();
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            for tab in tabs.list_mut() {
+                let expected = self.context_observation_fingerprint(&tab.model, &decls);
+                if tab.last_context_fingerprint.as_deref() != Some(expected.as_str()) {
+                    tab.clear_observed_context_tokens();
+                }
+            }
+        }
     }
 
     pub fn system_instruction(&self) -> &str {
@@ -241,7 +261,15 @@ impl AgentHarness {
 
     /// Teruskan perubahan kredensial ke client (dipakai refresh_credentials RPC).
     pub fn update_credentials(&self, api_key: String, base_url: Option<String>) {
+        let prev_base_url = self.client.base_url();
         self.client.update_credentials(api_key, base_url);
+        if prev_base_url != self.client.base_url() {
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            for tab in tabs.list_mut() {
+                tab.clear_observed_context_tokens();
+            }
+            self.persist_tabs(&tabs);
+        }
     }
 
     pub fn api_key(&self) -> String {
@@ -303,7 +331,12 @@ impl AgentHarness {
             }
         };
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
-        tabs.active_mut().model = resolved.clone();
+        let active = tabs.active_mut();
+        if active.model != resolved {
+            active.model = resolved.clone();
+            // Token input observasi sebelumnya milik tokenizer model/provider lama; reset agar tidak menyesatkan.
+            active.clear_observed_context_tokens();
+        }
         self.persist_tabs(&tabs);
         self.client.set_default_model(&resolved);
         resolved
@@ -340,8 +373,7 @@ impl AgentHarness {
         let clean_url = base_url
             .map(|u| u.trim().to_string())
             .filter(|u| !u.is_empty());
-        self.client
-            .update_credentials(clean_key.clone(), clean_url.clone());
+        self.update_credentials(clean_key.clone(), clean_url.clone());
         save_token_to_user_env(&clean_key, clean_url.as_deref(), &self.model());
         self.scan_models().await
     }
@@ -414,6 +446,7 @@ impl AgentHarness {
             _ => format!("Tab {}", id),
         };
         active.history = history;
+        active.clear_observed_context_tokens();
         active.timeline.clear();
         self.persist_tabs(&tabs);
     }
@@ -444,15 +477,174 @@ impl AgentHarness {
         self.tools.names()
     }
 
+    pub fn set_auto_compact(&mut self, enabled: bool) {
+        self.auto_compact = enabled;
+    }
+
+    pub fn auto_compact_enabled(&self) -> bool {
+        self.auto_compact
+    }
+
+    /// Ambil error persistensi `tabs.json` terakhir (jika ada) untuk ditampilkan interface.
+    pub fn take_persist_error(&self) -> Option<String> {
+        self.last_persist_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// Fingerprint deterministik untuk mengikat `last_context_tokens` ke kombinasi aktif
+    /// `(model, base_url, system_instruction, tool_declarations)`.
+    pub(super) fn context_observation_fingerprint(&self, model: &str, decls: &[Value]) -> String {
+        fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
+            for &b in bytes {
+                hash ^= b as u64;
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            hash
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        h = fnv1a_update(h, model.as_bytes());
+        h = fnv1a_update(h, &[0]);
+        h = fnv1a_update(h, self.client.base_url().as_bytes());
+        h = fnv1a_update(h, &[0]);
+        h = fnv1a_update(h, self.system_instruction.as_bytes());
+        h = fnv1a_update(h, &[0]);
+        let decls_json = serde_json::to_string(decls).unwrap_or_default();
+        h = fnv1a_update(h, decls_json.as_bytes());
+        format!("{:016x}", h)
+    }
+
+    /// Ambil `last_context_tokens` hanya bila fingerprint observasinya masih cocok dengan
+    /// konfigurasi aktif saat ini (model, provider, system instruction, & deklarasi tool).
+    pub(super) fn observed_context_tokens_for(
+        &self,
+        session: &ChatSession,
+        decls: &[Value],
+    ) -> Option<u64> {
+        let tokens = session.last_context_tokens?;
+        let expected = self.context_observation_fingerprint(&session.model, decls);
+        (session.last_context_fingerprint.as_deref() == Some(expected.as_str())).then_some(tokens)
+    }
+
+    /// Kebijakan konteks berdasarkan limit model aktif saat ini.
+    pub fn context_policy(&self) -> ContextPolicy {
+        let info = self.active_model_info();
+        ContextPolicy::for_model_limits(info.input_token_limit, info.output_token_limit)
+    }
+
+    /// Evaluasi anggaran konteks tab aktif terhadap limit model aktif.
+    pub fn context_budget(&self) -> BudgetSnapshot {
+        let decls = self.tools.declarations();
+        let (history, last_observed) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active();
+            (
+                active.history.clone(),
+                self.observed_context_tokens_for(active, &decls),
+            )
+        };
+        ContextManager::new(self.context_policy()).evaluate(
+            &self.system_instruction,
+            &decls,
+            &history,
+            last_observed,
+        )
+    }
+
+    /// Padatkan konteks tab aktif secara eksplisit (mis. perintah `/compact` di CLI)
+    /// tanpa menghapus `timeline` visual user.
+    pub async fn compact_active_tab(
+        &self,
+        custom_instructions: Option<&str>,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<PreparedContext, BoxError> {
+        let decls = self.tools.declarations();
+        let (history, last_observed) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active();
+            (
+                active.history.clone(),
+                self.observed_context_tokens_for(active, &decls),
+            )
+        };
+        let manager = ContextManager::new(self.context_policy());
+        let prepared = manager
+            .prepare_or_compact(
+                &self.system_instruction,
+                &decls,
+                &history,
+                last_observed,
+                true,
+                custom_instructions,
+                self,
+                cancel_rx,
+            )
+            .await?;
+
+        if prepared.compacted {
+            let notice = format!(
+                "🗜️ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan; estimasi baru ~{} token)",
+                prepared.summarized_messages,
+                prepared.kept_messages,
+                prepared.budget.total_estimated_tokens
+            );
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            tabs.active_mut()
+                .apply_compacted_history(prepared.history.clone(), notice);
+            self.persist_tabs(&tabs);
+        }
+
+        Ok(prepared)
+    }
+
     fn persist_tabs(&self, tabs: &WorkspaceTabs) {
         if let Some(path) = &self.tabs_path {
-            let _ = tabs.save_to_file(path);
+            let res = tabs.save_to_file(path);
+            let mut err_slot = self
+                .last_persist_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match res {
+                Ok(()) => *err_slot = None,
+                Err(e) => *err_slot = Some(format!("{} ({})", path.display(), e)),
+            }
         }
     }
 
     fn emit(&self, event: AgentEvent, collector: &MemoryEventCollector) {
         self.event_sink.on_event(&event);
         collector.on_event(&event);
+    }
+}
+
+#[async_trait]
+impl ContextSummarizer for AgentHarness {
+    async fn summarize(
+        &self,
+        compaction_prompt: &str,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<String, BoxError> {
+        let (summary, _usage) = self
+            .generate_compaction_summary_cancellable(compaction_prompt, cancel_rx)
+            .await?;
+        Ok(summary)
+    }
+
+    async fn summarize_with_images(
+        &self,
+        compaction_prompt: &str,
+        inline_images: &[Value],
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<String, BoxError> {
+        let (summary, _usage) = self
+            .generate_compaction_summary_with_images_cancellable(
+                compaction_prompt,
+                inline_images,
+                cancel_rx,
+            )
+            .await?;
+        Ok(summary)
     }
 }
 
