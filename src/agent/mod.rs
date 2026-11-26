@@ -105,6 +105,9 @@ pub struct AgentHarness {
     /// Aktifkan auto-compaction di dalam `runner.rs` (dipakai jalur CLI; RPC mengelola
     /// compaction tree JSONL-nya sendiri sehingga tetap `false`).
     auto_compact: bool,
+    /// Peringatan pemulihan saat memuat `tabs.json` korup (terpisah dari `last_persist_error`
+    /// agar tidak terhapus oleh penyimpanan sukses berikutnya seperti `set_active_model`).
+    load_warning: Mutex<Option<String>>,
     /// Error persistensi `tabs.json` terakhir (headless: dibaca & ditampilkan oleh interface).
     last_persist_error: Mutex<Option<String>>,
 }
@@ -156,7 +159,7 @@ impl AgentHarness {
         );
         if let Some(warn) = load_warning {
             *harness
-                .last_persist_error
+                .load_warning
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(warn);
         }
@@ -199,6 +202,7 @@ impl AgentHarness {
             tabs_path,
             thinking_level: Mutex::new("medium".to_string()),
             auto_compact: false,
+            load_warning: Mutex::new(None),
             last_persist_error: Mutex::new(None),
         }
     }
@@ -495,12 +499,25 @@ impl AgentHarness {
         self.auto_compact
     }
 
-    /// Ambil error persistensi `tabs.json` terakhir (jika ada) untuk ditampilkan interface.
+    /// Ambil peringatan pemulihan muat atau error persistensi `tabs.json` terakhir (jika ada)
+    /// untuk ditampilkan interface.
     pub fn take_persist_error(&self) -> Option<String> {
-        self.last_persist_error
+        let load_warn = self
+            .load_warning
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .take()
+            .take();
+        let persist_err = self
+            .last_persist_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        match (load_warn, persist_err) {
+            (Some(w), Some(e)) => Some(format!("{}\n{}", w, e)),
+            (Some(w), None) => Some(w),
+            (None, Some(e)) => Some(e),
+            (None, None) => None,
+        }
     }
 
     /// Fingerprint deterministik untuk mengikat `last_context_tokens` ke kombinasi aktif

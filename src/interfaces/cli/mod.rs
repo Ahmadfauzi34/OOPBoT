@@ -235,6 +235,7 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         Box::new(CliEventSink),
         cli.max_steps,
     );
+    ui::warn_if_persist_failed(&agent);
     agent.set_system_instruction(append_cli_system_instruction(
         agent.system_instruction().to_owned(),
         &plugins,

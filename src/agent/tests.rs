@@ -726,6 +726,34 @@ fn workspace_tabs_clamps_oob_active_index_and_backs_up_corrupt_file() {
         .collect();
     assert_eq!(backups.len(), 1);
 
+    // 3. Recovery warning di AgentHarness tidak boleh terhapus oleh persist sukses (mis. --model / set_active_model).
+    struct DenyAll;
+    #[async_trait]
+    impl Approver for DenyAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            false
+        }
+    }
+    let client = crate::llm::LlmClient::new("test-key".into(), "model-a".into()).unwrap();
+    let harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        WorkspaceTabs::new("model-a"),
+        Some(tabs_path.clone()),
+    );
+    *harness.load_warning.lock().unwrap() = Some(warning.clone());
+    harness.set_active_model("model-override");
+    assert!(tabs_path.exists(), "set_active_model should persist new tabs.json");
+    let surfaced = harness
+        .take_persist_error()
+        .expect("load_warning must survive successful set_active_model save");
+    assert!(surfaced.contains(".corrupt-"));
+    assert!(harness.take_persist_error().is_none());
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 
