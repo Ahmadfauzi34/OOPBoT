@@ -146,7 +146,11 @@ impl AgentHarness {
             .as_deref()
             .map(WorkspaceTabs::load_from_file_checked)
             .unwrap_or((None, None));
-        let tabs = loaded_tabs.unwrap_or_else(|| WorkspaceTabs::new(&default_m));
+        let tabs = loaded_tabs.unwrap_or_else(|| {
+            let mut fresh = WorkspaceTabs::new(&default_m);
+            fresh.active_mut().provider_base_url = Some(client.base_url());
+            fresh
+        });
         let harness = Self::with_event_sink_and_tabs(
             name,
             client,
@@ -344,6 +348,7 @@ impl AgentHarness {
                 query.to_string()
             }
         };
+        let current_base = self.client.base_url();
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
         let active = tabs.active_mut();
         if active.model != resolved {
@@ -351,6 +356,7 @@ impl AgentHarness {
             // Token input observasi sebelumnya milik tokenizer model/provider lama; reset agar tidak menyesatkan.
             active.clear_observed_context_tokens();
         }
+        active.provider_base_url = Some(current_base);
         self.persist_tabs(&tabs);
         self.client.set_default_model(&resolved);
         resolved
@@ -405,8 +411,11 @@ impl AgentHarness {
 
     pub fn new_tab(&self, model: Option<&str>) -> ChatSession {
         let model_id = model.map(str::to_string).unwrap_or_else(|| self.model());
+        let current_base = self.client.base_url();
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
-        let created = tabs.new_tab(&model_id).clone();
+        tabs.new_tab(&model_id);
+        tabs.active_mut().provider_base_url = Some(current_base);
+        let created = tabs.active().clone();
         self.persist_tabs(&tabs);
         self.client.set_default_model(&created.model);
         created
@@ -424,9 +433,14 @@ impl AgentHarness {
 
     pub fn close_tab(&self, selector: &str) -> bool {
         let fallback = self.client.model();
+        let current_base = self.client.base_url();
         let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+        let was_single = tabs.list().len() == 1;
         let ok = tabs.close_tab(selector, &fallback);
         if ok {
+            if was_single {
+                tabs.active_mut().provider_base_url = Some(current_base);
+            }
             self.persist_tabs(&tabs);
             self.client.set_default_model(&tabs.active().model);
         }
@@ -545,7 +559,15 @@ impl AgentHarness {
     /// Sinkronkan default model `LlmClient` dan katalog ke model tab aktif yang dimuat dari `tabs.json`
     /// tanpa menimpa model tab tersimpan atau mereset `last_context_tokens`.
     pub fn sync_client_to_active_tab_model(&self) -> String {
-        let active_model = self.model();
+        let current_base = self.client.base_url();
+        let active_model = {
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active_mut();
+            if active.provider_base_url.is_none() {
+                active.provider_base_url = Some(current_base);
+            }
+            active.model.clone()
+        };
         {
             let mut cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
             if cat.find(&active_model).is_none() {
@@ -554,6 +576,36 @@ impl AgentHarness {
         }
         self.client.set_default_model(&active_model);
         active_model
+    }
+
+    /// Periksa apakah model tab aktif berasal dari provider/endpoint yang berbeda dengan
+    /// `LlmClient` yang sedang dikonfigurasi. Mengembalikan pesan peringatan bila tidak cocok.
+    pub fn check_active_tab_provider_mismatch(&self) -> Option<String> {
+        let current_base = self.client.base_url();
+        let (tab_model, saved_base) = {
+            let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            let active = tabs.active();
+            (active.model.clone(), active.provider_base_url.clone())
+        };
+        let cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
+        detect_provider_model_mismatch(&tab_model, saved_base.as_deref(), &current_base, &cat)
+    }
+
+    /// Pulihkan model tab aktif saat boot CLI jika cocok dengan provider aktif; bila berasal dari
+    /// provider/endpoint berbeda, alihkan ke `fallback_model` (mereset `last_context_tokens`)
+    /// dan kembalikan pesan peringatan yang jelas untuk user.
+    pub fn sync_client_to_active_tab_model_or_fallback(
+        &self,
+        fallback_model: &str,
+    ) -> (String, Option<String>) {
+        if let Some(reason) = self.check_active_tab_provider_mismatch() {
+            let resolved = self.set_active_model(fallback_model);
+            return (
+                resolved.clone(),
+                Some(format!("{} Dialihkan ke '{}'.", reason, resolved)),
+            );
+        }
+        (self.sync_client_to_active_tab_model(), None)
     }
 
     /// Ambil `(last_context_tokens, last_context_estimated_tokens)` hanya bila fingerprint
@@ -758,4 +810,97 @@ impl Agent for AgentHarness {
     fn clear_memory(&self) {
         self.clear_memory_silent();
     }
+}
+
+fn normalize_base_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn infer_official_provider_from_base_url(base_url: &str) -> Option<&'static str> {
+    let trimmed = base_url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    let host = authority
+        .split('@')
+        .next_back()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match host.as_str() {
+        "generativelanguage.googleapis.com" => Some("google"),
+        "api.openai.com" => Some("openai"),
+        "api.anthropic.com" => Some("anthropic"),
+        "api.deepseek.com" => Some("deepseek"),
+        _ => None,
+    }
+}
+
+fn infer_official_provider_from_model(
+    model_id: &str,
+    catalog: &ModelCatalog,
+) -> Option<&'static str> {
+    if let Some(info) = catalog.find(model_id) {
+        match info.provider.as_str() {
+            "google" | "google-gemini-cli" => return Some("google"),
+            "openai" => return Some("openai"),
+            "anthropic" => return Some("anthropic"),
+            "deepseek" => return Some("deepseek"),
+            _ => {}
+        }
+    }
+    let lower = model_id.trim().to_ascii_lowercase();
+    if lower.starts_with("gemini-") || lower.starts_with("google/") {
+        Some("google")
+    } else if lower.starts_with("claude-") || lower.starts_with("anthropic/") {
+        Some("anthropic")
+    } else if lower.starts_with("deepseek-") || lower.starts_with("deepseek/") {
+        Some("deepseek")
+    } else if lower.starts_with("gpt-")
+        || lower.starts_with("chatgpt-")
+        || lower.starts_with("openai/")
+        || lower.starts_with("o1-")
+        || lower.starts_with("o3-")
+        || lower.starts_with("o4-")
+        || matches!(lower.as_str(), "o1" | "o3" | "o4")
+    {
+        Some("openai")
+    } else {
+        None
+    }
+}
+
+fn detect_provider_model_mismatch(
+    tab_model: &str,
+    saved_base: Option<&str>,
+    current_base: &str,
+    catalog: &ModelCatalog,
+) -> Option<String> {
+    if let Some(saved) = saved_base.map(str::trim).filter(|s| !s.is_empty()) {
+        if normalize_base_url(saved) != normalize_base_url(current_base) {
+            return Some(format!(
+                "Model tab tersimpan '{}' sebelumnya dipakai di endpoint '{}', bukan endpoint aktif '{}'.",
+                tab_model,
+                saved,
+                current_base.trim()
+            ));
+        }
+        return None;
+    }
+
+    if let Some(client_provider) = infer_official_provider_from_base_url(current_base) {
+        if let Some(model_provider) = infer_official_provider_from_model(tab_model, catalog) {
+            if model_provider != client_provider {
+                return Some(format!(
+                    "Model tab tersimpan '{}' terdeteksi untuk provider '{}', tidak cocok dengan provider aktif '{}'.",
+                    tab_model, model_provider, client_provider
+                ));
+            }
+        }
+    }
+    None
 }

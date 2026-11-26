@@ -35,13 +35,26 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
             println!("🔑 Memperbarui token & memindai daftar model...");
             match agent.update_provider_token(api_key, base_url).await {
                 Ok(models) => {
+                    warn_if_persist_failed(agent);
                     println!(
                         "✅ Token disimpan ke ~/.config/oopbot/.env & {} model berhasil di-scan!",
                         models.len()
                     );
+                    if let Some(warn) = agent.check_active_tab_provider_mismatch() {
+                        eprintln!("⚠️  {} Gunakan `/model <id>` untuk memilih model yang sesuai.", warn);
+                    }
                     render_models(agent);
                 }
-                Err(e) => eprintln!("⚠️  Token disimpan, namun auto-scan gagal: {}\n", e),
+                Err(e) => {
+                    warn_if_persist_failed(agent);
+                    eprintln!("⚠️  Token disimpan, namun auto-scan gagal: {}\n", e);
+                    if let Some(warn) = agent.check_active_tab_provider_mismatch() {
+                        eprintln!(
+                            "⚠️  {} Gunakan `/model <id>` untuk memilih model yang sesuai.\n",
+                            warn
+                        );
+                    }
+                }
             }
             true
         }
@@ -96,6 +109,12 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
                     "🔀 Aktif di Tab #{} \"{}\" | model: {}\n",
                     tab.id, tab.title, tab.model
                 );
+                if let Some(warn) = agent.check_active_tab_provider_mismatch() {
+                    eprintln!(
+                        "⚠️  {} Gunakan `/model <id>` untuk menyesuaikan model tab ini.\n",
+                        warn
+                    );
+                }
             } else {
                 println!("❌ Tab '{}' tidak ditemukan.\n", arg);
             }
@@ -111,6 +130,12 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
                     "🗑️  Tab ditutup. Sekarang di Tab #{} \"{}\" ({})\n",
                     id, title, model
                 );
+                if let Some(warn) = agent.check_active_tab_provider_mismatch() {
+                    eprintln!(
+                        "⚠️  {} Gunakan `/model <id>` untuk menyesuaikan model tab ini.\n",
+                        warn
+                    );
+                }
             } else {
                 println!("❌ Tab '{}' tidak ditemukan.\n", arg);
             }

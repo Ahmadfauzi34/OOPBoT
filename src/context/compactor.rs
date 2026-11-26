@@ -101,7 +101,15 @@ pub fn extract_existing_compaction_summary(history: &[Value]) -> Option<String> 
     (!inner.is_empty()).then(|| inner.to_string())
 }
 
-fn extract_valid_inline_image(part: &Value) -> Option<Value> {
+fn has_valid_inline_image(part: &Value) -> bool {
+    part.get("inlineData")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.get("data"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty())
+}
+
+fn clone_valid_inline_image(part: &Value) -> Option<Value> {
     let inline = part.get("inlineData")?.as_object()?;
     let data = inline.get("data")?.as_str().filter(|s| !s.is_empty())?;
     let mime = inline
@@ -130,7 +138,7 @@ fn inline_image_placeholder(msg_idx: usize, part_idx: usize) -> String {
 fn format_canonical_message_for_compaction(
     msg_idx: usize,
     msg: &Value,
-    discovered_images: &mut Vec<(String, Value)>,
+    discovered_images: &mut Vec<(String, usize, usize)>,
 ) -> Option<String> {
     let role = msg["role"].as_str().unwrap_or_default();
     let parts = msg["parts"].as_array()?;
@@ -156,10 +164,10 @@ fn format_canonical_message_for_compaction(
                         truncate_head_tail_chars(text, MAX_COMPACTION_MSG_CHARS)
                     ));
                 } else if p.get("inlineData").is_some() {
-                    if let Some(img_val) = extract_valid_inline_image(p) {
+                    if has_valid_inline_image(p) {
                         let placeholder = inline_image_placeholder(msg_idx, part_idx);
                         lines.push(format!("[User]: {}", placeholder));
-                        discovered_images.push((placeholder, img_val));
+                        discovered_images.push((placeholder, msg_idx, part_idx));
                     } else {
                         lines.push("[User]: [gambar inline sebelumnya]".to_string());
                     }
@@ -381,7 +389,7 @@ fn build_canonical_compaction_prompt(
     max_prompt_chars: usize,
     max_image_tokens: u64,
 ) -> (String, Vec<Value>) {
-    let mut discovered_images: Vec<(String, Value)> = Vec::new();
+    let mut discovered_images: Vec<(String, usize, usize)> = Vec::new();
     let formatted: Vec<String> = to_summarize
         .iter()
         .enumerate()
@@ -396,20 +404,28 @@ fn build_canonical_compaction_prompt(
         max_prompt_chars,
     );
 
-    // Pilih hanya gambar yang placeholder-nya benar-benar bertahan di dalam prompt akhir
+    // Pilih hanya indeks gambar yang placeholder-nya benar-benar bertahan di dalam prompt akhir
     // (tidak terpotong oleh pemangkasan pertengahan), maksimal MAX_COMPACTION_INLINE_IMAGES
     // dan dalam batas anggaran token gambar `max_image_tokens` (prioritaskan gambar terbaru).
+    // Cloning payload base64 ditunda hingga daftar survivor final terpilih.
     let mut selected_indices: Vec<usize> = Vec::new();
     let mut used_image_tokens = 0u64;
     if max_image_tokens > 0 {
-        for (idx, (token, img_val)) in discovered_images.iter().enumerate().rev() {
+        for (idx, (token, msg_idx, part_idx)) in discovered_images.iter().enumerate().rev() {
             if selected_indices.len() >= MAX_COMPACTION_INLINE_IMAGES {
                 break;
             }
             if !prompt.contains(token.as_str()) {
                 continue;
             }
-            let cost = estimate_value_tokens(img_val);
+            let Some(part) = to_summarize
+                .get(*msg_idx)
+                .and_then(|m| m["parts"].as_array())
+                .and_then(|parts| parts.get(*part_idx))
+            else {
+                continue;
+            };
+            let cost = estimate_value_tokens(part);
             if used_image_tokens.saturating_add(cost) > max_image_tokens {
                 continue;
             }
@@ -421,15 +437,23 @@ fn build_canonical_compaction_prompt(
 
     let mut inline_images = Vec::with_capacity(selected_indices.len());
     for (order, &disc_idx) in selected_indices.iter().enumerate() {
-        let (token, img_val) = &discovered_images[disc_idx];
+        let (token, msg_idx, part_idx) = &discovered_images[disc_idx];
+        let Some(img_val) = to_summarize
+            .get(*msg_idx)
+            .and_then(|m| m["parts"].as_array())
+            .and_then(|parts| parts.get(*part_idx))
+            .and_then(clone_valid_inline_image)
+        else {
+            continue;
+        };
         let label = format!(
             "[gambar inline #{} (terlampir pada input ringkasan)]",
             order + 1
         );
         prompt = prompt.replace(token.as_str(), &label);
-        inline_images.push(img_val.clone());
+        inline_images.push(img_val);
     }
-    for (token, _) in &discovered_images {
+    for (token, _, _) in &discovered_images {
         if prompt.contains(token.as_str()) {
             prompt = prompt.replace(token.as_str(), "[gambar inline sebelumnya]");
         }

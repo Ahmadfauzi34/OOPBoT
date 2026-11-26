@@ -921,3 +921,100 @@ async fn agent_calibrates_token_delta_avoids_per_step_thrash_and_preserves_saved
 
     srv.abort();
 }
+
+#[test]
+fn agent_restores_tab_model_only_when_compatible_with_active_provider() {
+    struct DenyAll;
+    #[async_trait]
+    impl Approver for DenyAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            false
+        }
+    }
+
+    // 1. Legacy tab (tanpa provider_base_url) menyimpan model Gemini, tapi CLI dibuka dengan OpenAI endpoint.
+    let openai_client = crate::llm::LlmClient::new_with_base_url(
+        "sk-openai".into(),
+        "gpt-4o-mini".into(),
+        Some("https://api.openai.com/v1".into()),
+    )
+    .unwrap();
+    let legacy_gemini_tabs = WorkspaceTabs::new("gemini-2.5-flash");
+    let harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        openai_client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        legacy_gemini_tabs,
+        None,
+    );
+    let (model, warn) = harness.sync_client_to_active_tab_model_or_fallback("gpt-4o-mini");
+    assert_eq!(model, "gpt-4o-mini");
+    assert_eq!(harness.model(), "gpt-4o-mini");
+    let msg = warn.expect("cross-provider legacy Gemini model on OpenAI must warn and fall back");
+    assert!(msg.contains("gemini-2.5-flash") && msg.contains("gpt-4o-mini"));
+
+    // 2. Tab menyimpan provider_base_url eksplisit yang berbeda (Gemini -> custom local endpoint).
+    let local_client = crate::llm::LlmClient::new_with_base_url(
+        "local-key".into(),
+        "llama3.2".into(),
+        Some("http://127.0.0.1:11434/v1".into()),
+    )
+    .unwrap();
+    let mut saved_tabs = WorkspaceTabs::new("gemini-2.5-pro");
+    saved_tabs.active_mut().provider_base_url =
+        Some("https://generativelanguage.googleapis.com/v1beta".into());
+    let harness2 = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        local_client,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        saved_tabs,
+        None,
+    );
+    let (model2, warn2) = harness2.sync_client_to_active_tab_model_or_fallback("llama3.2");
+    assert_eq!(model2, "llama3.2");
+    assert!(warn2.is_some());
+
+    // 3. Tab menyimpan model & provider_base_url yang sama -> model & observasi dipertahankan tanpa warning.
+    let openai_client2 = crate::llm::LlmClient::new_with_base_url(
+        "sk-openai".into(),
+        "gpt-4o-mini".into(),
+        Some("https://api.openai.com/v1".into()),
+    )
+    .unwrap();
+    let mut same_tabs = WorkspaceTabs::new("gpt-4.1");
+    same_tabs.active_mut().provider_base_url = Some("https://api.openai.com/v1/".into());
+    let harness3 = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        openai_client2,
+        crate::tools::ToolRegistry::new(),
+        Box::new(DenyAll),
+        Box::new(NoopEventSink),
+        2,
+        same_tabs,
+        None,
+    );
+    let (model3, warn3) = harness3.sync_client_to_active_tab_model_or_fallback("gpt-4o-mini");
+    assert_eq!(model3, "gpt-4.1");
+    assert!(warn3.is_none());
+
+    // 4. Mengganti endpoint saat runtime (mis. /token <key> <base_url>) memicu mismatch hingga /model dipanggil.
+    harness3.update_credentials(
+        "sk-ant".into(),
+        Some("https://api.anthropic.com/v1".into()),
+    );
+    assert!(
+        harness3.check_active_tab_provider_mismatch().is_some(),
+        "switching provider base_url at runtime must flag active tab model mismatch"
+    );
+    harness3.set_active_model("claude-sonnet-4-20250514");
+    assert!(
+        harness3.check_active_tab_provider_mismatch().is_none(),
+        "selecting a model under the new provider must clear mismatch"
+    );
+}

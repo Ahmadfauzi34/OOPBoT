@@ -21,6 +21,10 @@ pub struct ChatSession {
     pub id: String,
     pub title: String,
     pub model: String,
+    /// Endpoint/provider `base_url` tempat `model` tab ini terakhir dipilih,
+    /// dipakai mendeteksi ketidaksesuaian provider saat tab dipulihkan pada sesi CLI berikutnya.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_base_url: Option<String>,
     pub history: Vec<Value>,
     pub timeline: Vec<TimelineEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,6 +46,7 @@ impl ChatSession {
             id: id.to_string(),
             title: format!("Tab {}", id),
             model: model.to_string(),
+            provider_base_url: None,
             history: Vec::new(),
             timeline: Vec::new(),
             last_context_tokens: None,

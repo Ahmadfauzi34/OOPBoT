@@ -245,7 +245,11 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
     let active_model = if cli.model.is_some() {
         agent.set_active_model(&creds.model)
     } else {
-        agent.sync_client_to_active_tab_model()
+        let (model, mismatch_warn) = agent.sync_client_to_active_tab_model_or_fallback(&creds.model);
+        if let Some(warn) = mismatch_warn {
+            eprintln!("⚠️  {}\n", warn);
+        }
+        model
     };
     ui::warn_if_persist_failed(&agent);
 
