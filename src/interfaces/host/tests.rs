@@ -501,6 +501,75 @@ Binary files a/image.png and b/image.png differ
 }
 
 #[test]
+fn test_parse_git_diff_bounded_drops_oversized_file_and_enforces_total_cap() {
+    // Build a single file exceeding the 1 MiB per-file hunk cap (~1.2 MiB) plus a small neighbor file.
+    let mut big_diff = String::from(
+        "diff --git a/huge.txt b/huge.txt\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/huge.txt\n\
+         @@ -0,0 +1,1200 @@\n",
+    );
+    let payload_line = format!("+{}\n", "x".repeat(1024));
+    for _ in 0..1200 {
+        big_diff.push_str(&payload_line);
+    }
+    big_diff.push_str(
+        "diff --git a/small.txt b/small.txt\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/small.txt\n\
+         @@ -0,0 +1,2 @@\n\
+         +hello\n\
+         +world\n",
+    );
+
+    let files = parse_git_diff_bounded(&big_diff, 4096).expect("oversized file should not trip total cap");
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0]["path"], "huge.txt");
+    assert_eq!(files[0]["kind"], "too_large");
+    assert_eq!(files[0]["additions"], 1200);
+    assert_eq!(files[0]["hunks"].as_array().unwrap().len(), 0);
+
+    assert_eq!(files[1]["path"], "small.txt");
+    assert_eq!(files[1]["kind"], "text");
+    assert_eq!(files[1]["additions"], 2);
+    assert_eq!(files[1]["hunks"].as_array().unwrap().len(), 1);
+
+    // When retained small files exceed max_total_bytes, parser short-circuits with None.
+    assert!(parse_git_diff_bounded(&big_diff, 4).is_none());
+}
+
+#[test]
+fn test_run_git_bounded_enforces_byte_cap_and_timeout() {
+    let mut ok_cmd = std::process::Command::new("sh");
+    ok_cmd.args(["-c", "printf hello"]);
+    assert_eq!(
+        run_git_bounded(ok_cmd, std::time::Duration::from_secs(5), 1024),
+        GitCmdOutput::Ok(b"hello".to_vec())
+    );
+
+    let mut huge_cmd = std::process::Command::new("sh");
+    huge_cmd.args(["-c", "head -c 65536 /dev/zero"]);
+    assert_eq!(
+        run_git_bounded(huge_cmd, std::time::Duration::from_secs(5), 1024),
+        GitCmdOutput::TooLarge
+    );
+
+    let start = std::time::Instant::now();
+    let mut slow_cmd = std::process::Command::new("sh");
+    slow_cmd.args(["-c", "sleep 5"]);
+    assert_eq!(
+        run_git_bounded(slow_cmd, std::time::Duration::from_millis(100), 1024),
+        GitCmdOutput::TimedOut
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "timed-out child must be killed promptly"
+    );
+}
+
+#[test]
 fn test_run_git_loop_detect_and_changes() {
     let repo_root = env!("CARGO_MANIFEST_DIR");
     let input = format!(

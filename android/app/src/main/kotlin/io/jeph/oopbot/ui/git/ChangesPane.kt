@@ -4,7 +4,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -27,7 +27,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -113,26 +115,25 @@ internal fun ChangesPane(
   // Connecting reloads everything, which only failed because the host couldn't be reached.
   val connect = host?.let { { connector.connect(it.id, it.name, onConnected = refresh) } }
   if (host != null) AutoReconnect(connector, host, unreachable?.code, onConnected = refresh)
-  BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-    val commitsMaxHeight = maxHeight / 2
-    Column(modifier = Modifier.fillMaxSize()) {
-      ChangesToolbar(
-        workspace = workspace,
-        mode = chosenMode ?: workspace.defaultMode ?: GitDiffMode.Uncommitted,
-        refreshing = refreshing || workspace.reloading || workspace.commitsReloading,
-        onSelectMode = { preferences.setDiffMode(workspace.root, it) },
-        onRefresh = refresh,
-      )
-      ChangesBody(workspace, wrapLines, connect, Modifier.weight(1f))
-      CommitsSection(
-        content = workspace.commits,
-        collapsed = commitsCollapsed,
-        listMaxHeight = commitsMaxHeight,
-        onToggle = { preferences.setCommitsCollapsed(!commitsCollapsed) },
-        onOpenCommit = onOpenCommit,
-        onConnect = connect,
-      )
-    }
+  val density = LocalDensity.current
+  var paneHeightPx by remember(density) { mutableIntStateOf(with(density) { DEFAULT_PANE_HEIGHT.roundToPx() }) }
+  Column(modifier = modifier.fillMaxSize().onSizeChanged { paneHeightPx = it.height }) {
+    ChangesToolbar(
+      workspace = workspace,
+      mode = chosenMode ?: workspace.defaultMode ?: GitDiffMode.Uncommitted,
+      refreshing = refreshing || workspace.reloading || workspace.commitsReloading,
+      onSelectMode = { preferences.setDiffMode(workspace.root, it) },
+      onRefresh = refresh,
+    )
+    ChangesBody(workspace, wrapLines, connect, Modifier.weight(1f))
+    CommitsSection(
+      content = workspace.commits,
+      collapsed = commitsCollapsed,
+      listMaxHeight = with(density) { (paneHeightPx / 2).toDp() },
+      onToggle = { preferences.setCommitsCollapsed(!commitsCollapsed) },
+      onOpenCommit = onOpenCommit,
+      onConnect = connect,
+    )
   }
 }
 
@@ -183,6 +184,7 @@ private fun ChangesToolbar(
   var modesOpen by remember { mutableStateOf(false) }
   var optionsOpen by remember { mutableStateOf(false) }
   val loaded = workspace.changes as? ChangesContent.Loaded
+  val initialLoading = workspace.changes == ChangesContent.Loading
   Row(
     modifier = Modifier
       .fillMaxWidth()
@@ -195,7 +197,7 @@ private fun ChangesToolbar(
     ModeTrigger(mode, onClick = { modesOpen = true })
     if (loaded != null) DiffStat(loaded.document.additions, loaded.document.deletions)
     Spacer(modifier = Modifier.weight(1f))
-    RefreshButton(refreshing, onRefresh)
+    RefreshButton(refreshing = !initialLoading && refreshing, enabled = !initialLoading, onRefresh = onRefresh)
     RoundIconButton(
       icon = R.drawable.ic_lucide_ellipsis,
       contentDescription = stringResource(R.string.git_options),
@@ -231,7 +233,7 @@ private fun BranchName(branch: String, modifier: Modifier) {
 
 /** Refresh, or a spinner in its place while [refreshing]. */
 @Composable
-private fun RefreshButton(refreshing: Boolean, onRefresh: () -> Unit) {
+private fun RefreshButton(refreshing: Boolean, enabled: Boolean, onRefresh: () -> Unit) {
   if (refreshing) {
     Box(modifier = Modifier.size(TOOLBAR_BUTTON_SIZE), contentAlignment = Alignment.Center) {
       Spinner(OopbotTokens.IconSize.md, stringResource(R.string.git_refreshing))
@@ -242,6 +244,7 @@ private fun RefreshButton(refreshing: Boolean, onRefresh: () -> Unit) {
       contentDescription = stringResource(R.string.git_refresh),
       onClick = onRefresh,
       modifier = Modifier.size(TOOLBAR_BUTTON_SIZE),
+      enabled = enabled,
       tint = oopbotColors.foregroundMuted,
     )
   }
@@ -415,3 +418,4 @@ private fun ChangesBody(workspace: GitWorkspace, wrapLines: Boolean, onConnect: 
 }
 
 private val TOOLBAR_BUTTON_SIZE = 34.dp
+private val DEFAULT_PANE_HEIGHT = 480.dp

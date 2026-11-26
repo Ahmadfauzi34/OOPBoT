@@ -19,6 +19,7 @@ Implements the zero-Node.js native TCP host bridge (`oopbot host <mode> <port>`)
 - **Unsupported Legacy Node Modes:** `package_install`, `update_extensions`, and unsupported interactive SSH modes MUST return structured `oopbot_result` (`ok: false`, `code: "unsupported"`) rather than crashing or hanging stdout/TCP.
 - **File & Output Sink Cleanup:** `handle_rpc_mode` MUST bind `set_output_sink(Some(...))` before starting `RpcServer` and clear `set_output_sink(None)` before emitting `oopbot_exit`.
 - **Secret Hygiene:** Never log raw API keys or tokens in JSON error payloads; write `auth.json` with `0o600` via `src/config/store.rs`.
+- **Git Inspection Resource Bounds & Concurrency (`git.rs`):** Heavy git subprocesses (`git add --intent-to-add`, `git diff`, `git log`, `git rev-list`) MUST run via `run_git_bounded` (`30s` timeout, `10 MiB` raw diff cap / `4 MiB` small output cap, `-c diff.renameLimit=200` on `-M`), parsing diffs via `parse_git_diff_bounded` (`1 MiB` per-file early hunk drop, `7 MiB` total retained cap) to prevent Termux OOM/hangs. `handle_git_mode` dispatches requests concurrently up to `MAX_CONCURRENT_GIT_REQUESTS` (`4`) with an RAII slot guard so slow diff jobs never block `oopbot_git_commits` or `oopbot_git_detect`.
 - **Binary Upgrade Acceleration:** `ensure.rs` (`ensure_oopbot_binary_with`) uses `aria2c -x 8 -s 8 -k 1M` when available for remote HTTPS release downloads and falls back cleanly to `reqwest`, skipping `aria2c` for loopback test URLs.
 
 ## Work Guidance
