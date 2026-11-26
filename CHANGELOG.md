@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.22] - 2026-11-26
+
+### Added
+- Layer 1 `src/context/` (`ContextManager`, `ContextPolicy`, `BudgetSnapshot`, `plan_canonical_compaction_*`, `assemble_compaction_prompt_with_limit`, `rebuild_canonical_history`) with CLI `/context`, `/compact [instructions]`, opt-in pre-turn/mid-turn auto-compaction, and atomic `0o600` `tabs.json` persistence.
+- Atomic `edit_file` tool (`src/tools/fs.rs`) with `0o600` same-directory temp writes, UTF-8 BOM and per-line mixed CRLF/LF preservation, Pi-style numbered diffs (`details.{diff, firstChangedLine, linesAdded, linesRemoved}`), and accurate Android `StepFigure` badge counts on truncated diffs.
+- CLI system instruction support for active plugin guidelines and `--append-system-prompt`.
+
+### Fixed
+- Hardened context compaction and session recovery across CLI & RPC:
+  - Rejected empty/whitespace-only compaction summaries without replacing conversation history (both CLI `ContextManager` and RPC `perform_compaction`).
+  - Forwarded bounded recent inline images (`inlineData`) with 1-to-1 synchronized `[gambar inline #N]` labels and deferred base64 cloning for multimodal compaction summarizers while omitting them on text-only models.
+  - Added fingerprint-keyed `last_context_tokens` with local token-delta calibration, apples-to-apples anti-thrash across tool steps, post-compaction `OverLimit` dispatch gating, and `/compact` `OverLimit` warnings (including no-op and error outcomes).
+  - Hardened `tabs.json` loading with OOB `active_index` clamping, `next_id` normalization, `.corrupt-<ts>.bak` quarantine with preserved `load_warning` across startup `--model` overrides, and provider/API compatibility checks on restored tabs (`sync_client_to_active_tab_model_or_fallback`, `/token`, `/tab`, `/close`).
+
 ## [0.5.21] - 2026-11-20
 
 ### Fixed
