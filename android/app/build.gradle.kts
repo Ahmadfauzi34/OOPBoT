@@ -514,7 +514,17 @@ android {
   }
 
   // Production classes log through android.util.Log, whose JVM stub otherwise throws in unit tests.
-  testOptions { unitTests.isReturnDefaultValues = true }
+  testOptions {
+    unitTests.isReturnDefaultValues = true
+    unitTests.all { test ->
+      providers.systemProperty("robolectric.dependency.repo.url").orNull?.let { url ->
+        test.systemProperty("robolectric.dependency.repo.url", url)
+      }
+      providers.systemProperty("robolectric.dependency.repo.id").orNull?.let { id ->
+        test.systemProperty("robolectric.dependency.repo.id", id)
+      }
+    }
+  }
 
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_21
