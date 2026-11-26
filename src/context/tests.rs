@@ -62,6 +62,7 @@ fn budget_evaluates_thresholds_and_calibrates_with_observed_tokens() {
         reserve_output_tokens: 200,
         auto_compact_ratio: 0.80, // usable=800, threshold=640
         keep_recent_tokens: 200,
+        supports_images: true,
     };
     let small_history = vec![u_msg("halo"), m_msg("hai")];
 
@@ -236,6 +237,7 @@ async fn context_manager_skips_when_within_budget_and_compacts_when_forced_or_ov
         reserve_output_tokens: 100,
         auto_compact_ratio: 0.80, // usable=300, threshold=240
         keep_recent_tokens: 40,
+        supports_images: true,
     };
     let mgr = ContextManager::new(policy);
     let summarizer = MockSummarizer::new("Ringkasan singkat.");
@@ -276,6 +278,7 @@ async fn context_manager_skips_wasted_summarization_when_retained_tail_is_over_l
         reserve_output_tokens: 100, // usable=300
         auto_compact_ratio: 0.80,
         keep_recent_tokens: 40,
+        supports_images: true,
     };
     let mgr = ContextManager::new(policy);
     let summarizer = MockSummarizer::new("Ringkasan.");
@@ -416,4 +419,117 @@ async fn compaction_plan_extracts_bounded_recent_inline_images_for_summarizer() 
         summarizer.images_seen.lock().unwrap().len(),
         MAX_COMPACTION_INLINE_IMAGES
     );
+}
+
+#[tokio::test]
+async fn context_manager_rejects_empty_or_whitespace_summary_without_dropping_history() {
+    let policy = ContextPolicy::for_model_limits(Some(8_000), Some(1_000));
+    let mgr = ContextManager::new(policy);
+    let history = vec![u_msg("turn 1"), m_msg("jawab 1"), u_msg("turn 2"), m_msg("jawab 2")];
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+
+    for blank in ["", "   \n\t  "] {
+        let summarizer = MockSummarizer::new(blank);
+        let err = mgr
+            .prepare_or_compact("sys", &[], &history, None, true, None, &summarizer, rx.clone())
+            .await
+            .expect_err("blank compaction summary must be rejected");
+        assert!(err.to_string().contains("kosong"));
+    }
+}
+
+#[test]
+fn compaction_image_labels_stay_synchronized_when_middle_omitted_or_budget_limited() {
+    // 1. Gambar di entri pertengahan terpotong oleh batas prompt -> tidak boleh ikut dilampirkan
+    //    dan gambar yang bertahan di head/tail tetap diberi label berurutan #1, #2.
+    let mut history = Vec::new();
+    history.push(json!({
+        "role": "user",
+        "parts": [
+            { "text": "awal dengan gambar head" },
+            { "inlineData": { "mimeType": "image/png", "data": "HEAD_IMG" } }
+        ]
+    }));
+    history.push(m_msg("oke head"));
+    for i in 0..12 {
+        let mut parts = vec![json!({ "text": format!("mid-{i}: {}", "M".repeat(800)) })];
+        if i == 6 {
+            parts.push(json!({ "inlineData": { "mimeType": "image/png", "data": "DROPPED_MID_IMG" } }));
+        }
+        history.push(json!({ "role": "user", "parts": parts }));
+        history.push(m_msg(&format!("balas-{i}: {}", "B".repeat(800))));
+    }
+    history.push(json!({
+        "role": "user",
+        "parts": [
+            { "text": "akhir dengan gambar tail" },
+            { "inlineData": { "mimeType": "image/png", "data": "TAIL_IMG" } }
+        ]
+    }));
+    history.push(m_msg("oke tail"));
+    history.push(u_msg("pertanyaan terakhir"));
+    history.push(m_msg("siap"));
+
+    let plan = plan_canonical_compaction_with_limits(&history, 20, None, None, 2_200, 10_000)
+        .expect("plan");
+    assert!(!plan.prompt.contains('\u{1f}'));
+    assert!(
+        plan.inline_images
+            .iter()
+            .all(|v| v["inlineData"]["data"] != "DROPPED_MID_IMG"),
+        "omitted middle image must not be attached"
+    );
+    for idx in 0..plan.inline_images.len() {
+        let expected_label = format!(
+            "[gambar inline #{} (terlampir pada input ringkasan)]",
+            idx + 1
+        );
+        assert!(
+            plan.prompt.contains(&expected_label),
+            "missing synchronized label {} in prompt",
+            expected_label
+        );
+    }
+    let next_label = format!(
+        "[gambar inline #{} (terlampir pada input ringkasan)]",
+        plan.inline_images.len() + 1
+    );
+    assert!(!plan.prompt.contains(&next_label));
+
+    // 2. Model text-only (`max_image_tokens == 0`) -> 0 lampiran dan tidak ada label "(terlampir...)".
+    let text_only_plan =
+        plan_canonical_compaction_with_limits(&history, 20, None, None, 10_000, 0).expect("plan");
+    assert!(text_only_plan.inline_images.is_empty());
+    assert!(!text_only_plan
+        .prompt
+        .contains("(terlampir pada input ringkasan)"));
+    assert!(text_only_plan.prompt.contains("[gambar inline sebelumnya]"));
+}
+
+#[test]
+fn compaction_skips_redundant_recompaction_on_synthetic_only_history_unless_instructed() {
+    let synthetic_only = rebuild_canonical_history("Ringkasan sudah padat.", &[]);
+    assert_eq!(synthetic_only.len(), 2);
+
+    // Tanpa instruksi kustom -> tidak membuang request LLM untuk meringkas ulang ringkasan yang sama.
+    assert!(plan_canonical_compaction(&synthetic_only, 40, None, None).is_none());
+
+    // Dengan instruksi kustom `/compact fokus ke bug` -> tetap diizinkan memadatkan ulang.
+    let plan = plan_canonical_compaction(&synthetic_only, 40, None, Some("Fokus ke bug auth"))
+        .expect("custom instructions should allow re-compacting existing summary");
+    assert!(plan.prompt.contains("<previous_summary>"));
+    assert!(plan.prompt.contains("Ringkasan sudah padat."));
+    assert!(plan.prompt.contains("Fokus ke bug auth"));
+
+    // Setelah compaction, 1 giliran user + rantai tool tidak boleh memilih cut_index == 2
+    // (yang meringkas 0 pesan baru), melainkan jatuh ke retain-none agar rantai tool ikut diringkas.
+    let mut one_turn_after = synthetic_only;
+    one_turn_after.push(u_msg("jalankan tool"));
+    one_turn_after.push(m_tool_call("run_shell", json!({ "command": "ls" })));
+    one_turn_after.push(u_tool_resp("run_shell", json!({ "stdout": "ok" })));
+    let plan_mid = plan_canonical_compaction(&one_turn_after, 40, None, None)
+        .expect("post-compaction tool chain must fall back to retain-none");
+    assert_eq!(plan_mid.cut_index, one_turn_after.len());
+    assert!(plan_mid.prompt.contains("<previous_summary>"));
+    assert!(plan_mid.prompt.contains("jalankan tool"));
 }

@@ -9,6 +9,7 @@
 
 use super::events::TimelineEntry;
 use crate::common::fs::write_text_atomic;
+use crate::common::time::epoch_ms;
 use crate::context::ContextStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +25,10 @@ pub struct ChatSession {
     pub timeline: Vec<TimelineEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_context_tokens: Option<u64>,
+    /// Estimasi token lokal pada saat `last_context_tokens` diobservasi dari provider,
+    /// dipakai menghitung delta pesan baru agar `max(estimasi, observasi)` tidak melewatkan pertumbuhan konteks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_context_estimated_tokens: Option<u64>,
     /// Fingerprint `(model, base_url, system_instruction, tool_declarations)` tempat
     /// `last_context_tokens` diobservasi agar perubahan `--append-system-prompt`, model,
     /// provider, atau set tool tidak memakai angka token basi.
@@ -40,6 +45,7 @@ impl ChatSession {
             history: Vec::new(),
             timeline: Vec::new(),
             last_context_tokens: None,
+            last_context_estimated_tokens: None,
             last_context_fingerprint: None,
         }
     }
@@ -57,11 +63,22 @@ impl ChatSession {
 
     pub fn clear_observed_context_tokens(&mut self) {
         self.last_context_tokens = None;
+        self.last_context_estimated_tokens = None;
         self.last_context_fingerprint = None;
     }
 
     pub fn set_observed_context_tokens(&mut self, tokens: Option<u64>, fingerprint: Option<String>) {
+        self.set_observed_context_tokens_with_baseline(tokens, None, fingerprint);
+    }
+
+    pub fn set_observed_context_tokens_with_baseline(
+        &mut self,
+        tokens: Option<u64>,
+        estimated_baseline: Option<u64>,
+        fingerprint: Option<String>,
+    ) {
         self.last_context_tokens = tokens;
+        self.last_context_estimated_tokens = tokens.and(estimated_baseline);
         self.last_context_fingerprint = tokens.and(fingerprint);
     }
 
@@ -182,11 +199,57 @@ impl WorkspaceTabs {
         TabsFileStore::new(path.to_path_buf()).save_serialized(&format!("{}\n", data))
     }
 
+    /// Muat state tab dari file JSON dengan sanitasi `active_index`/`next_id` dan
+    /// backup otomatis bila file ada tetapi korup agar tidak tertimpa diam-diam.
+    pub fn load_from_file_checked(path: &Path) -> (Option<Self>, Option<String>) {
+        if !path.exists() {
+            return (None, None);
+        }
+        let parsed = fs::read_to_string(path)
+            .ok()
+            .and_then(|data| serde_json::from_str::<Self>(&data).ok());
+        if let Some(mut loaded) = parsed {
+            if !loaded.tabs.is_empty() {
+                loaded.active_index = loaded.active_index.min(loaded.tabs.len() - 1);
+                let min_next = loaded
+                    .tabs
+                    .iter()
+                    .filter_map(|t| t.id.parse::<usize>().ok())
+                    .max()
+                    .unwrap_or(0)
+                    .saturating_add(1)
+                    .max(1);
+                if loaded.next_id < min_next {
+                    loaded.next_id = min_next;
+                }
+                return (Some(loaded), None);
+            }
+        }
+
+        // File ada tetapi tidak valid / kosong: pindahkan ke backup sebelum sesi baru menimpanya.
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("tabs.json");
+        let backup_path = path.with_file_name(format!("{}.corrupt-{}.bak", file_name, epoch_ms()));
+        let warning = match fs::rename(path, &backup_path) {
+            Ok(()) => format!(
+                "File sesi {} rusak; dipindahkan ke {} dan memulai tab baru.",
+                path.display(),
+                backup_path.display()
+            ),
+            Err(e) => format!(
+                "File sesi {} rusak dan gagal di-backup ({}); memulai tab baru.",
+                path.display(),
+                e
+            ),
+        };
+        (None, Some(warning))
+    }
+
     /// Muat state tab dari file JSON bila ada.
     pub fn load_from_file(path: &Path) -> Option<Self> {
-        let data = fs::read_to_string(path).ok()?;
-        let loaded: Self = serde_json::from_str(&data).ok()?;
-        (!loaded.tabs.is_empty()).then_some(loaded)
+        Self::load_from_file_checked(path).0
     }
 
     pub fn default_storage_path() -> Option<PathBuf> {

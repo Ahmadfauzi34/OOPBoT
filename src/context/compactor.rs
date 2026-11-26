@@ -101,55 +101,36 @@ pub fn extract_existing_compaction_summary(history: &[Value]) -> Option<String> 
     (!inner.is_empty()).then(|| inner.to_string())
 }
 
-fn is_valid_inline_image_part(part: &Value) -> bool {
-    part.get("inlineData")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| obj.get("data"))
+fn extract_valid_inline_image(part: &Value) -> Option<Value> {
+    let inline = part.get("inlineData")?.as_object()?;
+    let data = inline.get("data")?.as_str().filter(|s| !s.is_empty())?;
+    let mime = inline
+        .get("mimeType")
         .and_then(|v| v.as_str())
-        .is_some_and(|data| !data.is_empty())
+        .unwrap_or("image/png");
+    Some(json!({
+        "inlineData": {
+            "mimeType": mime,
+            "data": data
+        }
+    }))
 }
 
-fn collect_compaction_inline_images(slice: &[Value]) -> (Vec<(usize, usize)>, Vec<Value>) {
-    let mut locations = Vec::new();
-    for (msg_idx, msg) in slice.iter().enumerate() {
-        if msg["role"].as_str() != Some("user") {
-            continue;
-        }
-        if let Some(parts) = msg["parts"].as_array() {
-            for (part_idx, part) in parts.iter().enumerate() {
-                if is_valid_inline_image_part(part) {
-                    locations.push((msg_idx, part_idx));
-                }
-            }
-        }
-    }
-    let start = locations.len().saturating_sub(MAX_COMPACTION_INLINE_IMAGES);
-    let selected = locations[start..].to_vec();
-    let images = selected
-        .iter()
-        .filter_map(|&(msg_idx, part_idx)| {
-            let part = slice.get(msg_idx)?["parts"].as_array()?.get(part_idx)?;
-            let inline = part.get("inlineData")?.as_object()?;
-            let mime = inline
-                .get("mimeType")
-                .and_then(|v| v.as_str())
-                .unwrap_or("image/png");
-            let data = inline.get("data").and_then(|v| v.as_str())?;
-            Some(json!({
-                "inlineData": {
-                    "mimeType": mime,
-                    "data": data
-                }
-            }))
-        })
-        .collect();
-    (selected, images)
+/// Placeholder dengan panjang tetap (51 karakter) setara `"[gambar inline #1 (terlampir pada input ringkasan)]"`
+/// sehingga penggantian pasca-perakitan prompt tidak pernah menambah panjang prompt melampaui budget.
+fn inline_image_placeholder(msg_idx: usize, part_idx: usize) -> String {
+    let token = format!(
+        "\u{1f}IMG:{:06}:{:06}:{:\u{1f}<31}\u{1f}",
+        msg_idx, part_idx, ""
+    );
+    debug_assert_eq!(token.chars().count(), 51);
+    token
 }
 
 fn format_canonical_message_for_compaction(
     msg_idx: usize,
     msg: &Value,
-    attached_images: &[(usize, usize)],
+    discovered_images: &mut Vec<(String, Value)>,
 ) -> Option<String> {
     let role = msg["role"].as_str().unwrap_or_default();
     let parts = msg["parts"].as_array()?;
@@ -175,14 +156,10 @@ fn format_canonical_message_for_compaction(
                         truncate_head_tail_chars(text, MAX_COMPACTION_MSG_CHARS)
                     ));
                 } else if p.get("inlineData").is_some() {
-                    if let Some(pos) = attached_images
-                        .iter()
-                        .position(|&loc| loc == (msg_idx, part_idx))
-                    {
-                        lines.push(format!(
-                            "[User]: [gambar inline #{} (terlampir pada input ringkasan)]",
-                            pos + 1
-                        ));
+                    if let Some(img_val) = extract_valid_inline_image(p) {
+                        let placeholder = inline_image_placeholder(msg_idx, part_idx);
+                        lines.push(format!("[User]: {}", placeholder));
+                        discovered_images.push((placeholder, img_val));
                     } else {
                         lines.push("[User]: [gambar inline sebelumnya]".to_string());
                     }
@@ -402,38 +379,85 @@ fn build_canonical_compaction_prompt(
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
     max_prompt_chars: usize,
+    max_image_tokens: u64,
 ) -> (String, Vec<Value>) {
-    let (attached_locs, inline_images) = collect_compaction_inline_images(to_summarize);
+    let mut discovered_images: Vec<(String, Value)> = Vec::new();
     let formatted: Vec<String> = to_summarize
         .iter()
         .enumerate()
         .filter_map(|(msg_idx, msg)| {
-            format_canonical_message_for_compaction(msg_idx, msg, &attached_locs)
+            format_canonical_message_for_compaction(msg_idx, msg, &mut discovered_images)
         })
         .collect();
-    let prompt = assemble_compaction_prompt_with_limit(
+    let mut prompt = assemble_compaction_prompt_with_limit(
         &formatted,
         previous_summary,
         custom_instructions,
         max_prompt_chars,
     );
+
+    // Pilih hanya gambar yang placeholder-nya benar-benar bertahan di dalam prompt akhir
+    // (tidak terpotong oleh pemangkasan pertengahan), maksimal MAX_COMPACTION_INLINE_IMAGES
+    // dan dalam batas anggaran token gambar `max_image_tokens` (prioritaskan gambar terbaru).
+    let mut selected_indices: Vec<usize> = Vec::new();
+    let mut used_image_tokens = 0u64;
+    if max_image_tokens > 0 {
+        for (idx, (token, img_val)) in discovered_images.iter().enumerate().rev() {
+            if selected_indices.len() >= MAX_COMPACTION_INLINE_IMAGES {
+                break;
+            }
+            if !prompt.contains(token.as_str()) {
+                continue;
+            }
+            let cost = estimate_value_tokens(img_val);
+            if used_image_tokens.saturating_add(cost) > max_image_tokens {
+                continue;
+            }
+            used_image_tokens = used_image_tokens.saturating_add(cost);
+            selected_indices.push(idx);
+        }
+        selected_indices.reverse();
+    }
+
+    let mut inline_images = Vec::with_capacity(selected_indices.len());
+    for (order, &disc_idx) in selected_indices.iter().enumerate() {
+        let (token, img_val) = &discovered_images[disc_idx];
+        let label = format!(
+            "[gambar inline #{} (terlampir pada input ringkasan)]",
+            order + 1
+        );
+        prompt = prompt.replace(token.as_str(), &label);
+        inline_images.push(img_val.clone());
+    }
+    for (token, _) in &discovered_images {
+        if prompt.contains(token.as_str()) {
+            prompt = prompt.replace(token.as_str(), "[gambar inline sebelumnya]");
+        }
+    }
+    // Bersihkan kemungkinan fragmen kontrol \u{1f} jika satu baris sangat panjang sempat dipotong di tengah token.
+    if prompt.contains('\u{1f}') {
+        prompt = prompt.replace('\u{1f}', "");
+    }
+
+    debug_assert!(prompt.chars().count() <= max_prompt_chars.min(MAX_COMPACTION_PROMPT_CHARS));
     (prompt, inline_images)
 }
 
 /// Rencanakan pemadatan `history` kanonik secara deterministik dengan batas prompt default.
-/// Mengembalikan `None` jika `history` terlalu pendek (< 2 pesan) untuk dipadatkan.
+/// Mengembalikan `None` jika `history` terlalu pendek (< 2 pesan) atau tidak ada pesan baru untuk dipadatkan.
 pub fn plan_canonical_compaction(
     history: &[Value],
     keep_recent_tokens: u64,
     previous_summary: Option<&str>,
     custom_instructions: Option<&str>,
 ) -> Option<CompactionPlan> {
-    plan_canonical_compaction_with_prompt_limit(
+    plan_canonical_compaction_with_limits(
         history,
         keep_recent_tokens,
         previous_summary,
         custom_instructions,
         MAX_COMPACTION_PROMPT_CHARS,
+        u64::MAX,
     )
 }
 
@@ -446,19 +470,42 @@ pub fn plan_canonical_compaction_with_prompt_limit(
     custom_instructions: Option<&str>,
     max_prompt_chars: usize,
 ) -> Option<CompactionPlan> {
+    plan_canonical_compaction_with_limits(
+        history,
+        keep_recent_tokens,
+        previous_summary,
+        custom_instructions,
+        max_prompt_chars,
+        u64::MAX,
+    )
+}
+
+/// Rencanakan pemadatan `history` kanonik dengan batas panjang prompt teks dan anggaran token gambar
+/// agar label `[gambar inline #N]` 100% sinkron dengan `CompactionPlan::inline_images`.
+pub fn plan_canonical_compaction_with_limits(
+    history: &[Value],
+    keep_recent_tokens: u64,
+    previous_summary: Option<&str>,
+    custom_instructions: Option<&str>,
+    max_prompt_chars: usize,
+    max_image_tokens: u64,
+) -> Option<CompactionPlan> {
     if history.len() < 2 {
         return None;
     }
 
     let existing_summary = extract_existing_compaction_summary(history);
     let synthetic_prefix_len = if existing_summary.is_some() { 2 } else { 0 };
+    let has_custom_instructions = custom_instructions.is_some_and(|s| !s.trim().is_empty());
     let inherited_summary = previous_summary
         .map(str::to_string)
         .or(existing_summary);
 
-    // Hindari menganggap pasangan prefiks summary sintetis di indeks 0..=1 sebagai satu-satunya isi yang diringkas.
-    let min_cut_idx = if synthetic_prefix_len > 0 && history.len() > synthetic_prefix_len {
-        synthetic_prefix_len
+    // Cut-point setelah prefiks summary sintetis `[0..2]` harus berada di indeks `>= 3`
+    // agar selalu ada minimal 1 pesan baru di `to_summarize[2..]`; jika tidak ada cut-point valid
+    // (mis. baru 1 giliran user + rantai tool setelah compaction), gunakan retain-none fallback.
+    let min_cut_idx = if synthetic_prefix_len > 0 {
+        synthetic_prefix_len + 1
     } else {
         1
     };
@@ -510,12 +557,20 @@ pub fn plan_canonical_compaction_with_prompt_limit(
     // Hanya lewati pasangan sintetis `[user(<compaction_summary>), model(ack)]` di indeks 0..2
     // (yang sudah dibawa ke `<previous_summary>`), bukan pesan user normal mana pun.
     let conversation_slice = &to_summarize[synthetic_prefix_len.min(to_summarize.len())..];
+
+    // Bila tidak ada pesan percakapan baru di luar prefiks summary sintetis dan user tidak memberi
+    // instruksi khusus `/compact <instruksi>`, jangan buang request LLM untuk meringkas ulang ringkasan sama.
+    if conversation_slice.is_empty() && !has_custom_instructions {
+        return None;
+    }
+
     let kept_messages = history.len().saturating_sub(cut_index);
     let (prompt, inline_images) = build_canonical_compaction_prompt(
         conversation_slice,
         inherited_summary.as_deref(),
         custom_instructions,
         max_prompt_chars,
+        max_image_tokens,
     );
 
     Some(CompactionPlan {

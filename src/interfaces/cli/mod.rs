@@ -241,7 +241,11 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         cli.system_append.as_deref(),
     ));
     agent.set_auto_compact(true);
-    agent.set_active_model(&creds.model);
+    let active_model = if cli.model.is_some() {
+        agent.set_active_model(&creds.model)
+    } else {
+        agent.sync_client_to_active_tab_model()
+    };
     ui::warn_if_persist_failed(&agent);
 
     // Mode satu kali jalan (-p "prompt")
@@ -260,7 +264,7 @@ pub async fn run_interactive_or_prompt(cli: CliArgs) -> Result<(), BoxError> {
         }
     }
 
-    repl::run_repl(&agent, &creds.provider_name, &creds.model, cli.auto_approve).await
+    repl::run_repl(&agent, &creds.provider_name, &active_model, cli.auto_approve).await
 }
 
 #[cfg(test)]

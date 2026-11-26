@@ -112,6 +112,22 @@ impl RpcRuntime {
             return Err((true, "Compaction aborted".to_string()));
         }
 
+        let summary = summary.trim().to_string();
+        if summary.is_empty() {
+            let err_msg =
+                "Ringkasan compaction kosong dari provider; histori asli dipertahankan."
+                    .to_string();
+            if emit_started {
+                Self::send_line(&json!({
+                    "type": "compaction_end",
+                    "reason": "threshold",
+                    "aborted": false,
+                    "errorMessage": err_msg,
+                }));
+            }
+            return Err((false, err_msg));
+        }
+
         let active_info = self.active_model_info();
         let (compact_id, branch_after, rebuilt_after, estimated_after, usage_json) = {
             self.ensure_session_header();

@@ -138,10 +138,13 @@ impl AgentHarness {
         max_steps: usize,
     ) -> Self {
         let default_m = client.model();
-        let tabs = WorkspaceTabs::default_storage_path()
-            .and_then(|p| WorkspaceTabs::load_from_file(&p))
-            .unwrap_or_else(|| WorkspaceTabs::new(&default_m));
-        Self::with_event_sink_and_tabs(
+        let storage_path = WorkspaceTabs::default_storage_path();
+        let (loaded_tabs, load_warning) = storage_path
+            .as_deref()
+            .map(WorkspaceTabs::load_from_file_checked)
+            .unwrap_or((None, None));
+        let tabs = loaded_tabs.unwrap_or_else(|| WorkspaceTabs::new(&default_m));
+        let harness = Self::with_event_sink_and_tabs(
             name,
             client,
             tools,
@@ -149,8 +152,15 @@ impl AgentHarness {
             event_sink,
             max_steps,
             tabs,
-            WorkspaceTabs::default_storage_path(),
-        )
+            storage_path,
+        );
+        if let Some(warn) = load_warning {
+            *harness
+                .last_persist_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(warn);
+        }
+        harness
     }
 
     /// Varian konstruktor yang tab-nya disuplai pemanggil beserta lokasi
@@ -515,36 +525,86 @@ impl AgentHarness {
         format!("{:016x}", h)
     }
 
-    /// Ambil `last_context_tokens` hanya bila fingerprint observasinya masih cocok dengan
-    /// konfigurasi aktif saat ini (model, provider, system instruction, & deklarasi tool).
-    pub(super) fn observed_context_tokens_for(
+    /// Sinkronkan default model `LlmClient` dan katalog ke model tab aktif yang dimuat dari `tabs.json`
+    /// tanpa menimpa model tab tersimpan atau mereset `last_context_tokens`.
+    pub fn sync_client_to_active_tab_model(&self) -> String {
+        let active_model = self.model();
+        {
+            let mut cat = self.catalog.lock().unwrap_or_else(|e| e.into_inner());
+            if cat.find(&active_model).is_none() {
+                cat.register_custom(&active_model, &active_model);
+            }
+        }
+        self.client.set_default_model(&active_model);
+        active_model
+    }
+
+    /// Ambil `(last_context_tokens, last_context_estimated_tokens)` hanya bila fingerprint
+    /// observasinya masih cocok dengan konfigurasi aktif saat ini.
+    pub(super) fn observed_context_pair_for(
         &self,
         session: &ChatSession,
         decls: &[Value],
-    ) -> Option<u64> {
-        let tokens = session.last_context_tokens?;
+    ) -> (Option<u64>, Option<u64>) {
+        let Some(tokens) = session.last_context_tokens else {
+            return (None, None);
+        };
         let expected = self.context_observation_fingerprint(&session.model, decls);
-        (session.last_context_fingerprint.as_deref() == Some(expected.as_str())).then_some(tokens)
+        if session.last_context_fingerprint.as_deref() == Some(expected.as_str()) {
+            (Some(tokens), session.last_context_estimated_tokens)
+        } else {
+            (None, None)
+        }
     }
 
-    /// Kebijakan konteks berdasarkan limit model aktif saat ini.
+    /// Kalibrasi `last_observed_input_tokens` dengan menambahkan delta estimasi lokal
+    /// dari pesan baru yang ditambahkan setelah respons provider terakhir.
+    pub(super) fn calibrated_observed_tokens(
+        policy: &ContextPolicy,
+        system_instruction: &str,
+        decls: &[Value],
+        history: &[Value],
+        observed: Option<u64>,
+        baseline_estimated: Option<u64>,
+    ) -> Option<u64> {
+        let obs = observed?;
+        let delta = baseline_estimated
+            .map(|base| {
+                crate::context::evaluate_budget(policy, system_instruction, decls, history, None)
+                    .total_estimated_tokens
+                    .saturating_sub(base)
+            })
+            .unwrap_or(0);
+        Some(obs.saturating_add(delta))
+    }
+
+    /// Kebijakan konteks berdasarkan limit & kapabilitas input model aktif saat ini.
     pub fn context_policy(&self) -> ContextPolicy {
         let info = self.active_model_info();
+        let supports_images = info.input.iter().any(|m| m == "image");
         ContextPolicy::for_model_limits(info.input_token_limit, info.output_token_limit)
+            .with_supports_images(supports_images)
     }
 
     /// Evaluasi anggaran konteks tab aktif terhadap limit model aktif.
     pub fn context_budget(&self) -> BudgetSnapshot {
         let decls = self.tools.declarations();
-        let (history, last_observed) = {
+        let policy = self.context_policy();
+        let (history, observed, baseline) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let active = tabs.active();
-            (
-                active.history.clone(),
-                self.observed_context_tokens_for(active, &decls),
-            )
+            let (obs, base) = self.observed_context_pair_for(active, &decls);
+            (active.history.clone(), obs, base)
         };
-        ContextManager::new(self.context_policy()).evaluate(
+        let last_observed = Self::calibrated_observed_tokens(
+            &policy,
+            &self.system_instruction,
+            &decls,
+            &history,
+            observed,
+            baseline,
+        );
+        ContextManager::new(policy).evaluate(
             &self.system_instruction,
             &decls,
             &history,
@@ -560,15 +620,22 @@ impl AgentHarness {
         cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PreparedContext, BoxError> {
         let decls = self.tools.declarations();
-        let (history, last_observed) = {
+        let policy = self.context_policy();
+        let (history, observed, baseline) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let active = tabs.active();
-            (
-                active.history.clone(),
-                self.observed_context_tokens_for(active, &decls),
-            )
+            let (obs, base) = self.observed_context_pair_for(active, &decls);
+            (active.history.clone(), obs, base)
         };
-        let manager = ContextManager::new(self.context_policy());
+        let last_observed = Self::calibrated_observed_tokens(
+            &policy,
+            &self.system_instruction,
+            &decls,
+            &history,
+            observed,
+            baseline,
+        );
+        let manager = ContextManager::new(policy);
         let prepared = manager
             .prepare_or_compact(
                 &self.system_instruction,

@@ -681,3 +681,215 @@ async fn agent_compaction_forwards_inline_images_only_to_multimodal_models() {
 
     srv.abort();
 }
+
+#[test]
+fn workspace_tabs_clamps_oob_active_index_and_backs_up_corrupt_file() {
+    let dir = std::env::temp_dir().join(format!(
+        "oopbot_tabs_recovery_{}_{}",
+        std::process::id(),
+        crate::common::time::epoch_ms()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let tabs_path = dir.join("tabs.json");
+
+    // 1. active_index out-of-bounds + stale next_id -> harus di-clamp aman tanpa panic.
+    let oob_json = json!({
+        "tabs": [{
+            "id": "5",
+            "title": "Tab 5",
+            "model": "saved-model",
+            "history": [],
+            "timeline": []
+        }],
+        "active_index": 99,
+        "next_id": 1
+    });
+    std::fs::write(&tabs_path, oob_json.to_string()).unwrap();
+    let (loaded, warn) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+    assert!(warn.is_none());
+    let mut ws = loaded.expect("valid tabs loaded");
+    assert_eq!(ws.active_index(), 0);
+    assert_eq!(ws.active().id, "5");
+    assert_eq!(ws.new_tab("saved-model").id, "6");
+
+    // 2. File korup -> harus dipindah ke *.corrupt-*.bak dan mengembalikan warning.
+    std::fs::write(&tabs_path, "{broken json").unwrap();
+    let (loaded2, warn2) = WorkspaceTabs::load_from_file_checked(&tabs_path);
+    assert!(loaded2.is_none());
+    let warning = warn2.expect("corrupt warning returned");
+    assert!(warning.contains(".corrupt-"));
+    assert!(!tabs_path.exists(), "corrupt tabs.json should be moved to backup");
+    let backups: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+        .collect();
+    assert_eq!(backups.len(), 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn agent_calibrates_token_delta_avoids_per_step_thrash_and_preserves_saved_tab_model() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let summary_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let main_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let summary_calls_srv = Arc::clone(&summary_calls);
+    let main_calls_srv = Arc::clone(&main_calls);
+
+    let srv = tokio::spawn(async move {
+        for _ in 0..8 {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 65_536];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let is_summary = req.contains("Summarize the conversation clearly");
+
+            let body = if is_summary {
+                summary_calls_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // Kembalikan ringkasan yang mendarat di zona NeedsCompaction (~625 token dari usable 750),
+                // belum OverLimit, untuk menguji anti-thrash antar step tool (min_growth = 75).
+                let dense_summary = "ringkasan padat penting ".repeat(90);
+                json!({
+                    "choices": [{
+                        "message": { "role": "assistant", "content": dense_summary }
+                    }],
+                    "usage": { "prompt_tokens": 50, "completion_tokens": 120 }
+                })
+                .to_string()
+            } else {
+                let n_call = main_calls_srv.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n_call == 0 {
+                    // Step 1 memanggil tool kecil (`echo_tool`) agar loop masuk step 2.
+                    json!({
+                        "choices": [{
+                            "message": {
+                                "role": "assistant",
+                                "content": null,
+                                "tool_calls": [{
+                                    "id": "tc_1",
+                                    "type": "function",
+                                    "function": { "name": "echo_tool", "arguments": "{}" }
+                                }]
+                            }
+                        }],
+                        "usage": { "prompt_tokens": 625, "completion_tokens": 10 }
+                    })
+                    .to_string()
+                } else {
+                    json!({
+                        "choices": [{
+                            "message": { "role": "assistant", "content": "Selesai tanpa thrashing." }
+                        }],
+                        "usage": { "prompt_tokens": 660, "completion_tokens": 10 }
+                    })
+                    .to_string()
+                }
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        }
+    });
+
+    struct AllowAll;
+    #[async_trait]
+    impl Approver for AllowAll {
+        async fn approve(&self, _tool: &str, _preview: &str) -> bool {
+            true
+        }
+    }
+
+    struct EchoTool;
+    #[async_trait]
+    impl crate::tools::Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "echo_tool"
+        }
+        fn description(&self) -> &'static str {
+            "small echo"
+        }
+        fn parameters(&self) -> Value {
+            json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "ok": true }))
+        }
+    }
+
+    let mut tools = crate::tools::ToolRegistry::new();
+    tools.register(Box::new(EchoTool));
+
+    // Client dimulai dengan default env model berbeda ("env-default"), tetapi tab tersimpan memakai "saved-tab-model".
+    let client = crate::llm::LlmClient::new_with_base_url(
+        "test-key".into(),
+        "env-default".into(),
+        Some(format!("http://{}/v1", addr)),
+    )
+    .unwrap();
+    let mut tabs = WorkspaceTabs::new("saved-tab-model");
+    tabs.active_mut().history = vec![
+        json!({ "role": "user", "parts": [{ "text": "pesan lama 1" }] }),
+        json!({ "role": "model", "parts": [{ "text": "jawab lama 1" }] }),
+    ];
+
+    let mut harness = AgentHarness::with_event_sink_and_tabs(
+        "OOPBoT",
+        client,
+        tools,
+        Box::new(AllowAll),
+        Box::new(NoopEventSink),
+        4,
+        tabs,
+        None,
+    );
+    harness.set_system_instruction("sys".into());
+    harness.configure_model(
+        "saved-tab-model",
+        &json!({ "api": "openai-completions", "contextWindow": 1000, "maxTokens": 200 }),
+    );
+    harness.set_auto_compact(true);
+
+    // #7: sync_client_to_active_tab_model mempertahankan model tab tersimpan & observasinya.
+    let fp = harness.context_observation_fingerprint("saved-tab-model", &harness.tools.declarations());
+    let base_est = harness.context_budget().total_estimated_tokens;
+    {
+        let mut t = harness.tabs.lock().unwrap();
+        // Provider menokenisasi padat (observed=590 dari usable=750, threshold=600), padahal estimasi lokal kecil.
+        t.active_mut()
+            .set_observed_context_tokens_with_baseline(Some(590), Some(base_est), Some(fp));
+    }
+    assert_eq!(harness.sync_client_to_active_tab_model(), "saved-tab-model");
+    assert_eq!(harness.model(), "saved-tab-model");
+    assert_eq!(harness.context_budget().last_observed_input_tokens, Some(590));
+
+    // #4: Menambahkan pesan baru (~25 token) harus mengkalibrasi observed = 590 + delta -> >= 600 (NeedsCompaction)
+    // sehingga memicu compaction di step 1 (meski estimasi lokal saja jauh di bawah 600),
+    // lalu #3: step 2 (setelah tool kecil) TIDAK memicu compaction ulang meski masih di NeedsCompaction.
+    let reply = harness
+        .chat("tolong jalankan echo tool sekarang ya")
+        .await
+        .unwrap();
+    assert_eq!(reply, "Selesai tanpa thrashing.");
+    assert_eq!(
+        main_calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "expected 2 main LLM steps (tool call + final answer)"
+    );
+    assert_eq!(
+        summary_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "expected exactly 1 auto-compaction without thrashing on step 2"
+    );
+
+    srv.abort();
+}

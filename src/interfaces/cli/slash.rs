@@ -132,15 +132,23 @@ pub async fn handle_slash_command(agent: &AgentHarness, input: &str) -> bool {
                 Ok(prep) if prep.compacted => {
                     warn_if_persist_failed(agent);
                     println!(
-                        "✅ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan). Estimasi baru: ~{} / {} token.\n",
+                        "✅ Konteks dipadatkan ({} pesan diringkas, {} dipertahankan). Estimasi baru: ~{} / {} token.",
                         prep.summarized_messages,
                         prep.kept_messages,
                         prep.budget.total_estimated_tokens,
                         prep.budget.usable_limit
                     );
+                    if prep.budget.status == crate::context::BudgetStatus::OverLimit {
+                        eprintln!(
+                            "⚠️  Peringatan: konteks masih melampaui batas model (~{} / {} token usable). Giliran berikutnya dapat diblokir; gunakan `reset` atau perpendek pesan/lampiran.",
+                            prep.budget.effective_tokens(),
+                            prep.budget.usable_limit
+                        );
+                    }
+                    println!();
                 }
                 Ok(_) => {
-                    println!("ℹ️  Histori tab masih terlalu pendek untuk dipadatkan.\n");
+                    println!("ℹ️  Tidak ada pesan baru yang cukup untuk dipadatkan (gunakan `/compact <instruksi>` untuk memadatkan ulang ringkasan).\n");
                 }
                 Err(e) => eprintln!("❌ Gagal memadatkan konteks: {}\n", e),
             }

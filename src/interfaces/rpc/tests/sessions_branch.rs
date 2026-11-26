@@ -1230,4 +1230,100 @@ async fn gate_wakeup_context_text_and_unknown_tool_call_survive_reload() {
     );
 }
 
+#[tokio::test]
+async fn gate_rpc_compaction_rejects_empty_summary_without_mutating_branch() {
+    let _sink_guard = output_sink_test_mutex().lock().await;
+    let (_reset, mut out_rx) = install_channel_output_sink();
+    let tmp = TempConfigGuard::new("rpc_gate_empty_compact_summary");
+
+    // Mock server selalu mengembalikan teks kosong saat diminta meringkas.
+    let (base_url, _reqs, mock_handle) = spawn_mock_llm_server(move |_idx, _req| async move {
+        (
+            200,
+            json!({
+                "candidates": [{
+                    "content": { "role": "model", "parts": [{ "text": "   \n  " }] }
+                }]
+            }),
+        )
+    })
+    .await;
+
+    write_mock_provider_config(
+        tmp.path(),
+        "google",
+        "google-generative-ai",
+        "gemini-2.5-flash",
+        &format!("{}/v1beta", base_url),
+        "k-gate-empty-compact",
+    );
+
+    let session_file = tmp.path().join("session_empty_compact.jsonl");
+    let lines = [
+        json!({ "type": "session", "version": 3, "id": "s_empty_cmp", "timestamp": "2026-01-01T00:00:00Z", "cwd": "." }),
+        json!({ "type": "message", "id": "m1", "parentId": null, "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "text", "text": "pesan pertama panjang ".repeat(30) }] } }),
+        json!({ "type": "message", "id": "m2", "parentId": "m1", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "text", "text": "balasan pertama" }] } }),
+        json!({ "type": "message", "id": "m3", "parentId": "m2", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "user", "content": [{ "type": "text", "text": "pesan kedua" }] } }),
+        json!({ "type": "message", "id": "m4", "parentId": "m3", "timestamp": "2026-01-01T00:00:04Z", "message": { "role": "assistant", "content": [{ "type": "text", "text": "balasan kedua" }] } }),
+    ];
+    let body = lines
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&session_file, body).unwrap();
+
+    let mut server = RpcServer::new_in_dir_with_cwd(
+        tmp.path().to_path_buf(),
+        tmp.path().to_path_buf(),
+        Some(session_file.to_string_lossy().to_string()),
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let (cmd_tx, reader) = TestLineReader::new();
+    let loop_task = tokio::spawn(async move {
+        server
+            .run_loop_with_input(io::BufReader::new(reader))
+            .await
+            .unwrap();
+    });
+    let _ = recv_matching(&mut out_rx, std::time::Duration::from_secs(2), |v| {
+        v["topic"] == "oopbot:hello"
+    })
+    .await;
+
+    send_cmd(&cmd_tx, json!({ "id": "c_empty", "type": "compact" }));
+    let resp = recv_response(&mut out_rx, "c_empty", std::time::Duration::from_secs(3)).await;
+    assert_eq!(
+        resp["success"], false,
+        "GATE: compaction dengan summary kosong wajib gagal"
+    );
+    assert!(
+        resp["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("kosong"),
+        "expected empty-summary error message, got {:?}",
+        resp
+    );
+
+    drop(cmd_tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), loop_task).await;
+    mock_handle.abort();
+
+    let reloaded = load_session_from_path(&session_file);
+    assert!(
+        reloaded.entries.iter().all(|e| e["type"] != "compaction"),
+        "GATE: tidak boleh ada entri compaction kosong yang ditulis ke JSONL"
+    );
+    assert_eq!(
+        reloaded.ui_messages.len(),
+        4,
+        "GATE: histori asli harus tetap utuh saat summary compaction kosong"
+    );
+}
+
 
