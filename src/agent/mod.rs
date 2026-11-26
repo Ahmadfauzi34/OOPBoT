@@ -242,7 +242,17 @@ impl AgentHarness {
     /// Ganti system instruction (jalur RPC memakai instruksinya sendiri,
     /// bukan default CLI yang dibangun di konstruktor).
     pub fn set_system_instruction(&mut self, instruction: String) {
-        self.system_instruction = instruction;
+        if self.system_instruction != instruction {
+            self.system_instruction = instruction;
+            let decls = self.tools.declarations();
+            let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
+            for tab in tabs.list_mut() {
+                let expected = self.context_observation_fingerprint(&tab.model, &decls);
+                if tab.last_context_fingerprint.as_deref() != Some(expected.as_str()) {
+                    tab.clear_observed_context_tokens();
+                }
+            }
+        }
     }
 
     pub fn system_instruction(&self) -> &str {
@@ -255,7 +265,9 @@ impl AgentHarness {
         self.client.update_credentials(api_key, base_url);
         if prev_base_url != self.client.base_url() {
             let mut tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
-            tabs.active_mut().last_context_tokens = None;
+            for tab in tabs.list_mut() {
+                tab.clear_observed_context_tokens();
+            }
             self.persist_tabs(&tabs);
         }
     }
@@ -323,7 +335,7 @@ impl AgentHarness {
         if active.model != resolved {
             active.model = resolved.clone();
             // Token input observasi sebelumnya milik tokenizer model/provider lama; reset agar tidak menyesatkan.
-            active.last_context_tokens = None;
+            active.clear_observed_context_tokens();
         }
         self.persist_tabs(&tabs);
         self.client.set_default_model(&resolved);
@@ -434,7 +446,7 @@ impl AgentHarness {
             _ => format!("Tab {}", id),
         };
         active.history = history;
-        active.last_context_tokens = None;
+        active.clear_observed_context_tokens();
         active.timeline.clear();
         self.persist_tabs(&tabs);
     }
@@ -481,6 +493,40 @@ impl AgentHarness {
             .take()
     }
 
+    /// Fingerprint deterministik untuk mengikat `last_context_tokens` ke kombinasi aktif
+    /// `(model, base_url, system_instruction, tool_declarations)`.
+    pub(super) fn context_observation_fingerprint(&self, model: &str, decls: &[Value]) -> String {
+        fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
+            for &b in bytes {
+                hash ^= b as u64;
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            hash
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        h = fnv1a_update(h, model.as_bytes());
+        h = fnv1a_update(h, &[0]);
+        h = fnv1a_update(h, self.client.base_url().as_bytes());
+        h = fnv1a_update(h, &[0]);
+        h = fnv1a_update(h, self.system_instruction.as_bytes());
+        h = fnv1a_update(h, &[0]);
+        let decls_json = serde_json::to_string(decls).unwrap_or_default();
+        h = fnv1a_update(h, decls_json.as_bytes());
+        format!("{:016x}", h)
+    }
+
+    /// Ambil `last_context_tokens` hanya bila fingerprint observasinya masih cocok dengan
+    /// konfigurasi aktif saat ini (model, provider, system instruction, & deklarasi tool).
+    pub(super) fn observed_context_tokens_for(
+        &self,
+        session: &ChatSession,
+        decls: &[Value],
+    ) -> Option<u64> {
+        let tokens = session.last_context_tokens?;
+        let expected = self.context_observation_fingerprint(&session.model, decls);
+        (session.last_context_fingerprint.as_deref() == Some(expected.as_str())).then_some(tokens)
+    }
+
     /// Kebijakan konteks berdasarkan limit model aktif saat ini.
     pub fn context_policy(&self) -> ContextPolicy {
         let info = self.active_model_info();
@@ -489,12 +535,15 @@ impl AgentHarness {
 
     /// Evaluasi anggaran konteks tab aktif terhadap limit model aktif.
     pub fn context_budget(&self) -> BudgetSnapshot {
+        let decls = self.tools.declarations();
         let (history, last_observed) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let active = tabs.active();
-            (active.history.clone(), active.last_context_tokens)
+            (
+                active.history.clone(),
+                self.observed_context_tokens_for(active, &decls),
+            )
         };
-        let decls = self.tools.declarations();
         ContextManager::new(self.context_policy()).evaluate(
             &self.system_instruction,
             &decls,
@@ -510,12 +559,15 @@ impl AgentHarness {
         custom_instructions: Option<&str>,
         cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<PreparedContext, BoxError> {
+        let decls = self.tools.declarations();
         let (history, last_observed) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let active = tabs.active();
-            (active.history.clone(), active.last_context_tokens)
+            (
+                active.history.clone(),
+                self.observed_context_tokens_for(active, &decls),
+            )
         };
-        let decls = self.tools.declarations();
         let manager = ContextManager::new(self.context_policy());
         let prepared = manager
             .prepare_or_compact(

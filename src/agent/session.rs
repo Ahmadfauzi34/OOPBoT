@@ -24,6 +24,11 @@ pub struct ChatSession {
     pub timeline: Vec<TimelineEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_context_tokens: Option<u64>,
+    /// Fingerprint `(model, base_url, system_instruction, tool_declarations)` tempat
+    /// `last_context_tokens` diobservasi agar perubahan `--append-system-prompt`, model,
+    /// provider, atau set tool tidak memakai angka token basi.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_context_fingerprint: Option<String>,
 }
 
 impl ChatSession {
@@ -35,6 +40,7 @@ impl ChatSession {
             history: Vec::new(),
             timeline: Vec::new(),
             last_context_tokens: None,
+            last_context_fingerprint: None,
         }
     }
 
@@ -49,16 +55,26 @@ impl ChatSession {
         }
     }
 
+    pub fn clear_observed_context_tokens(&mut self) {
+        self.last_context_tokens = None;
+        self.last_context_fingerprint = None;
+    }
+
+    pub fn set_observed_context_tokens(&mut self, tokens: Option<u64>, fingerprint: Option<String>) {
+        self.last_context_tokens = tokens;
+        self.last_context_fingerprint = tokens.and(fingerprint);
+    }
+
     pub fn clear(&mut self) {
         self.history.clear();
         self.timeline.clear();
-        self.last_context_tokens = None;
+        self.clear_observed_context_tokens();
     }
 
     /// Perbarui `history` setelah compaction tanpa menghapus `timeline` visual user.
     pub fn apply_compacted_history(&mut self, new_history: Vec<Value>, notice: String) {
         self.history = new_history;
-        self.last_context_tokens = None;
+        self.clear_observed_context_tokens();
         self.timeline.push(TimelineEntry::Notice { text: notice });
     }
 }
@@ -108,6 +124,10 @@ impl WorkspaceTabs {
 
     pub fn list(&self) -> &[ChatSession] {
         &self.tabs
+    }
+
+    pub fn list_mut(&mut self) -> &mut [ChatSession] {
+        &mut self.tabs
     }
 
     pub fn active_index(&self) -> usize {

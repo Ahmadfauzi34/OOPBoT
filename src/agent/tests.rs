@@ -445,10 +445,9 @@ async fn agent_resets_observed_tokens_on_model_or_provider_switch_and_bounds_sum
         Some(format!("http://{}/v1", addr)),
     )
     .unwrap();
-    let mut tabs = WorkspaceTabs::new("model-a");
-    tabs.active_mut().last_context_tokens = Some(9_999);
+    let tabs = WorkspaceTabs::new("model-a");
 
-    let harness = AgentHarness::with_event_sink_and_tabs(
+    let mut harness = AgentHarness::with_event_sink_and_tabs(
         "OOPBoT",
         client,
         crate::tools::ToolRegistry::new(),
@@ -467,19 +466,47 @@ async fn agent_resets_observed_tokens_on_model_or_provider_switch_and_bounds_sum
         &json!({ "api": "openai-completions", "contextWindow": 1000, "maxTokens": 200 }),
     );
 
-    // 1. Sama model -> last_context_tokens tetap ada
+    // 0. Legacy unkeyed last_context_tokens tanpa fingerprint diabaikan agar tidak menyesatkan.
+    {
+        let mut tabs = harness.tabs.lock().unwrap();
+        tabs.active_mut().last_context_tokens = Some(9_999);
+        tabs.active_mut().last_context_fingerprint = None;
+    }
+    assert_eq!(harness.context_budget().last_observed_input_tokens, None);
+
+    // 1. Seed observasi dengan fingerprint cocok -> dipertahankan saat model & system instruction sama.
+    let fp_a = harness.context_observation_fingerprint("model-a", &harness.tools.declarations());
+    {
+        let mut tabs = harness.tabs.lock().unwrap();
+        tabs.active_mut()
+            .set_observed_context_tokens(Some(9_999), Some(fp_a));
+    }
     harness.set_active_model("model-a");
     assert_eq!(harness.context_budget().last_observed_input_tokens, Some(9_999));
 
-    // 2. Pindah model -> last_context_tokens wajib di-reset ke None
+    // 2. Ganti system instruction (mis. --append-system-prompt berubah antar sesi) -> observasi di-reset.
+    harness.set_system_instruction("OOPBoT dengan prompt tambahan baru".into());
+    assert_eq!(harness.context_budget().last_observed_input_tokens, None);
+
+    // 3. Pindah model -> last_context_tokens wajib di-reset ke None.
+    let fp_a2 = harness.context_observation_fingerprint("model-a", &harness.tools.declarations());
+    {
+        let mut tabs = harness.tabs.lock().unwrap();
+        tabs.active_mut()
+            .set_observed_context_tokens(Some(4_321), Some(fp_a2));
+    }
+    assert_eq!(harness.context_budget().last_observed_input_tokens, Some(4_321));
     harness.set_active_model("model-b");
     assert_eq!(harness.context_budget().last_observed_input_tokens, None);
 
-    // 3. Pindah base_url/provider -> last_context_tokens juga di-reset
+    // 4. Pindah base_url/provider -> last_context_tokens juga di-reset.
+    let fp_b = harness.context_observation_fingerprint("model-b", &harness.tools.declarations());
     {
         let mut tabs = harness.tabs.lock().unwrap();
-        tabs.active_mut().last_context_tokens = Some(777);
+        tabs.active_mut()
+            .set_observed_context_tokens(Some(777), Some(fp_b));
     }
+    assert_eq!(harness.context_budget().last_observed_input_tokens, Some(777));
     harness.update_credentials("test-key".into(), Some("http://127.0.0.1:9/v1".into()));
     assert_eq!(harness.context_budget().last_observed_input_tokens, None);
 

@@ -240,15 +240,13 @@ impl AgentHarness {
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
         steer_hook: Option<SteerHook>,
     ) -> Result<TurnOutcome, BoxError> {
-        let (session_id, active_model, mut history, mut last_observed_input) = {
+        let decls = self.tools.declarations();
+        let (session_id, active_model, mut history, mut last_observed_input, obs_fingerprint) = {
             let tabs = self.tabs.lock().unwrap_or_else(|e| e.into_inner());
             let s = tabs.active();
-            (
-                s.id.clone(),
-                s.model.clone(),
-                s.history.clone(),
-                s.last_context_tokens,
-            )
+            let fp = self.context_observation_fingerprint(&s.model, &decls);
+            let observed = self.observed_context_tokens_for(s, &decls);
+            (s.id.clone(), s.model.clone(), s.history.clone(), observed, fp)
         };
 
         if push_initial_user {
@@ -260,7 +258,6 @@ impl AgentHarness {
             history.push(user_msg);
         }
 
-        let decls = self.tools.declarations();
         let collector = MemoryEventCollector::new();
         let turn_started = Instant::now();
         let mut tool_steps = 0usize;
@@ -373,7 +370,7 @@ impl AgentHarness {
                                 let active = tabs.active_mut();
                                 active.update_title_from_prompt(&input.text);
                                 active.history = history;
-                                active.last_context_tokens = last_observed_input;
+                                active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
                                 active.timeline.extend(folded);
                                 self.persist_tabs(&tabs);
                             }
@@ -414,7 +411,7 @@ impl AgentHarness {
                                 let active = tabs.active_mut();
                                 active.update_title_from_prompt(&input.text);
                                 active.history = history;
-                                active.last_context_tokens = last_observed_input;
+                                active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
                                 active.timeline.extend(folded);
                                 self.persist_tabs(&tabs);
                             }
@@ -466,7 +463,7 @@ impl AgentHarness {
                         let active = tabs.active_mut();
                         active.update_title_from_prompt(&input.text);
                         active.history = history;
-                        active.last_context_tokens = last_observed_input;
+                        active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
                         active.timeline.extend(folded);
                         self.persist_tabs(&tabs);
                     }
@@ -520,7 +517,7 @@ impl AgentHarness {
                 let active = tabs.active_mut();
                 active.update_title_from_prompt(&input.text);
                 active.history = history;
-                active.last_context_tokens = last_observed_input;
+                active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
                 active.timeline.extend(folded);
                 self.persist_tabs(&tabs);
 
@@ -588,7 +585,7 @@ impl AgentHarness {
         let active = tabs.active_mut();
         active.update_title_from_prompt(&input.text);
         active.history = history;
-        active.last_context_tokens = last_observed_input;
+        active.set_observed_context_tokens(last_observed_input, Some(obs_fingerprint.clone()));
         active.timeline.extend(folded);
         self.persist_tabs(&tabs);
 
