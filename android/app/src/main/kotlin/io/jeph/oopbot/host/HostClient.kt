@@ -31,14 +31,20 @@ import org.json.JSONObject
  * sends one `oopbot_request` and, except for [openRpc], reads lines until `oopbot_result`.
  * Throws [HostFailure] when the host could not run and [HostRejected] when it refused.
  *
- * A launch waits until OOPBoT is in the [foreground]. In the background Android may refuse to start Termux, and in
- * Doze it blocks the host's connection back to OOPBoT once OOPBoT's foreground service stops, so the launch would
- * fail. Nothing launched from the background needs to run before the user returns: reconnects and session lists
- * are only seen on screen.
+ * A launch normally waits until OOPBoT is in the [foreground]: in the background Android may refuse to start Termux,
+ * and in Doze it blocks the host's connection back to OOPBoT once OOPBoT's foreground service stops. Callers that
+ * explicitly pass `allowBackground = true` (e.g. scheduled agent runs) may bypass the foreground wait ONLY while
+ * [canLaunchInBackground] reports an active `KeepAliveMode.Active` foreground service; otherwise they fail fast with
+ * [HostFailure.Background] rather than stalling a background wake lock indefinitely.
  */
 @Suppress("TooManyFunctions") // One typed wrapper per host mode, beside the launch code they share.
-internal class HostClient(context: Context, private val foreground: Flow<Boolean>, scope: CoroutineScope) :
-  SessionHost {
+internal class HostClient(
+  context: Context,
+  private val foreground: Flow<Boolean>,
+  scope: CoroutineScope,
+  private val canLaunchInBackground: () -> Boolean = { false },
+  private val launcher: suspend (Context, String) -> HostChannel = HostLauncher::launch,
+) : SessionHost {
   private val context = context.applicationContext
   private val helloState = MutableStateFlow<HostHello?>(null)
   private val failureState = MutableStateFlow<HostFailure?>(null)
@@ -51,6 +57,9 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     // Termux until OOPBoT returns. A request made in the background waits for the foreground anyway.
     scope.launch { foreground.collect { visible -> if (!visible) utility.retire() } }
   }
+
+  /** Whether OOPBoT's UI is currently in the foreground. */
+  internal suspend fun isForeground(): Boolean = foreground.first()
 
   /** The pinned OOPBoT engine version. */
   val expectedOopbotVersion: String = TermuxSetup.DEFAULT_OOPBOT_VERSION
@@ -402,6 +411,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
     sessionPath: String?,
     disabledExtensions: Set<String>,
     engine: String? = null,
+    allowBackground: Boolean = false,
   ): HostChannel {
     val extensions = BundledExtension.entries
       .filter { it.switch == null || it.id !in disabledExtensions }
@@ -412,7 +422,7 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
       .put("expectedVersion", expectedOopbotVersion)
       .put("oopbotExtensions", JSONArray(extensions))
     if (!engine.isNullOrBlank()) params.put("engine", engine)
-    val channel = connect("rpc")
+    val channel = connect("rpc", allowBackground = allowBackground)
     var sent = false
     try {
       sendRequest(channel, params)
@@ -467,13 +477,22 @@ internal class HostClient(context: Context, private val foreground: Flow<Boolean
   /** Starts the `utility` host that answers [utilityCall]s, and returns its channel once it is ready for requests. */
   private suspend fun openUtility(): HostChannel = openRequestHost("utility", "oopbot_utility_ready")
 
-  private suspend fun connect(mode: String): HostChannel {
+  private suspend fun connect(mode: String, allowBackground: Boolean = false): HostChannel {
     if (!foreground.first()) {
-      Log.i(TAG, "Host $mode waits until OOPBoT is in the foreground")
-      foreground.first { it }
+      if (!allowBackground) {
+        Log.i(TAG, "Host $mode waits until OOPBoT is in the foreground")
+        foreground.first { it }
+      } else if (!canLaunchInBackground()) {
+        Log.w(TAG, "Host $mode background launch refused: no active KeepAlive foreground service")
+        val failure = HostFailure.Background()
+        failureState.value = failure
+        throw failure
+      } else {
+        Log.i(TAG, "Host $mode launching from background under active KeepAlive")
+      }
     }
     val channel = try {
-      HostLauncher.launch(context, mode)
+      launcher(context, mode)
     } catch (failure: HostFailure) {
       failureState.value = failure
       throw failure
