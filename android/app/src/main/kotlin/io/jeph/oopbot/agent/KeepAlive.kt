@@ -31,44 +31,144 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
   private val lock = Any()
   private var activeHolders = 0
   private var standbyHolders = 0
+  private var draining = false
+  private var pendingSync = false
+  private var pendingForce = false
+  private var pendingReason = ""
 
+  /** Desired mode derived from current holds; updated synchronously before service IPC completes. */
   @Volatile
   var mode: KeepAliveMode = KeepAliveMode.Off
     private set
 
+  /** Last mode successfully accepted by [updater] (or reported running/stopped by [AgentService]). */
+  @Volatile
+  var appliedMode: KeepAliveMode = KeepAliveMode.Off
+    private set
+
   /** Holds [AgentService] in [KeepAliveMode.Active] (foreground + partial wake lock) until closed. */
-  fun acquire(reason: String): AutoCloseable = hold(active = true, reason = reason)
+  fun acquire(reason: String): AutoCloseable = hold(active = true, reason = reason, dispatch = true)
 
-  /** Holds [AgentService] in [KeepAliveMode.Standby] (foreground, no wake lock) until closed. */
-  fun acquireStandby(reason: String): AutoCloseable = hold(active = false, reason = reason)
+  /**
+   * Holds [AgentService] in [KeepAliveMode.Standby] (foreground, no wake lock) until closed.
+   * Pass [dispatch] = false when [AgentService] is already starting itself (e.g. `START_STICKY` null-intent restart).
+   */
+  fun acquireStandby(reason: String, dispatch: Boolean = true): AutoCloseable =
+    hold(active = false, reason = reason, dispatch = dispatch)
 
-  private fun hold(active: Boolean, reason: String): AutoCloseable {
-    synchronized(lock) {
-      if (active) activeHolders += 1 else standbyHolders += 1
-      applyTransitionLocked(reason)
+  /**
+   * Retries applying [mode] when a prior [updater] call failed ([appliedMode] != [mode]).
+   * When [force] is true and [mode] is non-Off, re-applies [mode] even if already applied (e.g. to refresh
+   * `START_STICKY` / `START_NOT_STICKY` policy on [AgentService] while staying Active).
+   */
+  fun sync(reason: String, force: Boolean = false) {
+    val shouldDrain = synchronized(lock) {
+      if (mode == appliedMode && (!force || mode == KeepAliveMode.Off)) return
+      scheduleLocked(reason, force)
     }
+    if (shouldDrain) drain()
+  }
+
+  /** Notes that [AgentService] entered [runningMode] (for example, on a `START_STICKY` null-intent restart). */
+  internal fun noteRunning(runningMode: KeepAliveMode) {
+    synchronized(lock) {
+      if (mode == runningMode) appliedMode = runningMode
+    }
+  }
+
+  /** Notes that [AgentService] stopped or was destroyed so future [sync] calls can restart it if still desired. */
+  internal fun noteStopped() {
+    synchronized(lock) {
+      appliedMode = KeepAliveMode.Off
+    }
+  }
+
+  private fun hold(active: Boolean, reason: String, dispatch: Boolean): AutoCloseable {
+    val shouldDrain = synchronized(lock) {
+      if (active) activeHolders += 1 else standbyHolders += 1
+      val changed = recomputeDesiredLocked()
+      if (dispatch && (changed || mode != appliedMode)) {
+        scheduleLocked(reason, force = false)
+      } else {
+        false
+      }
+    }
+    if (shouldDrain) drain()
     val released = AtomicBoolean(false)
     return AutoCloseable {
       if (released.compareAndSet(false, true)) {
-        synchronized(lock) {
+        val drainOnRelease = synchronized(lock) {
           if (active) activeHolders -= 1 else standbyHolders -= 1
-          applyTransitionLocked(reason)
+          val changed = recomputeDesiredLocked()
+          if (changed || mode != appliedMode) {
+            scheduleLocked(reason, force = false)
+          } else {
+            false
+          }
         }
+        if (drainOnRelease) drain()
       }
     }
   }
 
-  private fun applyTransitionLocked(reason: String) {
+  private fun recomputeDesiredLocked(): Boolean {
     val desired = when {
       activeHolders > 0 -> KeepAliveMode.Active
       standbyHolders > 0 -> KeepAliveMode.Standby
       else -> KeepAliveMode.Off
     }
-    if (desired == mode) return
+    if (desired == mode) return false
     mode = desired
-    if (!updater(desired, reason)) {
-      Log.w(TAG, "Keep-alive ($reason, mode=$desired) not applied; Android may stop OOPBoT in the background")
+    return true
+  }
+
+  private fun scheduleLocked(reason: String, force: Boolean): Boolean {
+    pendingSync = true
+    pendingForce = pendingForce || force
+    pendingReason = reason
+    if (draining) return false
+    draining = true
+    return true
+  }
+
+  private fun drain() {
+    var completed = false
+    try {
+      while (true) {
+        val step = nextStepLocked() ?: break
+        val ok = updater(step.first, step.second)
+        synchronized(lock) {
+          if (ok) {
+            appliedMode = step.first
+            if (mode != appliedMode) pendingSync = true
+          } else {
+            Log.w(TAG, "Keep-alive (${step.second}, mode=${step.first}) not applied; Android may stop OOPBoT")
+          }
+        }
+      }
+      completed = true
+    } finally {
+      if (!completed) {
+        synchronized(lock) { draining = false }
+      }
     }
+  }
+
+  private fun nextStepLocked(): Pair<KeepAliveMode, String>? = synchronized(lock) {
+    if (!pendingSync) {
+      draining = false
+      return null
+    }
+    pendingSync = false
+    val target = mode
+    val force = pendingForce
+    val reason = pendingReason
+    pendingForce = false
+    if (target == appliedMode && (!force || target == KeepAliveMode.Off)) {
+      draining = false
+      return null
+    }
+    target to reason
   }
 
   private companion object {

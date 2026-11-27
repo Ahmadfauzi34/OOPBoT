@@ -46,60 +46,118 @@ class AgentService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val action = intent?.action ?: if (appGraph.preferences.backgroundStandby.value) ACTION_STANDBY else ACTION_IDLE
-    return when (action) {
-      ACTION_BUSY -> {
-        enterForeground()
-        handler.removeCallbacks(renew)
-        renew.run()
-        stickyMode()
-      }
+    if (intent == null) return handleStickyRestart(startId)
+    return when (intent.action) {
+      ACTION_BUSY, ACTION_STANDBY -> handleForegroundIntent(startId)
 
-      ACTION_STANDBY -> {
-        enterForeground()
-        releaseWakeLock()
-        START_STICKY
-      }
-
-      // Chats settle after the abort; KeepAlive then drops to Standby (if enabled) or Off.
-      ACTION_STOP -> {
-        appGraph.registry.abortAll()
-        stickyMode()
-      }
+      ACTION_STOP -> handleStopIntent(startId)
 
       else -> {
-        release()
+        release(startId)
         START_NOT_STICKY
       }
     }
   }
 
-  private fun enterForeground() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-      startForeground(NOTIFICATION_ID, notification(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-    } else {
-      startForeground(NOTIFICATION_ID, notification(this))
+  private fun handleStickyRestart(startId: Int): Int {
+    if (!standbyAllowed()) {
+      release(startId)
+      return START_NOT_STICKY
     }
-    foreground = true
+    appGraph.ensureStandbyHoldForRestart()
+    if (!enterForeground()) return failForegroundStart(startId)
+    return reconcileMode(startId)
   }
 
-  private fun stickyMode(): Int = if (appGraph.preferences.backgroundStandby.value) START_STICKY else START_NOT_STICKY
+  private fun handleForegroundIntent(startId: Int): Int {
+    if (!enterForeground()) return failForegroundStart(startId)
+    return reconcileMode(startId)
+  }
+
+  private fun handleStopIntent(startId: Int): Int {
+    appGraph.registry.abortAll()
+    if (appGraph.keepAlive.mode == KeepAliveMode.Off) {
+      release(startId)
+      return START_NOT_STICKY
+    }
+    if (!foreground) {
+      if (!enterForeground()) return failForegroundStart(startId)
+      return reconcileMode(startId)
+    }
+    return stickyMode()
+  }
+
+  private fun failForegroundStart(startId: Int): Int {
+    releaseWakeLock()
+    if (stopSelfResult(startId)) {
+      appGraph.keepAlive.noteStopped()
+    }
+    return START_NOT_STICKY
+  }
+
+  private fun reconcileMode(startId: Int): Int = when (appGraph.keepAlive.mode) {
+    KeepAliveMode.Active -> {
+      appGraph.keepAlive.noteRunning(KeepAliveMode.Active)
+      handler.removeCallbacks(renew)
+      renew.run()
+      stickyMode()
+    }
+
+    KeepAliveMode.Standby -> {
+      appGraph.keepAlive.noteRunning(KeepAliveMode.Standby)
+      releaseWakeLock()
+      stickyMode()
+    }
+
+    KeepAliveMode.Off -> {
+      release(startId)
+      START_NOT_STICKY
+    }
+  }
+
+  private fun enterForeground(): Boolean = try {
+    val notification = notification(this)
+    val testHook = startForegroundForTest
+    if (testHook != null) {
+      testHook(this, NOTIFICATION_ID, notification)
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+    } else {
+      startForeground(NOTIFICATION_ID, notification)
+    }
+    foreground = true
+    true
+  } catch (error: IllegalStateException) {
+    Log.w(TAG, "AgentService.startForeground refused", error)
+    foreground = false
+    false
+  }
+
+  private fun standbyAllowed(): Boolean {
+    val prefs = appGraph.preferences
+    return prefs.setupComplete.value && prefs.backgroundStandby.value
+  }
+
+  private fun stickyMode(): Int = if (standbyAllowed()) START_STICKY else START_NOT_STICKY
 
   private fun releaseWakeLock() {
     handler.removeCallbacks(renew)
     if (wakeLock.isHeld) wakeLock.release()
   }
 
-  private fun release() {
+  private fun release(startId: Int) {
     foreground = false
     releaseWakeLock()
     stopForeground(STOP_FOREGROUND_REMOVE)
-    stopSelf()
+    if (stopSelfResult(startId)) {
+      appGraph.keepAlive.noteStopped()
+    }
   }
 
   override fun onDestroy() {
     foreground = false
     releaseWakeLock()
+    runCatching { appGraph.keepAlive.noteStopped() }
     super.onDestroy()
   }
 
@@ -119,7 +177,11 @@ class AgentService : Service() {
 
     /** Whether the service runs in the foreground, showing its notification. Main-thread confined. */
     @Volatile
-    private var foreground = false
+    internal var foreground = false
+      private set
+
+    /** Test-only override for `startForeground` so unit tests can simulate `ForegroundServiceStartNotAllowedException`. */
+    internal var startForegroundForTest: ((Service, Int, Notification) -> Unit)? = null
 
     private fun intent(context: Context, action: String) = Intent(context, AgentService::class.java).setAction(action)
 
@@ -130,9 +192,10 @@ class AgentService : Service() {
     private fun notification(context: Context): Notification {
       val graph = context.appGraph
       val chatsWorking = graph.registry.busy.value
-      val backgroundOnly = !chatsWorking && graph.registry.holding.value
-      val terminalsOnly = !chatsWorking && !backgroundOnly && graph.terminals.busy.value
-      val standbyOnly = !chatsWorking && !backgroundOnly && !terminalsOnly &&
+      val backgroundOnly = !chatsWorking && graph.registry.waitingOnBackground.value
+      val graceHolding = !chatsWorking && !backgroundOnly && graph.registry.holding.value
+      val terminalsOnly = !chatsWorking && !backgroundOnly && !graceHolding && graph.terminals.busy.value
+      val standbyOnly = !chatsWorking && !backgroundOnly && !graceHolding && !terminalsOnly &&
         graph.keepAlive.mode == KeepAliveMode.Standby
       val open =
         PendingIntent.getActivity(context, 20, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
@@ -170,9 +233,9 @@ class AgentService : Service() {
       }
     }
 
-    /** Re-posts the notification after what keeps OOPBoT running changed; nothing while the service is stopped. */
+    /** Re-posts the notification after what keeps OOPBoT running changed; nothing while stopped or transitioning Off. */
     fun refresh(context: Context) {
-      if (!foreground) return
+      if (!foreground || context.appGraph.keepAlive.mode == KeepAliveMode.Off) return
       context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(context))
     }
 
@@ -182,20 +245,14 @@ class AgentService : Service() {
      * - [KeepAliveMode.Standby] → foreground with wake lock released
      * - [KeepAliveMode.Off] → stop foreground and stop service
      *
-     * Safe from any thread; returns false when Android refuses a background foreground-service start.
+     * Always uses `startForegroundService` for Active/Standby so rapid `Off -> Active/Standby` sequences cannot race
+     * with a queued `ACTION_IDLE`; [onStartCommand] always calls [enterForeground] before reconciling.
+     * Safe from any thread; returns false when Android refuses a background service start.
      */
     internal fun update(context: Context, mode: KeepAliveMode): Boolean = try {
       when (mode) {
-        KeepAliveMode.Active -> {
-          val target = intent(context, ACTION_BUSY)
-          if (foreground) context.startService(target) else context.startForegroundService(target)
-        }
-
-        KeepAliveMode.Standby -> {
-          val target = intent(context, ACTION_STANDBY)
-          if (foreground) context.startService(target) else context.startForegroundService(target)
-        }
-
+        KeepAliveMode.Active -> context.startForegroundService(intent(context, ACTION_BUSY))
+        KeepAliveMode.Standby -> context.startForegroundService(intent(context, ACTION_STANDBY))
         KeepAliveMode.Off -> context.startService(intent(context, ACTION_IDLE))
       }
       true

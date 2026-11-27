@@ -21,6 +21,7 @@ class PanesTest {
     override val sessionFile = MutableStateFlow(sessionPath)
     override val busy = MutableStateFlow(false)
     override val holdsPi = MutableStateFlow(false)
+    override val waitingOnBackground = MutableStateFlow(false)
 
     override suspend fun abort() = Unit
 

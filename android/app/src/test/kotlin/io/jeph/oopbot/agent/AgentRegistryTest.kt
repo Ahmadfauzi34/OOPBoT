@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -29,6 +30,10 @@ class AgentRegistryTest {
 
     // Unconfined, so it follows busy and backgroundTasks as soon as a test sets them, like AgentProcess's.
     override val holdsPi: StateFlow<Boolean> = combine(busy, backgroundTasks) { working, tasks -> working || tasks > 0 }
+      .releasedAfter(holdGraceMillis)
+      .stateIn(CoroutineScope(Dispatchers.Unconfined), SharingStarted.Eagerly, false)
+
+    override val waitingOnBackground: StateFlow<Boolean> = backgroundTasks.map { it > 0 }
       .releasedAfter(holdGraceMillis)
       .stateIn(CoroutineScope(Dispatchers.Unconfined), SharingStarted.Eagerly, false)
     var closed = false

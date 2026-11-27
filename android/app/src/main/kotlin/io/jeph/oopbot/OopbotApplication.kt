@@ -1,9 +1,11 @@
 package io.jeph.oopbot
 
 import android.app.Application
+import io.jeph.oopbot.agent.StandbyBootReceiver
 import io.jeph.oopbot.ui.theme.LauncherIcon
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class OopbotApplication : Application() {
@@ -19,5 +21,13 @@ class OopbotApplication : Application() {
     // Started with the process rather than the activity, so the fonts are usually loaded by the first frame.
     graph.scope.launch(Dispatchers.Default) { OopbotFonts.preload(this@OopbotApplication) }
     graph.scope.launch(Dispatchers.IO) { LauncherIcon.follow(this@OopbotApplication, graph.preferences.theme) }
+    graph.scope.launch(Dispatchers.IO) {
+      StandbyBootReceiver.follow(
+        this@OopbotApplication,
+        combine(graph.preferences.backgroundStandby, graph.preferences.setupComplete) { standby, done ->
+          standby && done
+        },
+      )
+    }
   }
 }

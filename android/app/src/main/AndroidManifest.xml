@@ -109,7 +109,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-started on-device coding agent sessions running in Termux; keeps OOPBoT's connection to the agent alive and offers Stop." />
+                android:value="User-started on-device coding agent sessions running in Termux and optional low-power background standby; keeps OOPBoT's connection to the agent alive and offers Stop while active." />
         </service>
         <!-- Runs one local model in its own process, so Android killing it for memory leaves the UI, and unloading
              a model is killing the process. -->
@@ -122,6 +122,7 @@
             android:exported="false" />
         <receiver
             android:name=".agent.StandbyBootReceiver"
+            android:enabled="false"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

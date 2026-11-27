@@ -14,6 +14,7 @@ import io.jeph.oopbot.agent.AppVisibility
 import io.jeph.oopbot.agent.ChatInbox
 import io.jeph.oopbot.agent.DialogNotifications
 import io.jeph.oopbot.agent.KeepAlive
+import io.jeph.oopbot.agent.KeepAliveMode
 import io.jeph.oopbot.agent.TurnNotifications
 import io.jeph.oopbot.data.AccountRepository
 import io.jeph.oopbot.data.ConfigBackups
@@ -48,6 +49,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -131,6 +133,10 @@ internal class AppGraph(private val application: Application) {
     if (chats.isEmpty()) flowOf(emptySet()) else combine(chats.map { it.sessionFile }) { it.filterNotNullTo(HashSet()) }
   }
 
+  private var activeHold: AutoCloseable? = null
+  private var standbyHold: AutoCloseable? = null
+  private var lastStandbyPolicy: Boolean? = null
+
   init {
     holdWhileWorking()
     restartChatsOnceTermuxWorks()
@@ -143,6 +149,7 @@ internal class AppGraph(private val application: Application) {
     ProcessLifecycleOwner.get().lifecycle.addObserver(
       object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
+          syncStandby("foreground")
           // Before setup, Termux may not be able to run the host yet.
           if (preferences.setupComplete.value) {
             sessionRepository.refresh()
@@ -153,6 +160,24 @@ internal class AppGraph(private val application: Application) {
         }
       },
     )
+  }
+
+  /**
+   * Synchronizes the current power-tier holds and retries any previously refused [KeepAlive] transition.
+   * Called on foreground return and from [io.jeph.oopbot.agent.StandbyBootReceiver.onReceive] so boot FGS starts
+   * execute inside the broadcast receiver exemption window instead of during `Application.onCreate`.
+   */
+  internal fun syncStandby(reason: String) {
+    applyWorkPowerState(currentWorkPowerState(), dispatch = true)
+    keepAlive.sync(reason)
+  }
+
+  /**
+   * Records the Standby hold without issuing a recursive service start when [AgentService] is already restarting
+   * itself via a `START_STICKY` null-intent delivery.
+   */
+  internal fun ensureStandbyHoldForRestart() {
+    applyWorkPowerState(currentWorkPowerState(), dispatch = false)
   }
 
   /** Keeps [chatInbox] following the setting, the archived chats, and the chats on screen. */
@@ -197,52 +222,81 @@ internal class AppGraph(private val application: Application) {
 
   /**
    * Splits [KeepAlive] into two power tiers so OOPBoT stays reliable without draining battery:
-   * - Active (foreground + partial wake lock) ONLY while a chat turn or terminal command is actively running.
+   * - Active (foreground + partial wake lock) while a chat turn (plus its brief post-turn handoff grace when no
+   *   background tasks are running) or a terminal command is running.
    * - Standby (foreground, 0 wake lock) while waiting on background tasks or when Background Standby is enabled.
-   * Acquires new holds before releasing old ones so transitions between Active and Standby never dip to Off.
+   * Launched on non-immediate [Dispatchers.Main] so cold starts on boot/restart never invoke `startForegroundService`
+   * synchronously inside `Application.onCreate`. Acquires new holds before releasing old ones so transitions between
+   * Active and Standby never dip to Off.
    */
   private fun holdWhileWorking() {
-    scope.launch {
-      var activeHold: AutoCloseable? = null
-      var standbyHold: AutoCloseable? = null
+    scope.launch(Dispatchers.Main) {
+      val standbyAllowed = combine(preferences.backgroundStandby, preferences.setupComplete) { standby, done ->
+        standby && done
+      }
       combine(
         registry.busy,
+        registry.waitingOnBackground,
         registry.holding,
         terminals.busy,
-        preferences.backgroundStandby,
-        preferences.setupComplete,
-      ) { chatsBusy, chatsHolding, terminalsBusy, standbyEnabled, setupDone ->
-        WorkPowerState(chatsBusy, chatsHolding, terminalsBusy, standbyEnabled && setupDone)
-      }.collect { state ->
-        val needsActive = state.chatsBusy || state.terminalsBusy
-        val needsStandby = state.standby || (state.chatsHolding && !state.chatsBusy)
-        if (needsActive && activeHold == null) {
-          activeHold = keepAlive.acquire(if (state.chatsBusy) "chats working" else "terminal command")
-        }
-        if (needsStandby && standbyHold == null) {
-          standbyHold = keepAlive.acquireStandby(
-            if (state.chatsHolding) "waiting on background tasks" else "background standby",
-          )
-        }
-        if (!needsActive) {
-          activeHold?.close()
-          activeHold = null
-        }
-        if (!needsStandby) {
-          standbyHold?.close()
-          standbyHold = null
-        }
-        AgentService.refresh(application)
-      }
+        standbyAllowed,
+      ) { chatsBusy, chatsWaitingOnBackground, chatsHolding, terminalsBusy, standby ->
+        WorkPowerState(chatsBusy, chatsWaitingOnBackground, chatsHolding, terminalsBusy, standby)
+      }.distinctUntilChanged().collect { applyWorkPowerState(it) }
     }
+  }
+
+  private fun currentWorkPowerState(): WorkPowerState = WorkPowerState(
+    chatsBusy = registry.busy.value,
+    chatsWaitingOnBackground = registry.waitingOnBackground.value,
+    chatsHolding = registry.holding.value,
+    terminalsBusy = terminals.busy.value,
+    standby = preferences.backgroundStandby.value && preferences.setupComplete.value,
+  )
+
+  private fun applyWorkPowerState(state: WorkPowerState, dispatch: Boolean = true) {
+    val needsActive = state.needsActive
+    val needsStandby = state.needsStandby
+    val previousMode = keepAlive.mode
+    if (needsActive && activeHold == null) {
+      activeHold = keepAlive.acquire(state.activeReason)
+    }
+    if (needsStandby && standbyHold == null) {
+      standbyHold = keepAlive.acquireStandby(state.standbyReason, dispatch = dispatch)
+    }
+    if (!needsActive) {
+      activeHold?.close()
+      activeHold = null
+    }
+    if (!needsStandby) {
+      standbyHold?.close()
+      standbyHold = null
+    }
+    val standbyPolicyChanged = lastStandbyPolicy != null && lastStandbyPolicy != state.standby
+    lastStandbyPolicy = state.standby
+    if (dispatch && standbyPolicyChanged && keepAlive.mode != KeepAliveMode.Off && keepAlive.mode == previousMode) {
+      keepAlive.sync("background standby policy", force = true)
+    }
+    AgentService.refresh(application)
   }
 
   private data class WorkPowerState(
     val chatsBusy: Boolean,
+    val chatsWaitingOnBackground: Boolean,
     val chatsHolding: Boolean,
     val terminalsBusy: Boolean,
     val standby: Boolean,
-  )
+  ) {
+    val needsActive: Boolean get() = chatsBusy || terminalsBusy || (chatsHolding && !chatsWaitingOnBackground)
+    val needsStandby: Boolean get() = standby || (chatsWaitingOnBackground && !chatsBusy)
+    val activeReason: String get() = when {
+      chatsBusy -> "chats working"
+      terminalsBusy -> "terminal command"
+      else -> "chat handoff grace"
+    }
+    val standbyReason: String get() =
+      if (chatsWaitingOnBackground) "waiting on background tasks" else "background standby"
+  }
 
   /**
    * A chat keeps the local model reserved between the requests of its agent turn; when the turn ends, the model is

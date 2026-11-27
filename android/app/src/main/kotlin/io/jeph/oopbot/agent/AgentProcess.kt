@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -267,6 +268,10 @@ internal class AgentProcess(
    */
   override val holdsPi: StateFlow<Boolean> =
     working.releasedAfter(HOLD_GRACE_MILLIS).stateIn(processScope, SharingStarted.Eagerly, false)
+
+  override val waitingOnBackground: StateFlow<Boolean> =
+    backgroundTasksState.map { it > 0 }.releasedAfter(HOLD_GRACE_MILLIS)
+      .stateIn(processScope, SharingStarted.Eagerly, false)
 
   init {
     // One reader, conflated: a burst of turn ends costs one get_session_stats, and answers never land out of order.
