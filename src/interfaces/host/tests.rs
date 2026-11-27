@@ -1218,9 +1218,9 @@ fn test_read_oopbot_binary_version_concurrent_fork_resilience() {
 }
 
 #[tokio::test]
-async fn test_pkg_version_0522_rejects_0510_rpc_and_upgrades_0510_binary() {
+async fn test_pkg_version_0523_rejects_0510_rpc_and_upgrades_0510_binary() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(pkg_ver, "0.5.22");
+    assert_eq!(pkg_ver, "0.5.23");
 
     let refusal = check_rpc_expected_version(&json!({ "expectedVersion": pkg_ver }), "0.5.10").unwrap();
     assert_eq!(refusal["ok"], false);

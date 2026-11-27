@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.23] - 2026-11-26
+
+### Performance & Reliability
+- **Bounded & 3-lane Native Termux Git Host (`src/interfaces/host/git.rs`):**
+  - Routed every git subprocess through `run_git_bounded` (`process_group(0)` isolation, full process-group `SIGKILL` with `kill -0` verification retry, bounded reader join on both timeout/overflow [`200ms`] and success [`2s`] paths, and explicit `SpawnFailed` / `git log` `TooLarge` error surfacing).
+  - Bounded diff parsing via `parse_git_diff_bounded` (`1 MiB` per-file early hunk drop, `7 MiB` total retained cap, exact CRLF byte accounting via `split_inclusive('\n')`, and `-c diff.renameLimit=200`).
+  - Split `handle_git_mode` into 3 isolated, panic-resilient, queue-bounded (`32` queued/lane with immediate `code: "failed"` backpressure) worker lanes — `detect` (2), `commits` (2), and `heavy` (2) — so slow diffs or commits never block repo detection or commit lists.
+- **Android Explorer / Git Changes Render Optimization (`android/.../ui/`):**
+  - Paused off-screen `CircularProgressIndicator` redraws in `PaneExplorer` via `LocalSpinnersAnimate`, and suppressed duplicate toolbar spinners during initial loading.
+  - Replaced full-pane `BoxWithConstraints` subcomposition in `ChangesPane` with `Modifier.onSizeChanged` and replaced `IntrinsicSize.Min` + per-row `Canvas` in `CommitsSection` with `Modifier.commitGraphRail` (`drawWithCache`, RTL-aware) + `LazyColumn` `contentType`.
+  - Marked `DiffRowStyle` `@Immutable`, memoized `AnnotatedString` rows in `DiffView`, and switched Tree-Sitter diff highlighting to lazy visible + ±1 neighbor highlighting with `HighlightCache.shared` reuse and a `120_000`-char per-side budget (`DiffDocument.kt`).
+
+### Fixed
+- **Tolerant `tabs.json` Recovery (`src/session/tabs.rs`):** Recovers healthy tab entries individually on partial corruption, remaps `active_index` to the nearest surviving tab, and reserves `.corrupt-<ts>.bak` backups atomically (`hard_link` / `O_CREAT|O_EXCL`) without clobbering existing backups.
+- **CI Reliability (`.github/workflows/android-test.yml`, `android/app/build.gradle.kts`):** Cached `~/.m2/repository` and forwarded Google's Maven Central mirror URL to Robolectric unit tests to eliminate cold-cache download flakes.
+
 ## [0.5.22] - 2026-11-26
 
 ### Added
