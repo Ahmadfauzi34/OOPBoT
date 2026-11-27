@@ -80,6 +80,7 @@ internal class Preferences internal constructor(
   }
   private val disabledExtensionsState = MutableStateFlow(readStringSet(DISABLED_EXTENSIONS))
   private val inAppNotificationsState = MutableStateFlow(prefs.getBoolean(IN_APP_NOTIFICATIONS, true))
+  private val backgroundStandbyState = MutableStateFlow(prefs.getBoolean(BACKGROUND_STANDBY, false))
   private val localModelsEnabledState = MutableStateFlow(prefs.getBoolean(LOCAL_MODELS_ENABLED, false))
   private val localModelFailedBuildsState = MutableStateFlow(
     if (prefs.getString(LOCAL_MODEL_FAILED_BUILDS_ON, null) == softwareVersion) {
@@ -169,6 +170,9 @@ internal class Preferences internal constructor(
 
   /** How long a chat that is neither working nor shown keeps its Pi. */
   val idleStop: StateFlow<IdleStop> = idleStopState.asStateFlow()
+
+  /** Whether OOPBoT stays alive in low-power Standby mode (no wake lock) when idle. */
+  val backgroundStandby: StateFlow<Boolean> = backgroundStandbyState.asStateFlow()
 
   /** The extensions OOPBoT bundles that the user turned off, by [BundledExtension.id]; a chat's next Pi leaves them out. */
   val disabledExtensions: StateFlow<Set<String>> = disabledExtensionsState.asStateFlow()
@@ -378,6 +382,11 @@ internal class Preferences internal constructor(
     idleStopState.value = stop
   }
 
+  fun setBackgroundStandby(enabled: Boolean) {
+    prefs.edit { putBoolean(BACKGROUND_STANDBY, enabled) }
+    backgroundStandbyState.value = enabled
+  }
+
   fun setExtensionEnabled(extension: BundledExtension, enabled: Boolean) {
     val updated = if (enabled) {
       disabledExtensionsState.value - extension.id
@@ -573,6 +582,7 @@ internal class Preferences internal constructor(
     const val LAYOUT = "layout"
     const val DISABLED_EXTENSIONS = "disabledExtensions"
     const val IN_APP_NOTIFICATIONS = "inAppNotifications"
+    const val BACKGROUND_STANDBY = "backgroundStandby"
     const val LOCAL_MODELS_ENABLED = "localModelsEnabled"
     const val LOCAL_MODEL_FAILED_BUILDS = "localModelFailedBuilds"
     const val LOCAL_MODEL_FAILED_BUILDS_ON = "localModelFailedBuildsOn"

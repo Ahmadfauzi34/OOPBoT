@@ -196,26 +196,53 @@ internal class AppGraph(private val application: Application) {
   }
 
   /**
-   * One [KeepAlive] acquisition while any chat holds its Pi (it works or waits on background tasks, with a short grace
-   * after; see [AgentProcess.holdsPi]) or any terminal runs a command, so switching apps does not stop them. The
-   * notification follows which of them keeps OOPBoT awake, also while sign-in or a Pi install keeps it up.
+   * Splits [KeepAlive] into two power tiers so OOPBoT stays reliable without draining battery:
+   * - Active (foreground + partial wake lock) ONLY while a chat turn or terminal command is actively running.
+   * - Standby (foreground, 0 wake lock) while waiting on background tasks or when Background Standby is enabled.
+   * Acquires new holds before releasing old ones so transitions between Active and Standby never dip to Off.
    */
   private fun holdWhileWorking() {
     scope.launch {
-      var hold: AutoCloseable? = null
-      // Busy only changes the notification, which tells a working chat from one waiting on background tasks.
-      combine(registry.busy, registry.holding, terminals.busy, ::Triple).collect { (_, chats, terminalsBusy) ->
-        if (chats || terminalsBusy) {
-          if (hold == null) hold = keepAlive.acquire(if (chats) "chats working" else "terminal command")
-        } else {
-          hold?.close()
-          hold = null
+      var activeHold: AutoCloseable? = null
+      var standbyHold: AutoCloseable? = null
+      combine(
+        registry.busy,
+        registry.holding,
+        terminals.busy,
+        preferences.backgroundStandby,
+        preferences.setupComplete,
+      ) { chatsBusy, chatsHolding, terminalsBusy, standbyEnabled, setupDone ->
+        WorkPowerState(chatsBusy, chatsHolding, terminalsBusy, standbyEnabled && setupDone)
+      }.collect { state ->
+        val needsActive = state.chatsBusy || state.terminalsBusy
+        val needsStandby = state.standby || (state.chatsHolding && !state.chatsBusy)
+        if (needsActive && activeHold == null) {
+          activeHold = keepAlive.acquire(if (state.chatsBusy) "chats working" else "terminal command")
         }
-        // The service may still run for another holder; a no-op once it has stopped.
+        if (needsStandby && standbyHold == null) {
+          standbyHold = keepAlive.acquireStandby(
+            if (state.chatsHolding) "waiting on background tasks" else "background standby",
+          )
+        }
+        if (!needsActive) {
+          activeHold?.close()
+          activeHold = null
+        }
+        if (!needsStandby) {
+          standbyHold?.close()
+          standbyHold = null
+        }
         AgentService.refresh(application)
       }
     }
   }
+
+  private data class WorkPowerState(
+    val chatsBusy: Boolean,
+    val chatsHolding: Boolean,
+    val terminalsBusy: Boolean,
+    val standby: Boolean,
+  )
 
   /**
    * A chat keeps the local model reserved between the requests of its agent turn; when the turn ends, the model is
