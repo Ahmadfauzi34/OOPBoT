@@ -13,52 +13,97 @@ use std::time::{Duration, Instant};
 
 const GIT_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 const GIT_HELPER_TIMEOUT: Duration = Duration::from_secs(10);
-const READER_JOIN_GRACE: Duration = Duration::from_millis(200);
+const READER_KILL_JOIN_GRACE: Duration = Duration::from_millis(200);
+const READER_SUCCESS_JOIN_GRACE: Duration = Duration::from_secs(2);
 const MAX_HELPER_GIT_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_RAW_DIFF_BYTES: usize = 10 * 1024 * 1024;
 const MAX_SMALL_GIT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FILE_HUNK_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_PARSED_DIFF_BYTES: usize = 7 * 1024 * 1024;
 const MAX_CONCURRENT_HEAVY_GIT_REQUESTS: usize = 2;
-const MAX_CONCURRENT_FAST_GIT_REQUESTS: usize = 4;
+const MAX_CONCURRENT_COMMITS_GIT_REQUESTS: usize = 2;
+const MAX_CONCURRENT_DETECT_GIT_REQUESTS: usize = 2;
+const MAX_QUEUED_GIT_REQUESTS_PER_LANE: usize = 32;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum GitCmdOutput {
     Ok(Vec<u8>),
     TooLarge,
     TimedOut,
+    SpawnFailed,
     Failed,
+}
+
+#[cfg(unix)]
+fn send_pgid_signal(pid: u32, signal: &str) -> bool {
+    let target = format!("-{}", pid);
+    let ok = Command::new("kill")
+        .args(["-s", signal, "--", &target])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        return true;
+    }
+    Command::new("sh")
+        .args([
+            "-c",
+            &format!("kill -{} -{} 2>/dev/null", signal, pid),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn kill_child_tree(child: &mut std::process::Child) {
     #[cfg(unix)]
-    {
-        let pid = child.id();
-        if pid > 0 {
-            let target = format!("-{}", pid);
-            let ok = Command::new("kill")
-                .args(["-s", "KILL", "--", &target])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !ok {
-                let _ = Command::new("sh")
-                    .args(["-c", &format!("kill -KILL -{} 2>/dev/null || true", pid)])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-        }
+    let pid = child.id();
+    #[cfg(unix)]
+    if pid > 0 {
+        let _ = send_pgid_signal(pid, "KILL");
     }
     let _ = child.kill();
     let _ = child.wait();
+    // Verify the process group is gone and retry SIGKILL once if any member survived.
+    #[cfg(unix)]
+    if pid > 0 && send_pgid_signal(pid, "0") {
+        let _ = send_pgid_signal(pid, "KILL");
+    }
 }
 
-pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: usize) -> GitCmdOutput {
+fn join_reader_bounded(
+    reader_handle: thread::JoinHandle<Vec<u8>>,
+    reader_done: &(Mutex<bool>, Condvar),
+    grace: Duration,
+) -> Option<Vec<u8>> {
+    let (lock, cvar) = reader_done;
+    let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let (done, _) = cvar
+        .wait_timeout_while(guard, grace, |done| !*done)
+        .unwrap_or_else(|e| e.into_inner());
+    if *done {
+        Some(reader_handle.join().unwrap_or_default())
+    } else {
+        None
+    }
+}
+
+pub(super) fn run_git_bounded(cmd: Command, timeout: Duration, max_bytes: usize) -> GitCmdOutput {
+    run_git_bounded_with_grace(cmd, timeout, max_bytes, READER_SUCCESS_JOIN_GRACE)
+}
+
+pub(super) fn run_git_bounded_with_grace(
+    mut cmd: Command,
+    timeout: Duration,
+    max_bytes: usize,
+    success_join_grace: Duration,
+) -> GitCmdOutput {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -68,11 +113,11 @@ pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: us
         cmd.process_group(0);
     }
     let Ok(mut child) = cmd.spawn() else {
-        return GitCmdOutput::Failed;
+        return GitCmdOutput::SpawnFailed;
     };
     let Some(mut stdout) = child.stdout.take() else {
         kill_child_tree(&mut child);
-        return GitCmdOutput::Failed;
+        return GitCmdOutput::SpawnFailed;
     };
 
     let exceeded = Arc::new(AtomicBool::new(false));
@@ -126,23 +171,16 @@ pub(super) fn run_git_bounded(mut cmd: Command, timeout: Duration, max_bytes: us
     };
 
     if exceeded.load(Ordering::SeqCst) || timed_out {
-        // Wait briefly for the reader thread to observe EOF after the process group is killed,
-        // without blocking forever if a detached setsid() descendant still holds stdout.
-        let (lock, cvar) = &*reader_done;
-        let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-        let (done, _) = cvar
-            .wait_timeout_while(guard, READER_JOIN_GRACE, |done| !*done)
-            .unwrap_or_else(|e| e.into_inner());
-        if *done {
-            let _ = reader_handle.join();
-        }
+        let _ = join_reader_bounded(reader_handle, &reader_done, READER_KILL_JOIN_GRACE);
         return if exceeded.load(Ordering::SeqCst) {
             GitCmdOutput::TooLarge
         } else {
             GitCmdOutput::TimedOut
         };
     }
-    let bytes = reader_handle.join().unwrap_or_default();
+    let Some(bytes) = join_reader_bounded(reader_handle, &reader_done, success_join_grace) else {
+        return GitCmdOutput::TimedOut;
+    };
     if exceeded.load(Ordering::SeqCst) {
         return GitCmdOutput::TooLarge;
     }
@@ -330,7 +368,10 @@ pub(super) fn parse_git_diff_bounded(diff_text: &str, max_total_bytes: usize) ->
         true
     };
 
-    for line in diff_text.lines() {
+    for raw_line in diff_text.split_inclusive('\n') {
+        let raw_line_bytes = raw_line.len();
+        let without_lf = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let line = without_lf.strip_suffix('\r').unwrap_or(without_lf);
         if let Some(rest) = line.strip_prefix("diff --git ") {
             if in_hunk {
                 flush_hunk(
@@ -457,7 +498,7 @@ pub(super) fn parse_git_diff_bounded(diff_text: &str, max_total_bytes: usize) ->
         }
 
         if in_hunk {
-            hunk_bytes_total = hunk_bytes_total.saturating_add(line.len() + 1);
+            hunk_bytes_total = hunk_bytes_total.saturating_add(raw_line_bytes);
             if line.starts_with('+') {
                 current_additions += 1;
             } else if line.starts_with('-') {
@@ -682,12 +723,26 @@ pub(super) fn handle_git_changes(
             .env("GIT_OBJECT_DIRECTORY", &temp_objects)
             .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
         let add_res = run_git_bounded(add_cmd, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES);
-        if matches!(add_res, GitCmdOutput::TimedOut) {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-            return json!({
-                "code": "failed",
-                "error": "git status/add timed out after 30s"
-            });
+        match add_res {
+            GitCmdOutput::TimedOut => {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                return json!({
+                    "code": "failed",
+                    "error": "git status/add timed out after 30s"
+                });
+            }
+            GitCmdOutput::SpawnFailed => {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                return json!({
+                    "code": "failed",
+                    "error": "failed to spawn git"
+                });
+            }
+            GitCmdOutput::TooLarge => {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+                return make_too_large();
+            }
+            GitCmdOutput::Ok(_) | GitCmdOutput::Failed => {}
         }
 
         let from = git_head_commit(root)
@@ -724,6 +779,12 @@ pub(super) fn handle_git_changes(
             return json!({
                 "code": "failed",
                 "error": "git diff timed out after 30s"
+            });
+        }
+        GitCmdOutput::SpawnFailed => {
+            return json!({
+                "code": "failed",
+                "error": "failed to spawn git"
             });
         }
         GitCmdOutput::Failed => Vec::new(),
@@ -802,7 +863,19 @@ pub(super) fn handle_git_commits(root: &str, known: Option<&str>) -> Value {
                 "error": "git log timed out after 30s"
             });
         }
-        GitCmdOutput::TooLarge | GitCmdOutput::Failed => Vec::new(),
+        GitCmdOutput::TooLarge => {
+            return json!({
+                "code": "failed",
+                "error": "git log output exceeded 4 MiB limit"
+            });
+        }
+        GitCmdOutput::SpawnFailed => {
+            return json!({
+                "code": "failed",
+                "error": "failed to spawn git"
+            });
+        }
+        GitCmdOutput::Failed => Vec::new(),
     };
 
     let mut count_cmd = Command::new("git");
@@ -906,6 +979,12 @@ pub(super) fn handle_git_commit_diff(root: &str, sha: &str, ignore_whitespace: b
                 "error": "git diff timed out after 30s"
             });
         }
+        GitCmdOutput::SpawnFailed => {
+            return json!({
+                "code": "failed",
+                "error": "failed to spawn git"
+            });
+        }
         GitCmdOutput::Failed => Vec::new(),
     };
     let diff_out = String::from_utf8_lossy(&diff_bytes);
@@ -984,11 +1063,17 @@ struct GitLaneState {
 
 struct GitLane {
     state: Arc<(Mutex<GitLaneState>, Condvar)>,
+    max_queued: usize,
     workers: Vec<thread::JoinHandle<()>>,
 }
 
 impl GitLane {
-    fn spawn<W, F>(worker_count: usize, writer: Arc<Mutex<W>>, dispatch: Arc<F>) -> Self
+    fn spawn<W, F>(
+        worker_count: usize,
+        max_queued: usize,
+        writer: Arc<Mutex<W>>,
+        dispatch: Arc<F>,
+    ) -> Self
     where
         W: Write + Send + 'static,
         F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
@@ -1021,22 +1106,26 @@ impl GitLane {
                     dispatch_clone(&req)
                 }));
                 if let Ok(Some(reply)) = result {
-                    if let Ok(serialized) = serde_json::to_string(&reply) {
-                        let mut w = writer_clone.lock().unwrap_or_else(|e| e.into_inner());
-                        let _ = writeln!(w, "{}", serialized);
-                        let _ = w.flush();
-                    }
+                    write_jsonl_reply(&writer_clone, &reply);
                 }
             }));
         }
-        Self { state, workers }
+        Self {
+            state,
+            max_queued,
+            workers,
+        }
     }
 
-    fn push(&self, req: Value) {
+    fn try_push(&self, req: Value) -> bool {
         let (lock, cvar) = &*self.state;
         let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.queue.len() >= self.max_queued {
+            return false;
+        }
         guard.queue.push_back(req);
         cvar.notify_one();
+        true
     }
 
     fn close_and_join(self) {
@@ -1052,21 +1141,78 @@ impl GitLane {
     }
 }
 
-fn is_heavy_git_request(req: &Value) -> bool {
-    matches!(
-        req["type"].as_str(),
-        Some("oopbot_git_changes" | "oopbot_git_commit_diff")
-    )
+fn write_jsonl_reply<W: Write>(writer: &Arc<Mutex<W>>, reply: &Value) {
+    if let Ok(serialized) = serde_json::to_string(reply) {
+        let mut w = writer.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = writeln!(w, "{}", serialized);
+        let _ = w.flush();
+    }
 }
 
-/// Inti dispatcher konkuren mode `git` dengan jalur terpisah:
-/// - **heavy lane** (`oopbot_git_changes`, `oopbot_git_commit_diff`): antrean khusus max 2 worker.
-/// - **fast lane** (`oopbot_git_detect`, `oopbot_git_commits`): antrean khusus max 4 worker.
+fn queue_full_reply(req: &Value) -> Option<Value> {
+    let id = req["id"].as_i64().unwrap_or(0);
+    let reply_type = match req["type"].as_str() {
+        Some("oopbot_git_detect") => {
+            return Some(json!({
+                "type": "oopbot_git_detected",
+                "id": id,
+                "repo": false,
+                "git": false,
+                "code": "failed",
+                "error": "git host queue full"
+            }));
+        }
+        Some("oopbot_git_changes") => "oopbot_git_changes_result",
+        Some("oopbot_git_commits") => "oopbot_git_commits_result",
+        Some("oopbot_git_commit_diff") => "oopbot_git_commit_diff_result",
+        _ => return None,
+    };
+    Some(json!({
+        "type": reply_type,
+        "id": id,
+        "code": "failed",
+        "error": "git host queue full"
+    }))
+}
+
+enum GitLaneKind {
+    Detect,
+    Commits,
+    Heavy,
+}
+
+fn classify_git_request(req: &Value) -> GitLaneKind {
+    match req["type"].as_str() {
+        Some("oopbot_git_changes" | "oopbot_git_commit_diff") => GitLaneKind::Heavy,
+        Some("oopbot_git_commits") => GitLaneKind::Commits,
+        _ => GitLaneKind::Detect,
+    }
+}
+
+/// Inti dispatcher konkuren mode `git` dengan 3 jalur terpisah berkapasitas terbatas:
+/// - **detect lane** (`oopbot_git_detect`): 2 worker khusus agar deteksi repo tidak pernah terblokir diff maupun commits.
+/// - **commits lane** (`oopbot_git_commits`): 2 worker khusus agar daftar commit tidak pernah terblokir diff.
+/// - **heavy lane** (`oopbot_git_changes`, `oopbot_git_commit_diff`): 2 worker khusus.
 ///
-/// Loop pembaca tidak pernah terblokir saat heavy lane jenuh, sehingga request cepat tetap terjawab segera.
+/// Tiap jalur membatasi antrean (`max_queued_per_lane`); bila penuh, host langsung membalas `code: "failed"`
+/// tanpa memblokir loop pembaca TCP atau membiarkan memori antrean tumbuh tanpa batas.
 pub(super) fn run_git_mode_concurrent<R, W, F>(
+    reader: R,
+    writer: W,
+    dispatch: F,
+) -> Result<(), BoxError>
+where
+    R: BufRead,
+    W: Write + Send + 'static,
+    F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
+{
+    run_git_mode_concurrent_with_cap(reader, writer, MAX_QUEUED_GIT_REQUESTS_PER_LANE, dispatch)
+}
+
+pub(super) fn run_git_mode_concurrent_with_cap<R, W, F>(
     mut reader: R,
     mut writer: W,
+    max_queued_per_lane: usize,
     dispatch: F,
 ) -> Result<(), BoxError>
 where
@@ -1082,12 +1228,20 @@ where
     let dispatch = Arc::new(dispatch);
     let heavy_lane = GitLane::spawn(
         MAX_CONCURRENT_HEAVY_GIT_REQUESTS,
+        max_queued_per_lane,
         Arc::clone(&shared_writer),
         Arc::clone(&dispatch),
     );
-    let fast_lane = GitLane::spawn(
-        MAX_CONCURRENT_FAST_GIT_REQUESTS,
-        shared_writer,
+    let commits_lane = GitLane::spawn(
+        MAX_CONCURRENT_COMMITS_GIT_REQUESTS,
+        max_queued_per_lane,
+        Arc::clone(&shared_writer),
+        Arc::clone(&dispatch),
+    );
+    let detect_lane = GitLane::spawn(
+        MAX_CONCURRENT_DETECT_GIT_REQUESTS,
+        max_queued_per_lane,
+        Arc::clone(&shared_writer),
         dispatch,
     );
 
@@ -1107,20 +1261,25 @@ where
         };
         line.clear();
 
-        if is_heavy_git_request(&req) {
-            heavy_lane.push(req);
-        } else {
-            fast_lane.push(req);
+        let target = match classify_git_request(&req) {
+            GitLaneKind::Detect => &detect_lane,
+            GitLaneKind::Commits => &commits_lane,
+            GitLaneKind::Heavy => &heavy_lane,
+        };
+        if !target.try_push(req.clone()) {
+            if let Some(reply) = queue_full_reply(&req) {
+                write_jsonl_reply(&shared_writer, &reply);
+            }
         }
     }
 
-    fast_lane.close_and_join();
+    detect_lane.close_and_join();
+    commits_lane.close_and_join();
     heavy_lane.close_and_join();
     Ok(())
 }
 
-/// Menangani mode `git`: backend tab Git Changes di UI Android dengan jalur fast/heavy terpisah
-/// agar `oopbot_git_commits` / `oopbot_git_detect` tidak pernah terblokir oleh `oopbot_git_changes`.
+/// Menangani mode `git`: backend tab Git Changes di UI Android dengan jalur detect/commits/heavy terpisah.
 pub(super) async fn handle_git_mode(
     reader: BufReader<TcpStream>,
     writer: BufWriter<TcpStream>,
