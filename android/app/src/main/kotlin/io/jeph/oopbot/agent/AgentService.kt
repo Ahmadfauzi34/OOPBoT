@@ -19,8 +19,11 @@ import io.jeph.oopbot.R
 import io.jeph.oopbot.appGraph
 
 /**
- * User-started on-device coding agent sessions running in Termux; keeps OOPBoT's connection to Pi
- * alive and offers Stop. Foreground service plus partial wake lock, held only while active.
+ * Keeps OOPBoT alive in two foreground power tiers:
+ * - **Active (`ACTION_BUSY`)**: foreground service + short renewed partial wake lock while a chat turn, terminal
+ *   command, sign-in, install, or local-model turn is actively executing.
+ * - **Standby (`ACTION_STANDBY`)**: foreground service WITHOUT a wake lock so OOPBoT stays ready in the background
+ *   for background-task completions, schedules, or external wakeups while allowing the CPU to sleep normally.
  */
 class AgentService : Service() {
   private val handler = Handler(Looper.getMainLooper())
@@ -43,38 +46,121 @@ class AgentService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    when (intent?.action) {
-      ACTION_BUSY -> {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-          startForeground(NOTIFICATION_ID, notification(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+    if (intent == null) return handleStickyRestart(startId)
+    return when (intent.action) {
+      ACTION_BUSY, ACTION_STANDBY -> handleForegroundIntent(startId)
+
+      ACTION_STOP -> handleStopIntent(startId)
+
+      else -> {
+        if (appGraph.keepAlive.mode != KeepAliveMode.Off && foreground) {
+          reconcileMode(startId)
         } else {
-          startForeground(NOTIFICATION_ID, notification(this))
+          release(startId)
+          START_NOT_STICKY
         }
-        foreground = true
-        handler.removeCallbacks(renew)
-        renew.run()
       }
+    }
+  }
 
-      // Chats settle after the abort; KeepAlive then releases the service.
-      ACTION_STOP -> appGraph.registry.abortAll()
+  private fun handleStickyRestart(startId: Int): Int {
+    if (!standbyAllowed()) {
+      release(startId)
+      return START_NOT_STICKY
+    }
+    appGraph.ensureStandbyHoldForRestart()
+    if (!enterForeground()) return failForegroundStart(startId)
+    return reconcileMode(startId)
+  }
 
-      else -> release()
+  private fun handleForegroundIntent(startId: Int): Int {
+    if (!enterForeground()) return failForegroundStart(startId)
+    return reconcileMode(startId)
+  }
+
+  private fun handleStopIntent(startId: Int): Int {
+    appGraph.registry.abortAll()
+    if (appGraph.keepAlive.mode == KeepAliveMode.Off) {
+      release(startId)
+      return START_NOT_STICKY
+    }
+    if (!foreground) {
+      if (!enterForeground()) return failForegroundStart(startId)
+      return reconcileMode(startId)
+    }
+    return stickyMode()
+  }
+
+  private fun failForegroundStart(startId: Int): Int {
+    releaseWakeLock()
+    if (stopSelfResult(startId)) {
+      appGraph.keepAlive.noteStopped()
     }
     return START_NOT_STICKY
   }
 
-  private fun release() {
+  private fun reconcileMode(startId: Int): Int = when (appGraph.keepAlive.mode) {
+    KeepAliveMode.Active -> {
+      appGraph.keepAlive.noteRunning(KeepAliveMode.Active)
+      handler.removeCallbacks(renew)
+      renew.run()
+      stickyMode()
+    }
+
+    KeepAliveMode.Standby -> {
+      appGraph.keepAlive.noteRunning(KeepAliveMode.Standby)
+      releaseWakeLock()
+      stickyMode()
+    }
+
+    KeepAliveMode.Off -> {
+      release(startId)
+      START_NOT_STICKY
+    }
+  }
+
+  private fun enterForeground(): Boolean = try {
+    val notification = notification(this)
+    val testHook = startForegroundForTest
+    if (testHook != null) {
+      testHook(this, NOTIFICATION_ID, notification)
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+    } else {
+      startForeground(NOTIFICATION_ID, notification)
+    }
+    foreground = true
+    true
+  } catch (error: IllegalStateException) {
+    Log.w(TAG, "AgentService.startForeground refused", error)
     foreground = false
+    false
+  }
+
+  private fun standbyAllowed(): Boolean {
+    val prefs = appGraph.preferences
+    return prefs.setupComplete.value && prefs.backgroundStandby.value
+  }
+
+  private fun stickyMode(): Int = if (standbyAllowed()) START_STICKY else START_NOT_STICKY
+
+  private fun releaseWakeLock() {
     handler.removeCallbacks(renew)
     if (wakeLock.isHeld) wakeLock.release()
+  }
+
+  private fun release(startId: Int) {
+    if (!stopSelfResult(startId)) return
+    foreground = false
+    releaseWakeLock()
     stopForeground(STOP_FOREGROUND_REMOVE)
-    stopSelf()
+    appGraph.keepAlive.noteStopped()
   }
 
   override fun onDestroy() {
     foreground = false
-    handler.removeCallbacks(renew)
-    if (wakeLock.isHeld) wakeLock.release()
+    releaseWakeLock()
+    runCatching { appGraph.keepAlive.noteStopped() }
     super.onDestroy()
   }
 
@@ -82,74 +168,99 @@ class AgentService : Service() {
 
   companion object {
     const val ACTION_BUSY = "io.jeph.oopbot.action.BUSY"
+    const val ACTION_STANDBY = "io.jeph.oopbot.action.STANDBY"
     const val ACTION_IDLE = "io.jeph.oopbot.action.IDLE"
     const val ACTION_STOP = "io.jeph.oopbot.action.STOP"
     private const val TAG = "OOPBoT"
     private const val CHANNEL = "agent"
     private const val NOTIFICATION_ID = 1
     private const val WAKE_TAG = "OOPBoT:Agent"
-    private const val WAKE_LEASE_MILLIS = 20 * 60_000L
-    private const val WAKE_RENEW_MILLIS = 10 * 60_000L
+    private const val WAKE_LEASE_MILLIS = 10 * 60_000L
+    private const val WAKE_RENEW_MILLIS = 5 * 60_000L
 
     /** Whether the service runs in the foreground, showing its notification. Main-thread confined. */
-    private var foreground = false
+    @Volatile
+    internal var foreground = false
+      private set
+
+    /** Test-only override for `startForeground` so unit tests can simulate `ForegroundServiceStartNotAllowedException`. */
+    internal var startForegroundForTest: ((Service, Int, Notification) -> Unit)? = null
 
     private fun intent(context: Context, action: String) = Intent(context, AgentService::class.java).setAction(action)
 
     /**
-     * Says what keeps OOPBoT working: chats, with Stop; chats' background tasks alone, with Stop, which stops them too;
-     * or else, while only terminals run commands, the terminal notice without Stop, which would not stop them. Sign-in
-     * and Pi installs show the chats' notice.
+     * Says what keeps OOPBoT running: active chats (with Stop), background tasks awaiting results (with Stop, low
+     * power), active terminal commands, low-power Standby mode, or another Active holder (sign-in/install).
      */
     private fun notification(context: Context): Notification {
       val graph = context.appGraph
       val chatsWorking = graph.registry.busy.value
-      val backgroundOnly = !chatsWorking && graph.registry.holding.value
-      val terminalsOnly = !chatsWorking && !backgroundOnly && graph.terminals.busy.value
+      val backgroundOnly = !chatsWorking && graph.registry.waitingOnBackground.value
+      val graceHolding = !chatsWorking && !backgroundOnly && graph.registry.holding.value
+      val terminalsOnly = !chatsWorking && !backgroundOnly && !graceHolding && graph.terminals.busy.value
+      val standbyOnly = !chatsWorking && !backgroundOnly && !graceHolding && !terminalsOnly &&
+        graph.keepAlive.mode == KeepAliveMode.Standby
       val open =
         PendingIntent.getActivity(context, 20, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
       val builder = Notification.Builder(context, CHANNEL)
         .setSmallIcon(R.drawable.ic_launcher_foreground)
         .setContentIntent(open)
         .setOngoing(true)
-      if (terminalsOnly) {
-        return builder
-          .setContentTitle(context.getString(R.string.agent_notification_terminal_title))
-          .setContentText(context.getString(R.string.agent_notification_terminal_text))
-          .build()
+      return when {
+        terminalsOnly ->
+          builder
+            .setContentTitle(context.getString(R.string.agent_notification_terminal_title))
+            .setContentText(context.getString(R.string.agent_notification_terminal_text))
+            .build()
+
+        standbyOnly ->
+          builder
+            .setContentTitle(context.getString(R.string.agent_notification_standby_title))
+            .setContentText(context.getString(R.string.agent_notification_standby_text))
+            .build()
+
+        else -> {
+          val stop = PendingIntent.getService(context, 21, intent(context, ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
+          val title =
+            if (backgroundOnly) R.string.agent_notification_background_title else R.string.agent_notification_title
+          val text =
+            if (backgroundOnly) R.string.agent_notification_background_text else R.string.agent_notification_text
+          builder
+            .setContentTitle(context.getString(title))
+            .setContentText(context.getString(text))
+            .addAction(
+              Notification.Action.Builder(null, context.getString(R.string.agent_notification_stop), stop).build(),
+            )
+            .build()
+        }
       }
-      val stop = PendingIntent.getService(context, 21, intent(context, ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
-      val title =
-        if (backgroundOnly) R.string.agent_notification_background_title else R.string.agent_notification_title
-      val text = if (backgroundOnly) R.string.agent_notification_background_text else R.string.agent_notification_text
-      return builder
-        .setContentTitle(context.getString(title))
-        .setContentText(context.getString(text))
-        .addAction(Notification.Action.Builder(null, context.getString(R.string.agent_notification_stop), stop).build())
-        .build()
     }
 
-    /** Re-posts the notification after what keeps OOPBoT working changed; nothing while the service is stopped. */
+    /** Re-posts the notification after what keeps OOPBoT running changed; nothing while stopped or transitioning Off. */
     fun refresh(context: Context) {
-      if (!foreground) return
+      if (!foreground || context.appGraph.keepAlive.mode == KeepAliveMode.Off) return
       context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(context))
     }
 
     /**
-     * Active → foreground with wake lock; inactive → release and stop. Safe from any thread.
-     * Returns false when Android refused the start (`ForegroundServiceStartNotAllowedException`
-     * on API 31+, or a background start limit); work continues without the service, but OOPBoT
-     * may be killed in the background.
+     * Applies [mode] to [AgentService]:
+     * - [KeepAliveMode.Active] → foreground with renewed partial wake lock
+     * - [KeepAliveMode.Standby] → foreground with wake lock released
+     * - [KeepAliveMode.Off] → stop foreground and stop service
+     *
+     * Always uses `startForegroundService` for Active/Standby so rapid `Off -> Active/Standby` sequences cannot race
+     * with a queued `ACTION_IDLE`; [onStartCommand] always calls [enterForeground] before reconciling.
+     * Safe from any thread; returns false when Android refuses a background service start.
      */
-    fun update(context: Context, active: Boolean): Boolean = try {
-      if (active) {
-        context.startForegroundService(intent(context, ACTION_BUSY))
-      } else {
-        context.startService(intent(context, ACTION_IDLE))
+    internal fun update(context: Context, mode: KeepAliveMode): Boolean = try {
+      when (mode) {
+        KeepAliveMode.Active -> context.startForegroundService(intent(context, ACTION_BUSY))
+        KeepAliveMode.Standby -> context.startForegroundService(intent(context, ACTION_STANDBY))
+        KeepAliveMode.Off -> context.startService(intent(context, ACTION_IDLE))
       }
       true
     } catch (error: IllegalStateException) {
-      Log.w(TAG, "AgentService.update($active) refused", error)
+      Log.w(TAG, "AgentService.update($mode) refused", error)
       false
     }
   }

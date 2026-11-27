@@ -37,6 +37,12 @@ internal interface ManagedProcess {
    */
   val holdsPi: StateFlow<Boolean>
 
+  /**
+   * Whether Pi has active background tasks (with the same post-release grace as [holdsPi]), so callers can distinguish
+   * waiting on background tasks from the short grace window after a normal chat turn.
+   */
+  val waitingOnBackground: StateFlow<Boolean>
+
   suspend fun abort()
 
   /** Stops Pi's background tasks, if it runs any. */
@@ -112,6 +118,7 @@ internal class AgentRegistry<P : ManagedProcess>(
   private val shownState = MutableStateFlow<Map<Pane, P>>(emptyMap())
   private val busyState = MutableStateFlow(false)
   private val holdingState = MutableStateFlow(false)
+  private val waitingOnBackgroundState = MutableStateFlow(false)
   private var tick = 0L
 
   /** Parked chats by session file, least recently parked first. */
@@ -131,6 +138,9 @@ internal class AgentRegistry<P : ManagedProcess>(
 
   /** True while any open process [holds its Pi][ManagedProcess.holdsPi]. */
   val holding: StateFlow<Boolean> = holdingState.asStateFlow()
+
+  /** True while any open process is waiting on background tasks (including post-release grace). */
+  val waitingOnBackground: StateFlow<Boolean> = waitingOnBackgroundState.asStateFlow()
 
   init {
     scope.launch { maxRunning.collect { parkPastLimit() } }
@@ -298,6 +308,7 @@ internal class AgentRegistry<P : ManagedProcess>(
     if (paneOf(process) != null) shownState.value = shownState.value.filterValues { it !== process }
     updateBusy()
     updateHolding()
+    updateWaitingOnBackground()
     entry.watcher?.cancel()
     return true
   }
@@ -306,9 +317,10 @@ internal class AgentRegistry<P : ManagedProcess>(
     // One collector, so the end of a chat's work is reported before a lowered limit parks it, which stops watching it.
     launch {
       var wasHolding = false
-      combine(process.busy, process.holdsPi, ::Pair).collect { (_, holding) ->
+      combine(process.busy, process.holdsPi, process.waitingOnBackground, ::Triple).collect { (_, holding, _) ->
         updateBusy()
         updateHolding()
+        updateWaitingOnBackground()
         if (wasHolding && !holding) {
           onWorkEnded(process)
           // A limit lowered while chats held their Pi applies once they let go.
@@ -346,6 +358,10 @@ internal class AgentRegistry<P : ManagedProcess>(
 
   private fun updateHolding() {
     holdingState.value = entries.keys.any { it.holdsPi.value }
+  }
+
+  private fun updateWaitingOnBackground() {
+    waitingOnBackgroundState.value = entries.keys.any { it.waitingOnBackground.value }
   }
 
   companion object {

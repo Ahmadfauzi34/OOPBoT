@@ -2,6 +2,7 @@ package io.jeph.oopbot.ui.settings
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -17,12 +18,13 @@ import io.jeph.oopbot.appGraph
 import io.jeph.oopbot.ui.components.LucideIcon
 import io.jeph.oopbot.ui.theme.oopbotColors
 
-/** How many chats keep their agent running at once, and how long an idle one keeps it. */
+/** How many chats keep their agent running at once, how long idle ones keep it, and low-power background standby. */
 @Composable
 internal fun RunningAgentsScreen(onBack: () -> Unit) {
   val preferences = LocalContext.current.appGraph.preferences
   val maxRunning by preferences.maxRunningChats.collectAsStateWithLifecycle()
   val idleStop by preferences.idleStop.collectAsStateWithLifecycle()
+  val backgroundStandby by preferences.backgroundStandby.collectAsStateWithLifecycle()
   SettingsPage(title = stringResource(R.string.settings_running_agents), onBack = onBack) {
     SettingsSection(title = null) {
       SettingsRow(title = stringResource(R.string.settings_running_chats)) {
@@ -58,6 +60,20 @@ internal fun RunningAgentsScreen(onBack: () -> Unit) {
       }
     }
     SettingsCaption(text = stringResource(R.string.settings_idle_stop_caption))
+    SettingsSection(title = null) {
+      SettingsRow(
+        title = stringResource(R.string.settings_background_standby),
+        subtitle = stringResource(R.string.settings_background_standby_summary),
+        modifier = Modifier.toggleable(
+          value = backgroundStandby,
+          role = Role.Switch,
+          onValueChange = preferences::setBackgroundStandby,
+        ),
+      ) {
+        SettingsSwitch(checked = backgroundStandby)
+      }
+    }
+    SettingsCaption(text = stringResource(R.string.settings_background_standby_caption))
   }
 }
 

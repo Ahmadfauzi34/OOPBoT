@@ -128,6 +128,9 @@
     <string name="settings_idle_stop_30_minutes">30 minutes</string>
     <string name="settings_idle_stop_never">Never</string>
     <string name="settings_idle_stop_caption">A chat that isn\'t working, running background tasks, or on screen stops its agent after this long to free memory. Its history stays, and the agent starts again when you open it. With Never, a chat stops only when another needs its place.</string>
+    <string name="settings_background_standby">Background standby</string>
+    <string name="settings_background_standby_summary">Keep OOPBoT ready in the background without holding a CPU wake lock</string>
+    <string name="settings_background_standby_caption">Keeps OOPBoT alive at low power so scheduled jobs and background events can wake your Termux agents without running dummy background tasks. A CPU wake lock is held only while an agent is actively working.</string>
 
     <string name="settings_auto_archive">Auto-archive chats</string>
     <string name="settings_auto_archive_days">Days without activity</string>
