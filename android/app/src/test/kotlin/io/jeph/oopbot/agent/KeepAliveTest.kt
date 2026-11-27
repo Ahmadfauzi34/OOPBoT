@@ -272,4 +272,33 @@ class KeepAliveTest {
     startGate.countDown()
     assertTrue(doneGate.await(10, TimeUnit.SECONDS))
   }
+
+  @Test
+  fun `noteStopped during in-flight updater is not overwritten when updater returns true`() {
+    val calls = mutableListOf<KeepAliveMode>()
+    lateinit var keepAlive: KeepAlive
+    var simulateStopDuringFirstUpdate = true
+    keepAlive = KeepAlive { mode, _ ->
+      calls += mode
+      if (simulateStopDuringFirstUpdate) {
+        simulateStopDuringFirstUpdate = false
+        // Simulates AgentService failing startForeground() and calling noteStopped() before updater() returns.
+        keepAlive.noteStopped()
+      }
+      true
+    }
+
+    val active = keepAlive.acquire("chats working")
+    assertEquals(KeepAliveMode.Active, keepAlive.mode)
+    assertEquals(KeepAliveMode.Off, keepAlive.appliedMode)
+    assertEquals(listOf(KeepAliveMode.Active), calls)
+
+    // Subsequent foreground sync sees appliedMode == Off and retries Active cleanly.
+    keepAlive.sync("foreground")
+    assertEquals(KeepAliveMode.Active, keepAlive.appliedMode)
+    assertEquals(listOf(KeepAliveMode.Active, KeepAliveMode.Active), calls)
+
+    active.close()
+    assertEquals(KeepAliveMode.Off, keepAlive.appliedMode)
+  }
 }

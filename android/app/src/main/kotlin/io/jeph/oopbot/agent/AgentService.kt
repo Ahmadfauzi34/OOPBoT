@@ -53,8 +53,12 @@ class AgentService : Service() {
       ACTION_STOP -> handleStopIntent(startId)
 
       else -> {
-        release(startId)
-        START_NOT_STICKY
+        if (appGraph.keepAlive.mode != KeepAliveMode.Off && foreground) {
+          reconcileMode(startId)
+        } else {
+          release(startId)
+          START_NOT_STICKY
+        }
       }
     }
   }
@@ -146,12 +150,11 @@ class AgentService : Service() {
   }
 
   private fun release(startId: Int) {
+    if (!stopSelfResult(startId)) return
     foreground = false
     releaseWakeLock()
     stopForeground(STOP_FOREGROUND_REMOVE)
-    if (stopSelfResult(startId)) {
-      appGraph.keepAlive.noteStopped()
-    }
+    appGraph.keepAlive.noteStopped()
   }
 
   override fun onDestroy() {

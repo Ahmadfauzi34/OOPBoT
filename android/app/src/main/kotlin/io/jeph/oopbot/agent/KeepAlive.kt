@@ -35,6 +35,7 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
   private var pendingSync = false
   private var pendingForce = false
   private var pendingReason = ""
+  private var appliedGeneration = 0L
 
   /** Desired mode derived from current holds; updated synchronously before service IPC completes. */
   @Volatile
@@ -72,7 +73,10 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
   /** Notes that [AgentService] entered [runningMode] (for example, on a `START_STICKY` null-intent restart). */
   internal fun noteRunning(runningMode: KeepAliveMode) {
     synchronized(lock) {
-      if (mode == runningMode) appliedMode = runningMode
+      if (mode == runningMode) {
+        appliedMode = runningMode
+        appliedGeneration += 1
+      }
     }
   }
 
@@ -80,6 +84,7 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
   internal fun noteStopped() {
     synchronized(lock) {
       appliedMode = KeepAliveMode.Off
+      appliedGeneration += 1
     }
   }
 
@@ -136,13 +141,15 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
     try {
       while (true) {
         val step = nextStepLocked() ?: break
-        val ok = updater(step.first, step.second)
+        val ok = updater(step.mode, step.reason)
         synchronized(lock) {
           if (ok) {
-            appliedMode = step.first
-            if (mode != appliedMode) pendingSync = true
+            if (appliedGeneration == step.generation) {
+              appliedMode = step.mode
+              if (mode != appliedMode) pendingSync = true
+            }
           } else {
-            Log.w(TAG, "Keep-alive (${step.second}, mode=${step.first}) not applied; Android may stop OOPBoT")
+            Log.w(TAG, "Keep-alive (${step.reason}, mode=${step.mode}) not applied; Android may stop OOPBoT")
           }
         }
       }
@@ -154,7 +161,7 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
     }
   }
 
-  private fun nextStepLocked(): Pair<KeepAliveMode, String>? = synchronized(lock) {
+  private fun nextStepLocked(): DrainStep? = synchronized(lock) {
     if (!pendingSync) {
       draining = false
       return null
@@ -168,8 +175,10 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
       draining = false
       return null
     }
-    target to reason
+    DrainStep(target, reason, appliedGeneration)
   }
+
+  private data class DrainStep(val mode: KeepAliveMode, val reason: String, val generation: Long)
 
   private companion object {
     const val TAG = "OOPBoT"

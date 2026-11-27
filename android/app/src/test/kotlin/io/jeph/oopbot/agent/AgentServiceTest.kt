@@ -33,6 +33,10 @@ import org.robolectric.shadows.ShadowPowerManager
 )
 class AgentServiceTest {
   private lateinit var app: OopbotApplication
+  private val createdServices = mutableListOf<AgentService>()
+
+  private fun createService(): AgentService =
+    Robolectric.buildService(AgentService::class.java).create().get().also { createdServices += it }
 
   @Before
   fun setUp() {
@@ -47,6 +51,10 @@ class AgentServiceTest {
   @After
   fun tearDown() {
     AgentService.startForegroundForTest = null
+    for (service in createdServices) {
+      service.onDestroy()
+    }
+    createdServices.clear()
     app.graph.preferences.setBackgroundStandby(false)
     app.graph.preferences.setSetupComplete(false)
     ShadowLooper.idleMainLooper()
@@ -64,7 +72,7 @@ class AgentServiceTest {
       app.graph.preferences.setSetupComplete(setupComplete)
       app.graph.preferences.setBackgroundStandby(standbyEnabled)
       ShadowLooper.idleMainLooper()
-      val service = Robolectric.buildService(AgentService::class.java).create().get()
+      val service = createService()
       val shadowService = Shadows.shadowOf(service)
       val wakeLock = ShadowPowerManager.getLatestWakeLock()
 
@@ -102,7 +110,7 @@ class AgentServiceTest {
       throw IllegalStateException("ForegroundServiceStartNotAllowedException")
     }
 
-    val service = Robolectric.buildService(AgentService::class.java).create().get()
+    val service = createService()
     val shadowService = Shadows.shadowOf(service)
     val wakeLock = ShadowPowerManager.getLatestWakeLock()
 
@@ -114,7 +122,6 @@ class AgentServiceTest {
     assertTrue(shadowService.isStoppedBySelf)
     assertEquals(KeepAliveMode.Standby, app.graph.keepAlive.mode)
     assertEquals(KeepAliveMode.Off, app.graph.keepAlive.appliedMode)
-    service.onDestroy()
   }
 
   @Test
@@ -123,7 +130,7 @@ class AgentServiceTest {
     app.graph.preferences.setBackgroundStandby(false)
     ShadowLooper.idleMainLooper()
 
-    val service = Robolectric.buildService(AgentService::class.java).create().get()
+    val service = createService()
     val wakeLock = ShadowPowerManager.getLatestWakeLock()
 
     val activeHold = app.graph.keepAlive.acquire("chats working")
@@ -153,7 +160,6 @@ class AgentServiceTest {
     assertEquals(Service.START_STICKY, stickyResult)
 
     standbyHold.close()
-    service.onDestroy()
   }
 
   @Test
@@ -161,7 +167,7 @@ class AgentServiceTest {
     val startForegroundCalls = AtomicInteger(0)
     AgentService.startForegroundForTest = { _, _, _ -> startForegroundCalls.incrementAndGet() }
 
-    val service = Robolectric.buildService(AgentService::class.java).create().get()
+    val service = createService()
     val shadowService = Shadows.shadowOf(service)
     val wakeLock = ShadowPowerManager.getLatestWakeLock()
 
@@ -175,7 +181,6 @@ class AgentServiceTest {
     assertFalse(AgentService.foreground)
     assertFalse(wakeLock.isHeld)
     assertTrue(shadowService.isStoppedBySelf)
-    service.onDestroy()
   }
 
   @Test
@@ -183,37 +188,68 @@ class AgentServiceTest {
     val busyIntent = Intent(app, AgentService::class.java).setAction(AgentService.ACTION_BUSY)
     val idleIntent = Intent(app, AgentService::class.java).setAction(AgentService.ACTION_IDLE)
     val controller = Robolectric.buildService(AgentService::class.java, busyIntent).create()
-    val service = controller.get()
+    val service = controller.get().also { createdServices += it }
     val shadowService = Shadow.extract<StartIdShadowService>(service)
+    val wakeLock = ShadowPowerManager.getLatestWakeLock()
     val activeHold = app.graph.keepAlive.acquire("chats working")
 
     shadowService.latestStartId = 1
     controller.startCommand(0, 1)
     assertTrue(AgentService.foreground)
+    assertTrue(wakeLock.isHeld)
     assertFalse(shadowService.isStoppedBySelf)
 
-    // Record a newer startId (2) before delivering stale ACTION_IDLE with startId 1.
+    // Record a newer startId (2), then drop desired mode to Off and deliver stale ACTION_IDLE (startId 1).
     shadowService.latestStartId = 2
     controller.startCommand(0, 2)
+    activeHold.close()
     val staleIdleResult = service.onStartCommand(idleIntent, 0, 1)
     assertEquals(Service.START_NOT_STICKY, staleIdleResult)
     assertEquals(1, shadowService.lastStopSelfResultId)
     assertFalse(shadowService.isStoppedBySelf)
-    assertEquals(KeepAliveMode.Active, app.graph.keepAlive.appliedMode)
+    assertTrue(AgentService.foreground)
+    assertTrue(wakeLock.isHeld)
 
-    // Delivering ACTION_IDLE with the latest startId stops the service cleanly.
-    activeHold.close()
+    // Delivering ACTION_IDLE with the latest startId stops the service and tears down foreground + wake lock.
     val latestIdleResult = service.onStartCommand(idleIntent, 0, 2)
     assertEquals(Service.START_NOT_STICKY, latestIdleResult)
     assertEquals(2, shadowService.lastStopSelfResultId)
     assertTrue(shadowService.isStoppedBySelf)
+    assertFalse(AgentService.foreground)
+    assertFalse(wakeLock.isHeld)
     assertEquals(KeepAliveMode.Off, app.graph.keepAlive.appliedMode)
-    service.onDestroy()
+  }
+
+  @Test
+  fun actionIdleWhileActiveAndForegroundReconcilesWithoutDroppingForeground() {
+    val busyIntent = Intent(app, AgentService::class.java).setAction(AgentService.ACTION_BUSY)
+    val idleIntent = Intent(app, AgentService::class.java).setAction(AgentService.ACTION_IDLE)
+    val controller = Robolectric.buildService(AgentService::class.java, busyIntent).create()
+    val service = controller.get().also { createdServices += it }
+    val shadowService = Shadow.extract<StartIdShadowService>(service)
+    val wakeLock = ShadowPowerManager.getLatestWakeLock()
+    val activeHold = app.graph.keepAlive.acquire("chats working")
+
+    shadowService.latestStartId = 2
+    controller.startCommand(0, 1)
+    assertTrue(AgentService.foreground)
+    assertTrue(wakeLock.isHeld)
+
+    // Fast Active -> Off -> Active: ACTION_IDLE arrives with latest startId while desired mode is Active again.
+    val idleResult = service.onStartCommand(idleIntent, 0, 2)
+    assertEquals(Service.START_NOT_STICKY, idleResult)
+    assertEquals(null, shadowService.lastStopSelfResultId)
+    assertFalse(shadowService.isStoppedBySelf)
+    assertTrue(AgentService.foreground)
+    assertTrue(wakeLock.isHeld)
+    assertEquals(KeepAliveMode.Active, app.graph.keepAlive.appliedMode)
+
+    activeHold.close()
   }
 
   @Test
   fun refreshIsNoOpWhenKeepAliveModeIsOff() {
-    val service = Robolectric.buildService(AgentService::class.java).create().get()
+    val service = createService()
     val notificationManager = app.getSystemService(NotificationManager::class.java)
     val nm = Shadows.shadowOf(notificationManager)
     val activeHold = app.graph.keepAlive.acquire("chats working")
@@ -229,13 +265,11 @@ class AgentServiceTest {
 
     AgentService.refresh(app)
     assertTrue("refresh() must not post a notification while transitioning Off", nm.allNotifications.isEmpty())
-
-    service.onDestroy()
   }
 
   @Test
   fun actionStopWithNoActiveChatsStopsServiceViaStopSelfResult() {
-    val service = Robolectric.buildService(AgentService::class.java).create().get()
+    val service = createService()
     val shadowService = Shadows.shadowOf(service)
     assertEquals(KeepAliveMode.Off, app.graph.keepAlive.mode)
 
@@ -244,6 +278,5 @@ class AgentServiceTest {
     assertEquals(Service.START_NOT_STICKY, result)
     assertTrue(shadowService.isStoppedBySelf)
     assertFalse(AgentService.foreground)
-    service.onDestroy()
   }
 }
