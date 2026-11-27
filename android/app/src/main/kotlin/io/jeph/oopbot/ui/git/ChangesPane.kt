@@ -82,11 +82,11 @@ internal fun ChangesPane(
   val commitsCollapsed by preferences.commitsCollapsed.collectAsStateWithLifecycle()
   val chosenMode = modes[folderKey(workspace.root)]
   LaunchedEffect(workspace, open, chosenMode, hideWhitespace) {
-    if (open) workspace.refreshChanges(chosenMode, hideWhitespace)
+    if (open) workspace.refreshChanges(chosenMode, hideWhitespace, force = false)
   }
   // The diff's triggers reload the commits too, so the two never disagree about what HEAD is.
   LaunchedEffect(workspace, open, chosenMode, hideWhitespace, commitsCollapsed) {
-    if (open && !commitsCollapsed) workspace.refreshCommits()
+    if (open && !commitsCollapsed) workspace.refreshCommits(force = false)
   }
   val scope = rememberCoroutineScope()
   var refreshing by remember(workspace) { mutableStateOf(false) }

@@ -95,18 +95,47 @@ fn join_reader_bounded(
 }
 
 pub(super) fn run_git_bounded(cmd: Command, timeout: Duration, max_bytes: usize) -> GitCmdOutput {
-    run_git_bounded_with_grace(cmd, timeout, max_bytes, READER_SUCCESS_JOIN_GRACE)
+    run_git_bounded_internal(cmd, None, timeout, max_bytes, READER_SUCCESS_JOIN_GRACE)
 }
 
+fn run_git_bounded_with_stdin(
+    cmd: Command,
+    stdin_bytes: Vec<u8>,
+    timeout: Duration,
+    max_bytes: usize,
+) -> GitCmdOutput {
+    run_git_bounded_internal(
+        cmd,
+        Some(stdin_bytes),
+        timeout,
+        max_bytes,
+        READER_SUCCESS_JOIN_GRACE,
+    )
+}
+
+#[cfg(test)]
 pub(super) fn run_git_bounded_with_grace(
-    mut cmd: Command,
+    cmd: Command,
     timeout: Duration,
     max_bytes: usize,
     success_join_grace: Duration,
 ) -> GitCmdOutput {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    run_git_bounded_internal(cmd, None, timeout, max_bytes, success_join_grace)
+}
+
+fn run_git_bounded_internal(
+    mut cmd: Command,
+    stdin_bytes: Option<Vec<u8>>,
+    timeout: Duration,
+    max_bytes: usize,
+    success_join_grace: Duration,
+) -> GitCmdOutput {
+    if stdin_bytes.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -119,6 +148,15 @@ pub(super) fn run_git_bounded_with_grace(
         kill_child_tree(&mut child);
         return GitCmdOutput::SpawnFailed;
     };
+
+    if let Some(payload) = stdin_bytes {
+        if let Some(mut stdin) = child.stdin.take() {
+            thread::spawn(move || {
+                let _ = stdin.write_all(&payload);
+                let _ = stdin.flush();
+            });
+        }
+    }
 
     let exceeded = Arc::new(AtomicBool::new(false));
     let exceeded_reader = Arc::clone(&exceeded);
@@ -551,9 +589,21 @@ pub(super) fn parse_git_diff_bounded(diff_text: &str, max_total_bytes: usize) ->
     Some(files)
 }
 
+fn git_is_installed() -> bool {
+    static HAS_GIT: AtomicBool = AtomicBool::new(false);
+    if HAS_GIT.load(Ordering::Relaxed) {
+        return true;
+    }
+    let ok = run_git_small(&["--version"]).is_some();
+    if ok {
+        HAS_GIT.store(true, Ordering::Relaxed);
+    }
+    ok
+}
+
 /// Deteksi apakah direktori adalah repository git dan git tersedia di sistem
 pub(super) fn git_detect(root: &str, trusted: bool) -> (bool, bool) {
-    let has_git = run_git_small(&["--version"]).is_some();
+    let has_git = git_is_installed();
     let dot_git = Path::new(root).join(".git").exists();
     if !trusted || !has_git || !dot_git {
         return (dot_git, has_git);
@@ -580,31 +630,8 @@ pub(super) fn git_current_branch(root: &str) -> Option<String> {
     }
 }
 
-/// Default branch (origin/HEAD atau main / master)
-pub(super) fn git_default_branch(root: &str) -> Option<String> {
-    if let Some(ref_name) =
-        run_git_small(&["-C", root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-    {
-        if !ref_name.is_empty() {
-            let remote_name = ref_name.trim_start_matches("refs/remotes/");
-            let local_name = remote_name.trim_start_matches("origin/");
-            return Some(local_name.to_string());
-        }
-    }
-    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/main"]).is_some()
-    {
-        return Some("main".to_string());
-    }
-    if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/master"])
-        .is_some()
-    {
-        return Some("master".to_string());
-    }
-    None
-}
-
-/// Ref pembanding (origin/<base> atau <base>)
-pub(super) fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
+/// Ref pembanding (origin/<base> atau <base>) untuk branch kustom di luar main/master.
+fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
     let name = base.trim_start_matches("refs/heads/").trim_start_matches("origin/");
     let origin_ref = format!("refs/remotes/origin/{}", name);
     if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &origin_ref]).is_some() {
@@ -613,6 +640,61 @@ pub(super) fn git_comparison_ref(root: &str, base: &str) -> Option<String> {
     let local_ref = format!("refs/heads/{}", name);
     if run_git_small(&["-C", root, "rev-parse", "--verify", "--quiet", &local_ref]).is_some() {
         return Some(name.to_string());
+    }
+    None
+}
+
+/// Resolusi default base & comparison ref dalam 1 subproses `for-each-ref` (menggantikan hingga 5 spawn berurutan).
+pub(super) fn git_base_comparison_ref(root: &str) -> Option<String> {
+    let out = run_git_small(&[
+        "-C",
+        root,
+        "for-each-ref",
+        "--format=%(refname)\t%(symref)",
+        "refs/remotes/origin/HEAD",
+        "refs/heads/main",
+        "refs/heads/master",
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+    ])?;
+    let mut origin_head_target: Option<String> = None;
+    let mut refs = std::collections::HashSet::new();
+    for line in out.lines() {
+        let (refname, symref) = line.split_once('\t').unwrap_or((line, ""));
+        let refname = refname.trim();
+        let symref = symref.trim();
+        if refname == "refs/remotes/origin/HEAD" && !symref.is_empty() {
+            let remote_name = symref.trim_start_matches("refs/remotes/");
+            let local_name = remote_name.trim_start_matches("origin/");
+            if !local_name.is_empty() {
+                origin_head_target = Some(local_name.to_string());
+            }
+        } else if !refname.is_empty() {
+            refs.insert(refname.to_string());
+        }
+    }
+    if let Some(base) = origin_head_target {
+        let origin_ref = format!("refs/remotes/origin/{}", base);
+        if refs.contains(&origin_ref) {
+            return Some(format!("origin/{}", base));
+        }
+        let local_ref = format!("refs/heads/{}", base);
+        if refs.contains(&local_ref) {
+            return Some(base);
+        }
+        return git_comparison_ref(root, &base);
+    }
+    if refs.contains("refs/heads/main") {
+        if refs.contains("refs/remotes/origin/main") {
+            return Some("origin/main".to_string());
+        }
+        return Some("main".to_string());
+    }
+    if refs.contains("refs/heads/master") {
+        if refs.contains("refs/remotes/origin/master") {
+            return Some("origin/master".to_string());
+        }
+        return Some("master".to_string());
     }
     None
 }
@@ -648,8 +730,7 @@ pub(super) fn handle_git_changes(
     static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
     let branch = git_current_branch(root);
-    let base = git_default_branch(root);
-    let base_ref = base.as_deref().and_then(|b| git_comparison_ref(root, b));
+    let base_ref = git_base_comparison_ref(root);
 
     let make_too_large = || {
         let too_large_body = json!({
@@ -690,86 +771,161 @@ pub(super) fn handle_git_changes(
             GitCmdOutput::Ok(Vec::new())
         }
     } else {
-        // mode uncommitted: gunakan scratch index unik agar berkas untracked terdeteksi tanpa mengubah repo
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let temp_dir = std::env::temp_dir().join(format!(
-            "oopbot_git_scratch_{}_{}_{}",
-            std::process::id(),
-            epoch_ms(),
-            seq
-        ));
-        let temp_objects = temp_dir.join("objects");
-        let temp_index = temp_dir.join("index");
-        let _ = std::fs::create_dir_all(&temp_objects);
-
-        let real_index = run_git_small(&["-C", root, "rev-parse", "--git-path", "index"])
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| ".git/index".into());
-        let real_objects = run_git_small(&["-C", root, "rev-parse", "--git-path", "objects"])
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| ".git/objects".into());
-
-        let abs_index = Path::new(root).join(&real_index);
-        let abs_objects = Path::new(root).join(&real_objects);
-
-        if abs_index.exists() {
-            let _ = std::fs::copy(&abs_index, &temp_index);
-        }
-
-        let mut add_cmd = Command::new("git");
-        add_cmd
-            .args(["-C", root, "add", "--intent-to-add", "--all"])
-            .env("GIT_INDEX_FILE", &temp_index)
-            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
-            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
-        let add_res = run_git_bounded(add_cmd, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES);
-        match add_res {
+        // Jalur cepat: cek dulu apakah ada file untracked lewat `ls-files`.
+        // Bila tidak ada, langsung `git diff` memakai index asli (stat cache hangat, tanpa copy index & `git add --all`).
+        let mut ls_cmd = Command::new("git");
+        ls_cmd.args(["-C", root, "ls-files", "--others", "--exclude-standard", "-z"]);
+        let untracked = match run_git_bounded(ls_cmd, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES) {
+            GitCmdOutput::Ok(bytes) => Some(bytes),
             GitCmdOutput::TimedOut => {
-                let _ = std::fs::remove_dir_all(&temp_dir);
                 return json!({
                     "code": "failed",
-                    "error": "git status/add timed out after 30s"
+                    "error": "git ls-files timed out after 30s"
                 });
             }
             GitCmdOutput::SpawnFailed => {
-                let _ = std::fs::remove_dir_all(&temp_dir);
                 return json!({
                     "code": "failed",
                     "error": "failed to spawn git"
                 });
             }
-            GitCmdOutput::TooLarge => {
-                let _ = std::fs::remove_dir_all(&temp_dir);
-                return make_too_large();
-            }
-            GitCmdOutput::Ok(_) | GitCmdOutput::Failed => {}
-        }
+            GitCmdOutput::TooLarge => return make_too_large(),
+            GitCmdOutput::Failed => None,
+        };
 
         let from = git_head_commit(root)
             .unwrap_or_else(|| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string());
-        let mut diff_cmd = Command::new("git");
-        diff_cmd.args([
-            "-C",
-            root,
-            "-c",
-            "diff.renameLimit=200",
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            "-M",
-        ]);
-        if ignore_whitespace {
-            diff_cmd.arg("-w");
-        }
-        diff_cmd
-            .args([&from, "--"])
-            .env("GIT_INDEX_FILE", &temp_index)
-            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
-            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
 
-        let res = run_git_bounded(diff_cmd, GIT_CMD_TIMEOUT, MAX_RAW_DIFF_BYTES);
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        res
+        if matches!(untracked.as_deref(), Some([])) {
+            let mut diff_cmd = Command::new("git");
+            diff_cmd.args([
+                "-C",
+                root,
+                "-c",
+                "diff.renameLimit=200",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+            ]);
+            if ignore_whitespace {
+                diff_cmd.arg("-w");
+            }
+            diff_cmd.args([&from, "--"]);
+            run_git_bounded(diff_cmd, GIT_CMD_TIMEOUT, MAX_RAW_DIFF_BYTES)
+        } else {
+            // Ada file untracked: gunakan scratch index unik dan tambahkan hanya daftar untracked yang ditemukan.
+            let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
+            let temp_dir = std::env::temp_dir().join(format!(
+                "oopbot_git_scratch_{}_{}_{}",
+                std::process::id(),
+                epoch_ms(),
+                seq
+            ));
+            let temp_objects = temp_dir.join("objects");
+            let temp_index = temp_dir.join("index");
+            let _ = std::fs::create_dir_all(&temp_objects);
+
+            let real_index = run_git_small(&["-C", root, "rev-parse", "--git-path", "index"])
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| ".git/index".into());
+            let real_objects = run_git_small(&["-C", root, "rev-parse", "--git-path", "objects"])
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| ".git/objects".into());
+
+            let abs_index = Path::new(root).join(&real_index);
+            let abs_objects = Path::new(root).join(&real_objects);
+
+            if abs_index.exists() {
+                let _ = std::fs::copy(&abs_index, &temp_index);
+            }
+
+            let add_res = if let Some(paths_nul) = untracked {
+                let mut targeted = Command::new("git");
+                targeted
+                    .args([
+                        "-C",
+                        root,
+                        "add",
+                        "--intent-to-add",
+                        "--pathspec-from-file=-",
+                        "--pathspec-file-nul",
+                    ])
+                    .env("GIT_INDEX_FILE", &temp_index)
+                    .env("GIT_OBJECT_DIRECTORY", &temp_objects)
+                    .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
+                match run_git_bounded_with_stdin(
+                    targeted,
+                    paths_nul,
+                    GIT_CMD_TIMEOUT,
+                    MAX_SMALL_GIT_OUTPUT_BYTES,
+                ) {
+                    GitCmdOutput::Failed => {
+                        let mut fallback = Command::new("git");
+                        fallback
+                            .args(["-C", root, "add", "--intent-to-add", "--all"])
+                            .env("GIT_INDEX_FILE", &temp_index)
+                            .env("GIT_OBJECT_DIRECTORY", &temp_objects)
+                            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
+                        run_git_bounded(fallback, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES)
+                    }
+                    other => other,
+                }
+            } else {
+                let mut fallback = Command::new("git");
+                fallback
+                    .args(["-C", root, "add", "--intent-to-add", "--all"])
+                    .env("GIT_INDEX_FILE", &temp_index)
+                    .env("GIT_OBJECT_DIRECTORY", &temp_objects)
+                    .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
+                run_git_bounded(fallback, GIT_CMD_TIMEOUT, MAX_SMALL_GIT_OUTPUT_BYTES)
+            };
+            match add_res {
+                GitCmdOutput::TimedOut => {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    return json!({
+                        "code": "failed",
+                        "error": "git status/add timed out after 30s"
+                    });
+                }
+                GitCmdOutput::SpawnFailed => {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    return json!({
+                        "code": "failed",
+                        "error": "failed to spawn git"
+                    });
+                }
+                GitCmdOutput::TooLarge => {
+                    let _ = std::fs::remove_dir_all(&temp_dir);
+                    return make_too_large();
+                }
+                GitCmdOutput::Ok(_) | GitCmdOutput::Failed => {}
+            }
+
+            let mut diff_cmd = Command::new("git");
+            diff_cmd.args([
+                "-C",
+                root,
+                "-c",
+                "diff.renameLimit=200",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+            ]);
+            if ignore_whitespace {
+                diff_cmd.arg("-w");
+            }
+            diff_cmd
+                .args([&from, "--"])
+                .env("GIT_INDEX_FILE", &temp_index)
+                .env("GIT_OBJECT_DIRECTORY", &temp_objects)
+                .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &abs_objects);
+
+            let res = run_git_bounded(diff_cmd, GIT_CMD_TIMEOUT, MAX_RAW_DIFF_BYTES);
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            res
+        }
     };
 
     let diff_bytes = match diff_result {
@@ -819,9 +975,8 @@ pub(super) fn handle_git_changes(
 pub(super) fn handle_git_commits(root: &str, known: Option<&str>) -> Value {
     let branch = git_current_branch(root);
     let head = git_head_commit(root);
-    let base = git_default_branch(root);
-    let comparison = if branch.is_some() && head.is_some() && base.is_some() {
-        base.as_deref().and_then(|b| git_comparison_ref(root, b))
+    let comparison = if branch.is_some() && head.is_some() {
+        git_base_comparison_ref(root)
     } else {
         None
     };

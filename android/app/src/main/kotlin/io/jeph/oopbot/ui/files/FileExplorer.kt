@@ -29,7 +29,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -58,7 +57,6 @@ import io.jeph.oopbot.ui.git.ChangesContent
 import io.jeph.oopbot.ui.git.ExplorerTab
 import io.jeph.oopbot.ui.git.GitLoss
 import io.jeph.oopbot.ui.git.GitWorkspace
-import io.jeph.oopbot.ui.git.GitWorkspaces
 import io.jeph.oopbot.ui.git.TrustPrompt
 import io.jeph.oopbot.ui.git.shownExplorerTab
 import io.jeph.oopbot.ui.remote.RemoteConnectDialogs
@@ -95,8 +93,8 @@ internal fun ExplorerPanel(
   modifier: Modifier = Modifier,
 ) {
   val graph = LocalContext.current.appGraph
-  val trees = rememberSaveable(saver = ExplorerTrees.saver(graph.fileHost)) { ExplorerTrees(graph.fileHost) }
-  val repositories = remember(graph) { GitWorkspaces(graph.gitHost) }
+  val trees = graph.explorerTrees
+  val repositories = graph.gitWorkspaces
   val folder = cwd?.let(::folderKey)
   val state = folder?.let { trees[it] }
   val repository = folder?.let { repositories[it] }

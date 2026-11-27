@@ -6,7 +6,7 @@ Manages durable app state, session indexing, transcript caching, FTS full-text a
 ## Ownership
 - **SQLite Engine & Schema:** `SqlDb.kt`, `AndroidSqlDb.kt`, `OopbotSchema.kt`, `OopbotDatabase.kt`.
 - **SQLite Domain Stores & Indexing:** `OopbotMetaStores.kt` (`PrefsDbStore`, `NoticesDbStore`), `OopbotSessionStores.kt` (`SessionsDbStore`, `DraftsDbStore`, `InboxDbStore`), `TranscriptIndexer.kt`.
-- **Repositories & Settings:** `Preferences.kt`, `NoticeStore.kt`, `SessionRepository.kt` (`SessionHost`), `SessionArchive.kt`, `AutoArchive.kt`, `AccountRepository.kt`, `ConfigBackups.kt`, `ModelDefaults.kt`, `PendingReload.kt`, `PiExtensionUpdate.kt`, `RemoteHosts.kt`, `RemotePasswords.kt`, `Workspaces.kt`, `BundledExtension.kt`.
+- **Repositories & Settings:** `Preferences.kt`, `NoticeStore.kt`, `SessionRepository.kt` (`SessionHost`), `SessionArchive.kt`, `AutoArchive.kt`, `AccountRepository.kt`, `ConfigBackups.kt`, `ExplorerCache.kt`, `ModelDefaults.kt`, `PendingReload.kt`, `PiExtensionUpdate.kt`, `RemoteHosts.kt`, `RemotePasswords.kt`, `Workspaces.kt`, `BundledExtension.kt`.
 
 ## Local Contracts
 - **Framework SQLite Only (`minSdk = 29`):** `AndroidSqlDb` uses Android's zero-dependency `SQLiteOpenHelper` with `WAL` (`setWriteAheadLoggingEnabled(true)`), `PRAGMA foreign_keys = ON`, `busy_timeout = 5000`, `synchronous = NORMAL`, and `temp_store = MEMORY`.
@@ -14,6 +14,7 @@ Manages durable app state, session indexing, transcript caching, FTS full-text a
 - **SQLite Bind Limit Chunking:** Bulk `IN (...)` queries MUST chunk through `forEachSqlChunk` (`MAX_SQL_VARS = 400`) to stay under `SQLITE_MAX_VARIABLE_NUMBER = 999`.
 - **Termux Source of Truth & Subagent Isolation:** Termux `.jsonl` transcripts remain canonical for live sessions. `SessionsDbStore.applySync` reconciles only `session_index` and NEVER prunes `message_cache` so cached subagent transcripts (not listed by `hostClient.sessions()`) stay intact until `purge(paths)`.
 - **Main-Thread Non-Blocking Writes:** `OopbotDatabase.enqueueWrite` serializes background mutations on a single daemon `oopbot-db-writer` thread; `NoticesDbStore`, `PrefsDbStore`, `SessionsDbStore`, `DraftsDbStore`, and `InboxDbStore` must catch `SQLException` via `OopbotSqlException`.
+- **Bounded Explorer Disk Cache (`ExplorerCache.kt`):** Persists per-workspace git snapshots (`detection`, `defaultMode`, `changes` + fingerprint, `commits` + fingerprint) and file tree snapshots atomically under `cacheDir/explorer_cache/` on `Dispatchers.IO` with a `2 MiB` per-file cap, `12`-workspace LRU eviction per kind, and silent corrupt-file cleanup.
 - **One-Time Preferences Migration & Legacy Notices:** `Preferences` atomically migrates its 7 large collection/cache JSON keys into `workspace_prefs` / `session_meta` once (`prefs_v1_migrated`) and removes those keys from XML; `NoticeStore` lazily migrates legacy SHA-256 `.json` files on read or overwrite.
 
 ## Work Guidance

@@ -5,6 +5,8 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.jeph.oopbot.data.ExplorerCache
+import io.jeph.oopbot.data.GitWorkspaceSnapshot
 import io.jeph.oopbot.host.GitChanges
 import io.jeph.oopbot.host.GitCommits
 import io.jeph.oopbot.host.GitDetection
@@ -14,7 +16,9 @@ import io.jeph.oopbot.host.GitReply
 import io.jeph.oopbot.host.HostRejected
 import io.jeph.oopbot.host.RemoteFailure
 import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -51,7 +55,13 @@ internal sealed interface CommitsContent {
  * overlap: one asked for while another runs waits for it. Main-thread confined.
  */
 @Stable
-internal class GitWorkspace(val root: String, private val git: GitHost) {
+internal class GitWorkspace(
+  val root: String,
+  private val git: GitHost,
+  private val cache: ExplorerCache? = null,
+  private val scope: CoroutineScope? = null,
+  private val clock: () -> Long = System::currentTimeMillis,
+) {
   var detection by mutableStateOf<GitDetection?>(null)
     private set
 
@@ -85,6 +95,14 @@ internal class GitWorkspace(val root: String, private val git: GitHost) {
   private val detectLock = Mutex()
   private val changesLock = Mutex()
   private val commitsLock = Mutex()
+  private var lastChangesSyncedAt = 0L
+  private var lastCommitsSyncedAt = 0L
+
+  init {
+    if (cache != null && scope != null) {
+      scope.launch { hydrateFromCache(cache) }
+    }
+  }
 
   /**
    * Detects the repository again, reading it with git only when [trusted]; returns why the Changes tab went away, if
@@ -106,31 +124,38 @@ internal class GitWorkspace(val root: String, private val git: GitHost) {
     }
     unreachable = null
     detection = reply.value
+    persistSnapshot()
     gitLoss(before, reply.value)
   }
 
   /**
    * Loads the diff of the comparison [chosen] by the user, else [defaultMode], else Uncommitted, which decides
-   * [defaultMode]. Returns whether git and the host managed it.
+   * [defaultMode]. When [force] is false and the exact request was synced recently, skips redundant host calls.
    */
-  suspend fun refreshChanges(chosen: GitDiffMode?, ignoreWhitespace: Boolean): Boolean = changesLock.withLock {
-    val request = ChangesRequest(chosen ?: defaultMode ?: GitDiffMode.Uncommitted, ignoreWhitespace)
-    reloading = true
-    try {
-      val reply = fetchChanges(request) ?: return@withLock false
-      if (chosen != null || defaultMode != null || reply !is GitReply.Loaded) return@withLock show(request, reply)
-      val mode = defaultDiffMode(reply.value)
-      defaultMode = mode
-      if (mode == request.mode) return@withLock show(request, reply)
-      val defaultRequest = request.copy(mode = mode)
-      show(defaultRequest, fetchChanges(defaultRequest) ?: return@withLock false)
-    } finally {
-      reloading = false
+  suspend fun refreshChanges(chosen: GitDiffMode?, ignoreWhitespace: Boolean, force: Boolean = true): Boolean =
+    changesLock.withLock {
+      val request = ChangesRequest(chosen ?: defaultMode ?: GitDiffMode.Uncommitted, ignoreWhitespace)
+      val loaded = changes as? ChangesContent.Loaded
+      if (!force && loaded != null && loaded.request == request && isFresh(lastChangesSyncedAt)) {
+        return@withLock true
+      }
+      reloading = true
+      try {
+        val reply = fetchChanges(request) ?: return@withLock false
+        if (chosen != null || defaultMode != null || reply !is GitReply.Loaded) return@withLock show(request, reply)
+        val mode = defaultDiffMode(reply.value)
+        defaultMode = mode
+        if (mode == request.mode) return@withLock show(request, reply)
+        val defaultRequest = request.copy(mode = mode)
+        show(defaultRequest, fetchChanges(defaultRequest) ?: return@withLock false)
+      } finally {
+        reloading = false
+      }
     }
-  }
 
   /** Loads the commits ahead of the comparison base; returns whether git and the host managed it. */
-  suspend fun refreshCommits(): Boolean = commitsLock.withLock {
+  suspend fun refreshCommits(force: Boolean = true): Boolean = commitsLock.withLock {
+    if (!force && commits is CommitsContent.Loaded && isFresh(lastCommitsSyncedAt)) return@withLock true
     val known = (commits as? CommitsContent.Loaded)?.commits?.fingerprint
     commitsReloading = true
     val reply = try {
@@ -144,12 +169,21 @@ internal class GitWorkspace(val root: String, private val git: GitHost) {
     }
     when (reply) {
       null -> if (commits == CommitsContent.Loading) commits = CommitsContent.Failed()
-      GitReply.Unchanged -> Unit
-      is GitReply.Loaded -> commits = CommitsContent.Loaded(reply.value)
+
+      GitReply.Unchanged -> lastCommitsSyncedAt = clock()
+
+      is GitReply.Loaded -> {
+        commits = CommitsContent.Loaded(reply.value)
+        lastCommitsSyncedAt = clock()
+        persistSnapshot()
+      }
+
       is GitReply.Failed -> commits = CommitsContent.Failed(reply.remote)
     }
     reply != null && reply !is GitReply.Failed
   }
+
+  private fun isFresh(syncedAt: Long): Boolean = syncedAt > 0L && (clock() - syncedAt) < AUTO_REFRESH_COOLDOWN_MS
 
   /** [request]'s reply, or null when the host couldn't run it, which fails a first load and keeps a shown one. */
   private suspend fun fetchChanges(request: ChangesRequest): GitReply<GitChanges>? {
@@ -170,7 +204,7 @@ internal class GitWorkspace(val root: String, private val git: GitHost) {
 
   private suspend fun show(request: ChangesRequest, reply: GitReply<GitChanges>): Boolean {
     when (reply) {
-      GitReply.Unchanged -> Unit
+      GitReply.Unchanged -> lastChangesSyncedAt = clock()
 
       is GitReply.Failed -> changes = ChangesContent.Failed(reply.message, reply.remote)
 
@@ -178,15 +212,60 @@ internal class GitWorkspace(val root: String, private val git: GitHost) {
         val previous = (changes as? ChangesContent.Loaded)?.document
         val document = withContext(Dispatchers.Default) { DiffDocument.build(reply.value.diff, previous) }
         changes = ChangesContent.Loaded(request, reply.value, document)
+        lastChangesSyncedAt = clock()
+        persistSnapshot()
       }
     }
     return reply !is GitReply.Failed
   }
+
+  private suspend fun hydrateFromCache(store: ExplorerCache) {
+    val snapshot = withContext(Dispatchers.IO) { store.loadGit(root) } ?: return
+    val cachedChanges = snapshot.changes
+    val cachedMode = snapshot.changesMode ?: snapshot.defaultMode ?: GitDiffMode.Uncommitted
+    val cachedDoc = if (cachedChanges != null && changes == ChangesContent.Loading) {
+      withContext(Dispatchers.Default) { DiffDocument.build(cachedChanges.diff) }
+    } else {
+      null
+    }
+    if (detection == null && snapshot.detection != null) detection = snapshot.detection
+    if (defaultMode == null && snapshot.defaultMode != null) defaultMode = snapshot.defaultMode
+    if (changes == ChangesContent.Loading && cachedChanges != null && cachedDoc != null) {
+      changes = ChangesContent.Loaded(ChangesRequest(cachedMode, snapshot.ignoreWhitespace), cachedChanges, cachedDoc)
+    }
+    if (commits == CommitsContent.Loading && snapshot.commits != null) {
+      commits = CommitsContent.Loaded(snapshot.commits)
+    }
+  }
+
+  private fun persistSnapshot() {
+    val store = cache ?: return
+    val runner = scope ?: return
+    val loadedChanges = changes as? ChangesContent.Loaded
+    val loadedCommits = commits as? CommitsContent.Loaded
+    val snapshot = GitWorkspaceSnapshot(
+      detection = detection,
+      defaultMode = defaultMode,
+      changesMode = loadedChanges?.request?.mode,
+      ignoreWhitespace = loadedChanges?.request?.ignoreWhitespace ?: false,
+      changes = loadedChanges?.changes,
+      commits = loadedCommits?.commits,
+    )
+    runner.launch(Dispatchers.IO) { store.saveGit(root, snapshot) }
+  }
+
+  private companion object {
+    const val AUTO_REFRESH_COOLDOWN_MS = 3_000L
+  }
 }
 
 /** Each workspace's [GitWorkspace], by [io.jeph.oopbot.data.folderKey], made the first time it's asked for. */
-internal class GitWorkspaces(private val git: GitHost) {
+internal class GitWorkspaces(
+  private val git: GitHost,
+  private val cache: ExplorerCache? = null,
+  private val scope: CoroutineScope? = null,
+) {
   private val workspaces = HashMap<String, GitWorkspace>()
 
-  operator fun get(root: String): GitWorkspace = workspaces.getOrPut(root) { GitWorkspace(root, git) }
+  operator fun get(root: String): GitWorkspace = workspaces.getOrPut(root) { GitWorkspace(root, git, cache, scope) }
 }
