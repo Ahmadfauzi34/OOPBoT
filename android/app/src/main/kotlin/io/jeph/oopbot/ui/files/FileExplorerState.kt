@@ -12,6 +12,8 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import io.jeph.oopbot.data.ExplorerCache
+import io.jeph.oopbot.data.FileTreeSnapshot
 import io.jeph.oopbot.host.FileEntry
 import io.jeph.oopbot.host.FileError
 import io.jeph.oopbot.host.GitCommit
@@ -22,12 +24,14 @@ import io.jeph.oopbot.ui.git.ChangesPane
 import io.jeph.oopbot.ui.git.GitWorkspace
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The workspace's top folder, as the `files` host spells it. */
 internal const val ROOT_FOLDER = "."
@@ -98,10 +102,15 @@ internal fun listPosition(rows: List<ExplorerRow.Entry>, anchor: ScrollAnchor): 
  * its expanded folders and scroll position when the activity is recreated (a foldable folding or unfolding) or the
  * main screen leaves for another page, but not its listings, which are listed again as the explorer opens.
  */
-internal class ExplorerTrees(private val files: WorkspaceFolders) {
+internal class ExplorerTrees(
+  private val files: WorkspaceFolders,
+  private val cache: ExplorerCache? = null,
+  private val scope: CoroutineScope? = null,
+) {
   private val trees = HashMap<String, FileExplorerState>()
 
-  operator fun get(root: String): FileExplorerState = trees.getOrPut(root) { FileExplorerState(root, files) }
+  operator fun get(root: String): FileExplorerState =
+    trees.getOrPut(root) { FileExplorerState(root, files, cache = cache, scope = scope) }
 
   companion object {
     /** Each tree as `[root, expanded folders, top row's path or null, its offset or null]`. */
@@ -141,6 +150,8 @@ internal class FileExplorerState(
   private val files: WorkspaceFolders,
   initiallyExpanded: Set<String> = emptySet(),
   savedAnchor: ScrollAnchor? = null,
+  private val cache: ExplorerCache? = null,
+  private val scope: CoroutineScope? = null,
 ) {
   var directories by mutableStateOf(emptyMap<String, List<FileEntry>>())
     private set
@@ -158,6 +169,13 @@ internal class FileExplorerState(
     private set
   var refreshing by mutableStateOf(false)
     private set
+  private var lastSyncedAt = 0L
+
+  init {
+    if (cache != null && scope != null) {
+      scope.launch { hydrateFromCache(cache) }
+    }
+  }
 
   /** The new folder's name field shows at the top of the tree. */
   var creatingFolder by mutableStateOf(false)
@@ -207,8 +225,10 @@ internal class FileExplorerState(
    * whole tree goes, so its failure shows instead of files that may no longer be there. A lost connection to a remote
    * workspace's host shows as [lose] does.
    */
-  suspend fun refresh() {
+  suspend fun refresh(force: Boolean = true) {
     if (refreshing) return
+    val fresh = lastSyncedAt > 0L && (System.currentTimeMillis() - lastSyncedAt) < AUTO_REFRESH_COOLDOWN_MS
+    if (!force && directories.isNotEmpty() && fresh) return
     refreshing = true
     try {
       val paths = listOf(ROOT_FOLDER) + expanded
@@ -229,6 +249,8 @@ internal class FileExplorerState(
       }
       for ((path, error) in failures) if (error != null) collapse(path)
       relisted = true
+      lastSyncedAt = System.currentTimeMillis()
+      persistSnapshot()
     } finally {
       refreshing = false
     }
@@ -238,10 +260,15 @@ internal class FileExplorerState(
   suspend fun toggle(folder: FileEntry): String? {
     if (folder.path in expanded) {
       expanded -= folder.path
+      persistSnapshot()
       return null
     }
     expanded += folder.path
-    val failed = fetch(folder.path) ?: return null
+    val failed = fetch(folder.path)
+    if (failed == null) {
+      persistSnapshot()
+      return null
+    }
     if (failed.code != null) {
       lose(failed)
       return null
@@ -258,6 +285,7 @@ internal class FileExplorerState(
   fun collapseAll(showHidden: Boolean, sort: ExplorerSort) {
     val anchor = scrollAnchor()
     expanded = emptySet()
+    persistSnapshot()
     if (anchor == null) return
     val position = listPosition(explorerRows(directories, expanded, showHidden, sort), anchor)
     list.requestScrollToItem(position.index, position.offset)
@@ -266,7 +294,11 @@ internal class FileExplorerState(
   /** Creates folder [name] at the top of the workspace; returns why it couldn't. */
   suspend fun createFolder(name: String): String? {
     creatingFolder = false
-    val failed = attempt { files.createFolder(root, ROOT_FOLDER, name) } ?: fetch(ROOT_FOLDER) ?: return null
+    val failed = attempt { files.createFolder(root, ROOT_FOLDER, name) } ?: fetch(ROOT_FOLDER)
+    if (failed == null) {
+      persistSnapshot()
+      return null
+    }
     if (failed.code != null) {
       lose(failed)
       return null
@@ -305,6 +337,24 @@ internal class FileExplorerState(
     }
   }
 
+  private suspend fun hydrateFromCache(store: ExplorerCache) {
+    val snapshot = withContext(Dispatchers.IO) { store.loadFiles(root) } ?: return
+    if (directories.isEmpty() && snapshot.directories.isNotEmpty()) {
+      directories = snapshot.directories
+      if (expanded.isEmpty() && snapshot.expanded.isNotEmpty()) {
+        expanded = snapshot.expanded
+      }
+    }
+  }
+
+  private fun persistSnapshot() {
+    val store = cache ?: return
+    val runner = scope ?: return
+    if (directories.isEmpty()) return
+    val snapshot = FileTreeSnapshot(directories = directories, expanded = expanded)
+    runner.launch(Dispatchers.IO) { store.saveFiles(root, snapshot) }
+  }
+
   private suspend fun attempt(block: suspend () -> Unit): Failure? = try {
     block()
     null
@@ -318,6 +368,10 @@ internal class FileExplorerState(
 
   /** Why a request failed, and the connection failure's code for a remote workspace's host. */
   private class Failure(val message: String, val code: String?)
+
+  private companion object {
+    const val AUTO_REFRESH_COOLDOWN_MS = 3_000L
+  }
 }
 
 @Composable
@@ -335,7 +389,7 @@ internal fun ExplorerOpenEffects(
     snapshotFlow(isOpen)
       .distinctUntilChanged()
       .filter { it }
-      .collect { scope.launch { state?.refresh() } }
+      .collect { scope.launch { state?.refresh(force = false) } }
   }
   LaunchedEffect(repository) {
     snapshotFlow(isOpen)

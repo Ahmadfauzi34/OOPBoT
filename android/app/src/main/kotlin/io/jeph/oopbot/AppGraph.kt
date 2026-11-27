@@ -17,6 +17,7 @@ import io.jeph.oopbot.agent.KeepAlive
 import io.jeph.oopbot.agent.TurnNotifications
 import io.jeph.oopbot.data.AccountRepository
 import io.jeph.oopbot.data.ConfigBackups
+import io.jeph.oopbot.data.ExplorerCache
 import io.jeph.oopbot.data.ModelDefaults
 import io.jeph.oopbot.data.NoticeStore
 import io.jeph.oopbot.data.OopbotDatabase
@@ -34,6 +35,8 @@ import io.jeph.oopbot.host.HostClient
 import io.jeph.oopbot.localmodel.LocalModels
 import io.jeph.oopbot.terminal.TerminalRegistry
 import io.jeph.oopbot.ui.chat.ChatViews
+import io.jeph.oopbot.ui.files.ExplorerTrees
+import io.jeph.oopbot.ui.git.GitWorkspaces
 import io.jeph.oopbot.ui.sidebar.folderNames
 import io.jeph.oopbot.workspace.OpenTabs
 import io.jeph.oopbot.workspace.Panes
@@ -115,6 +118,9 @@ internal class AppGraph(private val application: Application) {
   val fileHost = FileHost(hostClient, scope, remoteHosts::isRemote)
   val files = FileTabRegistry(fileHost, tabs)
   val gitHost = GitHost(hostClient, scope)
+  private val explorerCache = ExplorerCache(File(application.cacheDir, "explorer_cache"))
+  val explorerTrees = ExplorerTrees(fileHost, explorerCache, scope)
+  val gitWorkspaces = GitWorkspaces(gitHost, explorerCache, scope)
   val commits = CommitTabRegistry(gitHost, tabs, preferences.trustedRepositories, scope)
   val layout = WorkspaceLayout(this)
   val localModels = LocalModels(application, scope, keepAlive, accountRepository, preferences)

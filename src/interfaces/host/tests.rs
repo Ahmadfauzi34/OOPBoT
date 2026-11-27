@@ -904,6 +904,77 @@ fn test_run_git_mode_concurrent_recovers_from_worker_panic_and_drains() {
 }
 
 #[test]
+fn test_handle_git_changes_uncommitted_fast_path_and_untracked_path() {
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let repo = std::env::temp_dir().join(format!("oopbot_git_fastpath_{}_{}", epoch_ms(), seq));
+    std::fs::create_dir_all(&repo).unwrap();
+    let root = repo.to_string_lossy().to_string();
+
+    let run = |args: &[&str]| {
+        let st = std::process::Command::new("git")
+            .args(["-C", &root])
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {:?} failed", args);
+    };
+
+    run(&["init", "-b", "main"]);
+    std::fs::write(repo.join("tracked.txt"), "line1\nline2\n").unwrap();
+    run(&["add", "tracked.txt"]);
+    run(&["commit", "-m", "initial"]);
+
+    // 1. Batched base ref lookup should resolve main in one for-each-ref call.
+    assert_eq!(git_base_comparison_ref(&root).as_deref(), Some("main"));
+
+    // 2. Tracked modification only (0 untracked files -> direct warm-index fast path).
+    std::fs::write(repo.join("tracked.txt"), "line1\nline2_mod\nline3\n").unwrap();
+    let res1 = handle_git_changes(&root, "uncommitted", false, None);
+    assert_eq!(res1["tooLarge"], false);
+    assert_eq!(res1["branch"], "main");
+    let files1 = res1["files"].as_array().unwrap();
+    assert_eq!(files1.len(), 1);
+    assert_eq!(files1[0]["path"], "tracked.txt");
+    let fp1 = res1["fingerprint"].as_str().unwrap().to_string();
+
+    // Known fingerprint must short-circuit with unchanged: true.
+    let res1_same = handle_git_changes(&root, "uncommitted", false, Some(&fp1));
+    assert_eq!(res1_same["unchanged"], true);
+    assert_eq!(res1_same["fingerprint"], fp1);
+
+    // 3. Untracked file present -> targeted --pathspec-from-file scratch index path without mutating real index.
+    std::fs::write(repo.join("brand_new.txt"), "hello untracked\n").unwrap();
+    let res2 = handle_git_changes(&root, "uncommitted", false, Some(&fp1));
+    assert_eq!(res2["tooLarge"], false);
+    let paths2: Vec<&str> = res2["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert!(paths2.contains(&"tracked.txt"));
+    assert!(paths2.contains(&"brand_new.txt"));
+
+    // Real git index must remain untouched (brand_new.txt still untracked).
+    let status = std::process::Command::new("git")
+        .args(["-C", &root, "status", "--porcelain"])
+        .output()
+        .unwrap();
+    let status_text = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        status_text.contains("?? brand_new.txt"),
+        "scratch index must not mutate real repo index: {}",
+        status_text
+    );
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn test_run_git_loop_detect_and_changes() {
     let repo_root = env!("CARGO_MANIFEST_DIR");
     let input = format!(
