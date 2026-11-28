@@ -10,7 +10,7 @@ package io.jeph.oopbot.data
  */
 internal object OopbotSchema {
   const val DB_NAME = "oopbot.db"
-  const val VERSION = 1
+  const val VERSION = 2
 
   fun create(db: SqlDb) {
     for (statement in STATEMENTS) db.exec(statement)
@@ -115,5 +115,42 @@ internal object OopbotSchema {
     )
     """.trimIndent(),
     "CREATE INDEX IF NOT EXISTS idx_chat_inbox_at ON chat_inbox(at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      cwd TEXT NOT NULL,
+      session_path TEXT,
+      prompt TEXT NOT NULL,
+      engine TEXT,
+      schedule_kind TEXT NOT NULL,
+      schedule_spec TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      overlap_policy TEXT NOT NULL DEFAULT 'skip',
+      misfire_policy TEXT NOT NULL DEFAULT 'skip',
+      max_run_seconds INTEGER NOT NULL DEFAULT 900,
+      next_run_at INTEGER,
+      last_run_at INTEGER,
+      last_status TEXT NOT NULL DEFAULT 'never',
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+    """.trimIndent(),
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_next ON scheduled_jobs(enabled, next_run_at)",
+    """
+    CREATE TABLE IF NOT EXISTS schedule_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      status TEXT NOT NULL,
+      session_path TEXT,
+      summary TEXT,
+      error TEXT
+    )
+    """.trimIndent(),
+    "CREATE INDEX IF NOT EXISTS idx_schedule_runs_job ON schedule_runs(job_id, started_at DESC)",
   )
 }

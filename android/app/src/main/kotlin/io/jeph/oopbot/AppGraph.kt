@@ -34,6 +34,10 @@ import io.jeph.oopbot.host.FileHost
 import io.jeph.oopbot.host.GitHost
 import io.jeph.oopbot.host.HostClient
 import io.jeph.oopbot.localmodel.LocalModels
+import io.jeph.oopbot.schedule.AgentProcessJobExecutor
+import io.jeph.oopbot.schedule.AlarmScheduler
+import io.jeph.oopbot.schedule.ScheduleRepository
+import io.jeph.oopbot.schedule.ScheduleRunner
 import io.jeph.oopbot.terminal.TerminalRegistry
 import io.jeph.oopbot.ui.chat.ChatViews
 import io.jeph.oopbot.ui.files.ExplorerTrees
@@ -128,6 +132,19 @@ internal class AppGraph(private val application: Application) {
   val commits = CommitTabRegistry(gitHost, tabs, preferences.trustedRepositories, scope)
   val layout = WorkspaceLayout(this)
   val localModels = LocalModels(application, scope, keepAlive, accountRepository, preferences)
+  val alarmScheduler = AlarmScheduler(application)
+  val scheduleRepository = ScheduleRepository(
+    database.schedules,
+    alarmScheduler,
+    preferences.exactScheduleAlarms,
+    scope,
+  )
+  val scheduleRunner = ScheduleRunner(
+    scheduleRepository,
+    keepAlive,
+    AgentProcessJobExecutor(registry, application),
+    scope,
+  )
 
   /** The session files of the chats on screen, which Pi can name late. */
   @OptIn(ExperimentalCoroutinesApi::class)
@@ -145,6 +162,7 @@ internal class AppGraph(private val application: Application) {
     feedChatInbox()
     touchChatsOnScreen()
     endLocalModelLeases()
+    scope.launch(Dispatchers.IO) { scheduleRepository.ensureInitialized() }
     val dialogNotifications =
       DialogNotifications(application, registry, chatsOnScreen, visibility, chatInbox) { folderNames() }
     scope.launch { dialogNotifications.watch() }

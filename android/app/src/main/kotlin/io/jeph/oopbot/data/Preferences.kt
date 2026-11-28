@@ -81,6 +81,7 @@ internal class Preferences internal constructor(
   private val disabledExtensionsState = MutableStateFlow(readStringSet(DISABLED_EXTENSIONS))
   private val inAppNotificationsState = MutableStateFlow(prefs.getBoolean(IN_APP_NOTIFICATIONS, true))
   private val backgroundStandbyState = MutableStateFlow(prefs.getBoolean(BACKGROUND_STANDBY, false))
+  private val exactScheduleAlarmsState = MutableStateFlow(prefs.getBoolean(EXACT_SCHEDULE_ALARMS, false))
   private val localModelsEnabledState = MutableStateFlow(prefs.getBoolean(LOCAL_MODELS_ENABLED, false))
   private val localModelFailedBuildsState = MutableStateFlow(
     if (prefs.getString(LOCAL_MODEL_FAILED_BUILDS_ON, null) == softwareVersion) {
@@ -173,6 +174,9 @@ internal class Preferences internal constructor(
 
   /** Whether OOPBoT stays alive in low-power Standby mode (no wake lock) when idle. */
   val backgroundStandby: StateFlow<Boolean> = backgroundStandbyState.asStateFlow()
+
+  /** Whether scheduled jobs opt into exact Android alarms when `SCHEDULE_EXACT_ALARM` is granted; defaults off. */
+  val exactScheduleAlarms: StateFlow<Boolean> = exactScheduleAlarmsState.asStateFlow()
 
   /** The extensions OOPBoT bundles that the user turned off, by [BundledExtension.id]; a chat's next Pi leaves them out. */
   val disabledExtensions: StateFlow<Set<String>> = disabledExtensionsState.asStateFlow()
@@ -387,6 +391,11 @@ internal class Preferences internal constructor(
     backgroundStandbyState.value = enabled
   }
 
+  fun setExactScheduleAlarms(enabled: Boolean) {
+    prefs.edit { putBoolean(EXACT_SCHEDULE_ALARMS, enabled) }
+    exactScheduleAlarmsState.value = enabled
+  }
+
   fun setExtensionEnabled(extension: BundledExtension, enabled: Boolean) {
     val updated = if (enabled) {
       disabledExtensionsState.value - extension.id
@@ -583,6 +592,7 @@ internal class Preferences internal constructor(
     const val DISABLED_EXTENSIONS = "disabledExtensions"
     const val IN_APP_NOTIFICATIONS = "inAppNotifications"
     const val BACKGROUND_STANDBY = "backgroundStandby"
+    const val EXACT_SCHEDULE_ALARMS = "exactScheduleAlarms"
     const val LOCAL_MODELS_ENABLED = "localModelsEnabled"
     const val LOCAL_MODEL_FAILED_BUILDS = "localModelFailedBuilds"
     const val LOCAL_MODEL_FAILED_BUILDS_ON = "localModelFailedBuildsOn"
