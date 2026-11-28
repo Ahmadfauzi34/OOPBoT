@@ -2,17 +2,23 @@ package io.jeph.oopbot.data
 
 import android.app.Application
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
 import androidx.test.core.app.ApplicationProvider
 import io.jeph.oopbot.agent.ChatLocation
 import io.jeph.oopbot.agent.InboxEntry
 import io.jeph.oopbot.agent.InboxReason
 import io.jeph.oopbot.host.GitDiffMode
 import io.jeph.oopbot.host.SessionInfo
+import io.jeph.oopbot.schedule.ScheduleRunStatus
+import io.jeph.oopbot.schedule.ScheduleSpec
+import io.jeph.oopbot.schedule.ScheduledJob
 import io.jeph.oopbot.ui.git.ExplorerTab
 import java.util.UUID
 import java.util.concurrent.Executor
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,7 +28,8 @@ import org.robolectric.annotation.Config
 
 /**
  * Verifies [AndroidSqlDb] directly against Android's framework `SQLiteOpenHelper` across API 29 (`minSdk`) and
- * API 35, ensuring PRAGMAs, FTS4 (`unicode61`), nullable inserts, `rawQuery` bindings, and WAL queries stay valid.
+ * API 35, ensuring PRAGMAs, FTS4 (`unicode61`), nullable inserts, `rawQuery` bindings, v1->v2 upgrades, and WAL queries
+ * stay valid.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, application = Application::class, sdk = [29, 35])
@@ -40,8 +47,7 @@ class AndroidSqlDbTest {
     opened.clear()
   }
 
-  private fun openDb(): Pair<AndroidSqlDb, OopbotDatabase> {
-    val name = "test-${UUID.randomUUID()}.db"
+  private fun openDb(name: String = "test-${UUID.randomUUID()}.db"): Pair<AndroidSqlDb, OopbotDatabase> {
     val sqlDb = AndroidSqlDb(context, name)
     opened += name to sqlDb
     return sqlDb to OopbotDatabase(sqlDb, syncExecutor)
@@ -112,4 +118,84 @@ class AndroidSqlDbTest {
       sqlDb.queryOne("SELECT 1 WHERE 1 = ?", arrayOf<Any?>(null)) { it.int(0) }
     }
   }
+
+  @Test
+  fun upgradesV1DatabaseToV2PreservingExistingData() {
+    val name = "v1-upgrade-${UUID.randomUUID()}.db"
+    val legacy = object : SQLiteOpenHelper(context, name, null, 1) {
+      override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
+        db.execSQL("INSERT INTO schema_meta (key, value) VALUES ('prefs_v1_migrated', '1')")
+      }
+
+      override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    }
+    legacy.writableDatabase.close()
+    legacy.close()
+
+    val (_, db) = openDb(name)
+    assertTrue(db.prefs.isMigrated("prefs_v1_migrated"))
+    val job = sampleJob("job-v2")
+    db.schedules.upsertJob(job)
+    assertEquals(job, db.schedules.getJob("job-v2"))
+  }
+
+  @Test
+  fun scheduleStoreUpdatesPreserveRunsCascadesDeletesPrunesAndRecovers() {
+    val (_, db) = openDb()
+    val job = sampleJob("job-cascade")
+    db.schedules.upsertJob(job)
+
+    val runId = requireNotNull(db.schedules.recordRunStart(job.id, startedAt = 1_000L, sessionPath = "/s/1.jsonl"))
+    assertTrue(runId > 0L)
+    db.schedules.recordRunFinish(
+      runId = runId,
+      jobId = job.id,
+      finishedAt = 2_000L,
+      status = ScheduleRunStatus.Succeeded,
+      sessionPath = "/s/1.jsonl",
+      summary = "ok",
+      error = null,
+    )
+
+    // Updating an existing job MUST use UPDATE (not INSERT OR REPLACE) so schedule_runs survive FK CASCADE.
+    db.schedules.upsertJob(job.copy(name = "Renamed", updatedAt = 3_000L))
+    assertEquals("Renamed", db.schedules.getJob(job.id)?.name)
+    assertEquals(1, db.schedules.listRuns(job.id).size)
+
+    // Inserting beyond MAX_RUNS_PER_JOB prunes oldest runs to 50.
+    for (i in 2..55) {
+      db.schedules.recordInstantRun(job.id, atMillis = i * 1_000L, status = ScheduleRunStatus.Succeeded)
+    }
+    val pruned = db.schedules.listRuns(job.id)
+    assertEquals(ScheduleDbStore.MAX_RUNS_PER_JOB, pruned.size)
+    assertEquals(55_000L, pruned.first().startedAt)
+
+    // Interrupted running row recovers to Failed.
+    db.schedules.recordRunStart(job.id, startedAt = 60_000L, sessionPath = null)
+    assertEquals(1, db.schedules.recoverInterruptedRuns(nowMillis = 61_000L, errorMessage = "killed"))
+    assertEquals(ScheduleRunStatus.Failed, db.schedules.getJob(job.id)?.lastStatus)
+    assertEquals("killed", db.schedules.listRuns(job.id, limit = 1).first().error)
+
+    // Deleting parent job cascades to schedule_runs.
+    db.schedules.deleteJob(job.id)
+    assertEquals(emptyList<Any>(), db.schedules.listRuns(job.id))
+    assertNotNull(db.schedules.listJobs())
+    assertTrue(db.schedules.listJobs().isEmpty())
+  }
+
+  private fun sampleJob(id: String) = ScheduledJob(
+    id = id,
+    name = "Morning Brief",
+    cwd = "/w/app",
+    sessionPath = null,
+    prompt = "Summarize git status",
+    engine = null,
+    spec = ScheduleSpec.Cron("0 8 * * *", "Asia/Jakarta"),
+    timezone = "Asia/Jakarta",
+    enabled = true,
+    nextRunAt = 100_000L,
+    createdAt = 500L,
+    updatedAt = 500L,
+  )
 }

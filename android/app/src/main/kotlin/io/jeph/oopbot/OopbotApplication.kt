@@ -2,6 +2,7 @@ package io.jeph.oopbot
 
 import android.app.Application
 import io.jeph.oopbot.agent.StandbyBootReceiver
+import io.jeph.oopbot.schedule.ScheduleAlarmReceiver
 import io.jeph.oopbot.ui.theme.LauncherIcon
 import io.jeph.oopbot.ui.theme.OopbotFonts
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +29,9 @@ class OopbotApplication : Application() {
           standby && done
         },
       )
+    }
+    graph.scope.launch(Dispatchers.IO) {
+      ScheduleAlarmReceiver.follow(this@OopbotApplication, graph.scheduleRepository.hasEnabledJobs)
     }
   }
 }

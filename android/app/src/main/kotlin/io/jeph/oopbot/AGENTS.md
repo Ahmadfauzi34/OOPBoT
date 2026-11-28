@@ -7,6 +7,7 @@ Root Kotlin package for the Android OOPBoT application: dependency graph (`AppGr
 Every feature has a strict home—do NOT place code in unrelated packages or dump helpers at the root package:
 - **App Entry & Manual DI:** `OopbotApplication.kt`, `AppGraph.kt`, `AppStrings.kt`, `LauncherActivity.kt`, `MainActivity.kt`.
 - **Agent Lifecycle & RPC State (`agent/`):** See [agent/AGENTS.md](agent/AGENTS.md).
+- **Persistent Agent Scheduler (`schedule/`):** See [schedule/AGENTS.md](schedule/AGENTS.md).
 - **Termux & Remote Host Transport (`host/`):** See [host/AGENTS.md](host/AGENTS.md).
 - **On-Device LLM Inference (`localmodel/`):** See [localmodel/AGENTS.md](localmodel/AGENTS.md).
 - **Compose Screens, Theme & Components (`ui/`):** See [ui/AGENTS.md](ui/AGENTS.md).
@@ -24,7 +25,7 @@ Every feature has a strict home—do NOT place code in unrelated packages or dum
 - **Termux Version Lockstep & Internet CLI Bundle (`termux/`):** `TermuxSetup.DEFAULT_OOPBOT_VERSION` MUST always match root `Cargo.toml` `version`. `TermuxSetup.fdroidCommand` (and `android/host/src/helper/oopbot-setup.sh`) installs required `curl` plus best-effort internet CLI packages (`aria2`, `wget`, `jq`, `dnsutils`, `netcat-openbsd`, `openssh`, `git`), prefers multi-connection `aria2c` with `curl` fallback for GitHub Release downloads, and keeps `inBash` free of `'`, `\`, and `\n`.
 
 ## Work Guidance
-- Business state and repositories belong in `agent/`, `data/`, `host/`, `localmodel/`, `workspace/`, `files/`, or `git/`—never inside `@Composable` UI files under `ui/`.
+- Business state and repositories belong in `agent/`, `schedule/`, `data/`, `host/`, `localmodel/`, `workspace/`, `files/`, or `git/`—never inside `@Composable` UI files under `ui/`.
 - Unit tests mirror the exact package path under `android/app/src/test/kotlin/io/jeph/oopbot/...`.
 
 ## Verification
@@ -32,7 +33,8 @@ Every feature has a strict home—do NOT place code in unrelated packages or dum
 
 ## Child graph Index
 - [agent/AGENTS.md](agent/AGENTS.md) — Chat agent processes, `AgentService`, RPC client, timeline models, inbox, and notifications.
-- [data/AGENTS.md](data/AGENTS.md) — `OopbotDatabase` (SQLite WAL + FTS4), preferences/notice migration, session index, transcript cache, drafts, and inbox store.
+- [schedule/AGENTS.md](schedule/AGENTS.md) — Persistent scheduled agent jobs (`CronExpression`, `AlarmScheduler`, `ScheduleAlarmReceiver`, `ScheduleRunner`).
+- [data/AGENTS.md](data/AGENTS.md) — `OopbotDatabase` (SQLite WAL + FTS4), preferences/notice migration, session index, transcript cache, drafts, inbox, and schedule stores.
 - [host/AGENTS.md](host/AGENTS.md) — `HostServer`, `HostClient`, `OopbotBridge` JNI, Termux/SSH transport, and file/git RPC hosts.
 - [localmodel/AGENTS.md](localmodel/AGENTS.md) — Local LLM catalog, `:inference` AIDL process, LiteRT-LM & llama.cpp engines, and lease scheduler.
 - [ui/AGENTS.md](ui/AGENTS.md) — Jetpack Compose screens, navigation, shared components, theme tokens, and draw/recomposition rules.

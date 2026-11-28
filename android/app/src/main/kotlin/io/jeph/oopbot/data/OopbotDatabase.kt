@@ -19,6 +19,7 @@ internal class OopbotDatabase(
   val sessions = SessionsDbStore(db, ::enqueueWrite, clock)
   val drafts = DraftsDbStore(db, ::enqueueWrite, clock)
   val inbox = InboxDbStore(db, ::enqueueWrite)
+  val schedules = ScheduleDbStore(db)
 
   /** Runs [block] inside a serialized SQLite transaction on [writer]. */
   fun enqueueWrite(block: SqlDb.() -> Unit) {

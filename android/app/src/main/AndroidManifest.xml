@@ -129,6 +129,18 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".schedule.ScheduleAlarmReceiver"
+            android:enabled="false"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="io.jeph.oopbot.action.RUN_DUE_SCHEDULES" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
         <!-- LiteRT-LM's GPU backend runs on the vendor's OpenCL driver, which an app can only load once it asks for
              it here. Optional, so phones without one still install OOPBoT. -->
         <uses-native-library
