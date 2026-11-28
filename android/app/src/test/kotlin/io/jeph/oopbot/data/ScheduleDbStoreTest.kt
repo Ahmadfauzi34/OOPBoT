@@ -60,7 +60,7 @@ class ScheduleDbStoreTest {
   fun upsertUpdatesInPlaceWithoutCascadingRunsAndDeleteCascades() {
     val job = makeJob("j1", ScheduleSpec.Cron("*/15 * * * *", "UTC"), enabled = true, nextRunAt = 20_000L)
     store.upsertJob(job)
-    val runId = store.recordRunStart("j1", startedAt = 10_000L, sessionPath = "/s/a.jsonl")
+    val runId = requireNotNull(store.recordRunStart("j1", startedAt = 10_000L, sessionPath = "/s/a.jsonl"))
     store.recordRunFinish(
       runId = runId,
       jobId = "j1",
@@ -81,6 +81,10 @@ class ScheduleDbStoreTest {
     assertNull(store.getJob("j1"))
     assertTrue(store.listRuns("j1").isEmpty())
     assertFalse(store.hasEnabledJobs())
+
+    // Recording runs for a deleted/missing job returns null cleanly instead of throwing SQLITE_CONSTRAINT_FOREIGNKEY.
+    assertNull(store.recordRunStart("j1", startedAt = 20_000L, sessionPath = null))
+    assertNull(store.recordInstantRun("j1", atMillis = 20_000L, status = ScheduleRunStatus.Skipped))
   }
 
   @Test

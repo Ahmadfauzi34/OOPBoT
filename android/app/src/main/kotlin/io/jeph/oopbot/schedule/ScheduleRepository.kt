@@ -37,6 +37,8 @@ internal class ScheduleRepository(
   private val clock: ScheduleClock = ScheduleClock(),
 ) {
   private val mutex = Mutex()
+
+  @Volatile
   private var initialized = false
 
   /** Null until [ensureInitialized] loads persisted jobs so component-enable watchers never see a spurious false. */
@@ -75,12 +77,9 @@ internal class ScheduleRepository(
   /** Validates and creates a new job, computing its initial `nextRunAt` and syncing the wake alarm. */
   suspend fun createJob(draft: NewScheduledJob): ScheduledJob = mutex.withLock {
     ensureInitializedLocked()
+    validateJobFields(draft.name, draft.cwd, draft.prompt)
     val now = clock.nowMillis()
-    val timezone = draft.timezone.ifBlank { clock.systemZoneId() }
-    val normalizedSpec = when (val spec = draft.spec) {
-      is ScheduleSpec.Cron -> spec.copy(zoneId = spec.zoneId.ifBlank { timezone })
-      is ScheduleSpec.Once, is ScheduleSpec.Interval -> spec
-    }
+    val (timezone, normalizedSpec) = normalizeTimezoneAndSpec(draft.timezone, draft.spec)
     ScheduleCalculator.validate(normalizedSpec, timezone)
     val clampedMaxRun = draft.maxRunSeconds.coerceIn(
       ScheduleSpec.MIN_MAX_RUN_SECONDS,
@@ -95,9 +94,9 @@ internal class ScheduleRepository(
     val job = ScheduledJob(
       id = UUID.randomUUID().toString(),
       name = draft.name.trim(),
-      cwd = draft.cwd,
+      cwd = draft.cwd.trim(),
       sessionPath = draft.sessionPath,
-      prompt = draft.prompt,
+      prompt = draft.prompt.trim(),
       engine = draft.engine?.takeIf { it.isNotBlank() },
       spec = normalizedSpec,
       timezone = timezone,
@@ -116,30 +115,44 @@ internal class ScheduleRepository(
     job
   }
 
-  /** Validates and updates an existing job in place (preserving run history), recomputing `nextRunAt`. */
+  /**
+   * Validates and updates an existing job in place (preserving run history AND live `lastRunAt`/`lastStatus`/
+   * `lastError`/`createdAt` fields from SQLite), normalizing timezone and recomputing `nextRunAt`.
+   */
   suspend fun updateJob(job: ScheduledJob): ScheduledJob = mutex.withLock {
     ensureInitializedLocked()
+    validateJobFields(job.name, job.cwd, job.prompt)
     val now = clock.nowMillis()
-    ScheduleCalculator.validate(job.spec, job.timezone)
+    val (timezone, normalizedSpec) = normalizeTimezoneAndSpec(job.timezone, job.spec)
+    ScheduleCalculator.validate(normalizedSpec, timezone)
     val clampedMaxRun = job.maxRunSeconds.coerceIn(
       ScheduleSpec.MIN_MAX_RUN_SECONDS,
       ScheduleSpec.MAX_MAX_RUN_SECONDS,
     )
-    val nextRunAt = if (job.enabled) ScheduleCalculator.nextTriggerAfter(job.spec, now) else null
-    val effectiveEnabled = if (job.spec is ScheduleSpec.Once) job.enabled && nextRunAt != null else job.enabled
-    val updated = job.copy(
-      name = job.name.trim(),
-      engine = job.engine?.takeIf { it.isNotBlank() },
-      maxRunSeconds = clampedMaxRun,
-      enabled = effectiveEnabled,
-      nextRunAt = nextRunAt,
-      updatedAt = now,
-    )
+    val nextRunAt = if (job.enabled) ScheduleCalculator.nextTriggerAfter(normalizedSpec, now) else null
+    val effectiveEnabled = if (normalizedSpec is ScheduleSpec.Once) job.enabled && nextRunAt != null else job.enabled
     withContext(ioDispatcher) {
+      val existing = store.getJob(job.id)
+      val updated = job.copy(
+        name = job.name.trim(),
+        cwd = job.cwd.trim(),
+        prompt = job.prompt.trim(),
+        engine = job.engine?.takeIf { it.isNotBlank() },
+        spec = normalizedSpec,
+        timezone = timezone,
+        maxRunSeconds = clampedMaxRun,
+        enabled = effectiveEnabled,
+        nextRunAt = nextRunAt,
+        lastRunAt = existing?.lastRunAt ?: job.lastRunAt,
+        lastStatus = existing?.lastStatus ?: job.lastStatus,
+        lastError = if (existing != null) existing.lastError else job.lastError,
+        createdAt = existing?.createdAt ?: job.createdAt,
+        updatedAt = now,
+      )
       store.upsertJob(updated)
       refreshAndSyncAlarmLocked()
+      updated
     }
-    updated
   }
 
   /** Toggles [enabled] on [jobId], recomputing `nextRunAt` when re-enabling, and syncs the wake alarm. */
@@ -178,11 +191,13 @@ internal class ScheduleRepository(
    */
   suspend fun claimDueJobs(nowMillis: Long = clock.nowMillis()): List<ScheduledJob> = mutex.withLock {
     ensureInitializedLocked()
+    val exactActive = preferExactAlarms.value && alarmScheduler.canScheduleExactAlarms()
+    val graceMillis = ScheduleCalculator.misfireGraceMillis(exactActive)
     withContext(ioDispatcher) {
       val due = store.listDueJobs(nowMillis)
       val toRun = mutableListOf<ScheduledJob>()
       for (job in due) {
-        val eval = ScheduleCalculator.evaluateDue(job, nowMillis)
+        val eval = ScheduleCalculator.evaluateDue(job, nowMillis, graceMillis)
         if (eval.missed) {
           store.recordInstantRun(
             jobId = job.id,
@@ -223,7 +238,8 @@ internal class ScheduleRepository(
     }
   }
 
-  suspend fun recordRunStart(jobId: String, startedAt: Long, sessionPath: String?): Long = mutex.withLock {
+  suspend fun recordRunStart(jobId: String, startedAt: Long, sessionPath: String?): Long? = mutex.withLock {
+    ensureInitializedLocked()
     withContext(ioDispatcher) {
       val runId = store.recordRunStart(jobId, startedAt, sessionPath)
       refreshSnapshotLocked()
@@ -238,7 +254,8 @@ internal class ScheduleRepository(
     sessionPath: String? = null,
     summary: String? = null,
     error: String? = null,
-  ): Long = mutex.withLock {
+  ): Long? = mutex.withLock {
+    ensureInitializedLocked()
     withContext(ioDispatcher) {
       val runId = store.recordInstantRun(jobId, atMillis, status, sessionPath, summary, error)
       refreshSnapshotLocked()
@@ -255,10 +272,26 @@ internal class ScheduleRepository(
     summary: String?,
     error: String?,
   ) = mutex.withLock {
+    ensureInitializedLocked()
     withContext(ioDispatcher) {
       store.recordRunFinish(runId, jobId, finishedAt, status, sessionPath, summary, error)
       refreshSnapshotLocked()
     }
+  }
+
+  private fun validateJobFields(name: String, cwd: String, prompt: String) {
+    require(name.isNotBlank()) { "Schedule name must not be blank" }
+    require(cwd.isNotBlank()) { "Schedule workspace cwd must not be blank" }
+    require(prompt.isNotBlank()) { "Schedule prompt must not be blank" }
+  }
+
+  private fun normalizeTimezoneAndSpec(rawTimezone: String, spec: ScheduleSpec): Pair<String, ScheduleSpec> {
+    val timezone = rawTimezone.ifBlank { clock.systemZoneId() }
+    val normalizedSpec = when (spec) {
+      is ScheduleSpec.Cron -> spec.copy(zoneId = spec.zoneId.ifBlank { timezone })
+      is ScheduleSpec.Once, is ScheduleSpec.Interval -> spec
+    }
+    return timezone to normalizedSpec
   }
 
   private suspend fun resyncAlarm() = mutex.withLock {

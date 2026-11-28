@@ -19,12 +19,22 @@ internal data class DueEvaluation(
  * [ScheduleSpec.Cron]. Validates specs and handles misfire grace windows and timezone changes without Android deps.
  */
 internal object ScheduleCalculator {
+  /** Exact alarms delivered up to 5 minutes past `nextRunAt` are treated as normal jitter rather than a misfire. */
+  const val EXACT_MISFIRE_GRACE_MILLIS = 5 * 60_000L
+
   /**
-   * Alarms delivered up to 5 minutes past `nextRunAt` are treated as normal Doze/inexact jitter rather than a misfire.
+   * Inexact `setAndAllowWhileIdle` alarms in Doze are routinely batched 9-15+ minutes late; use a 20-minute grace
+   * window so normal Doze batching does not skip jobs under [MisfirePolicy.Skip].
    */
-  const val MISFIRE_GRACE_MILLIS = 5 * 60_000L
+  const val INEXACT_MISFIRE_GRACE_MILLIS = 20 * 60_000L
+
+  /** Default grace window matching exact alarm tolerance. */
+  const val MISFIRE_GRACE_MILLIS = EXACT_MISFIRE_GRACE_MILLIS
 
   private const val MILLIS_PER_MINUTE = 60_000L
+
+  fun misfireGraceMillis(exactAlarmActive: Boolean): Long =
+    if (exactAlarmActive) EXACT_MISFIRE_GRACE_MILLIS else INEXACT_MISFIRE_GRACE_MILLIS
 
   /** Validates [spec] (cron syntax/calendar reachability, timezone id, interval bounds). Throws on invalid input. */
   fun validate(spec: ScheduleSpec, timezone: String) {
@@ -63,10 +73,10 @@ internal object ScheduleCalculator {
   }
 
   /**
-   * Evaluates a due [job] (`job.nextRunAt != null && job.nextRunAt <= nowMillis`) and computes whether to run now,
-   * whether it counts as missed, and what `(nextRunAt, enabled)` should be persisted before execution starts.
+   * Evaluates a due [job] (`job.nextRunAt != null && job.nextRunAt <= nowMillis`) against [graceMillis] and computes
+   * whether to run now, whether it counts as missed, and what `(nextRunAt, enabled)` to persist before execution.
    */
-  fun evaluateDue(job: ScheduledJob, nowMillis: Long): DueEvaluation {
+  fun evaluateDue(job: ScheduledJob, nowMillis: Long, graceMillis: Long = MISFIRE_GRACE_MILLIS): DueEvaluation {
     val dueAt = job.nextRunAt ?: return DueEvaluation(
       shouldRun = false,
       missed = false,
@@ -74,7 +84,7 @@ internal object ScheduleCalculator {
       enabled = job.enabled,
     )
     val lateness = nowMillis - dueAt
-    val isMisfire = lateness > MISFIRE_GRACE_MILLIS
+    val isMisfire = lateness > graceMillis
     val shouldRun = !isMisfire || job.misfirePolicy == MisfirePolicy.RunOnce
     val missed = isMisfire && !shouldRun
     val nextAfterNow = when (job.spec) {
@@ -97,8 +107,8 @@ internal object ScheduleCalculator {
    * Recomputes `nextRunAt` for an enabled job after `ACTION_TIMEZONE_CHANGED` (`timezoneChanged = true`) or
    * `ACTION_TIME_CHANGED` (`timezoneChanged = false`).
    *
-   * Already-due triggers (`nextRunAt <= nowMillis`) are preserved on clock jumps so `AlarmManager` delivers them
-   * immediately and [evaluateDue] applies [MisfirePolicy] instead of silently dropping the trigger.
+   * Already-due triggers (`nextRunAt <= nowMillis`) are preserved on both clock and timezone changes so `AlarmManager`
+   * delivers them immediately and [evaluateDue] applies [MisfirePolicy] instead of silently skipping them.
    */
   fun recomputeForClockChange(
     job: ScheduledJob,
@@ -116,9 +126,15 @@ internal object ScheduleCalculator {
       }
 
       is ScheduleSpec.Cron -> {
-        if (!timezoneChanged && job.nextRunAt != null && job.nextRunAt <= nowMillis) return job
         val targetZone = if (timezoneChanged) systemZoneId else spec.zoneId
         val updatedSpec = spec.copy(zoneId = targetZone)
+        if (job.nextRunAt != null && job.nextRunAt <= nowMillis) {
+          return if (timezoneChanged) {
+            job.copy(spec = updatedSpec, timezone = targetZone, updatedAt = nowMillis)
+          } else {
+            job
+          }
+        }
         val nextRun = nextTriggerAfter(updatedSpec, nowMillis)
         job.copy(
           spec = updatedSpec,

@@ -133,8 +133,13 @@ internal class ScheduleDbStore(private val db: SqlDb) {
     }
   }
 
-  /** Records a run start, updates the parent job's status, prunes old runs beyond [MAX_RUNS_PER_JOB], returns run id. */
-  fun recordRunStart(jobId: String, startedAt: Long, sessionPath: String?): Long = db.transaction {
+  /**
+   * Records a run start, updates the parent job's status, prunes old runs beyond [MAX_RUNS_PER_JOB], and returns the
+   * new run id, or `null` if [jobId] was deleted concurrently (preventing a foreign-key constraint violation).
+   */
+  fun recordRunStart(jobId: String, startedAt: Long, sessionPath: String?): Long? = db.transaction {
+    val exists = queryOne("SELECT 1 FROM scheduled_jobs WHERE id = ?", arrayOf(jobId)) { it.int(0) } != null
+    if (!exists) return@transaction null
     exec(
       "INSERT INTO schedule_runs (job_id, started_at, finished_at, status, session_path, summary, error) " +
         "VALUES (?, ?, NULL, ?, ?, NULL, NULL)",
@@ -149,7 +154,10 @@ internal class ScheduleDbStore(private val db: SqlDb) {
     runId
   }
 
-  /** Records an immediate terminal run (such as `skipped` or `missed`) without leaving a `running` row. */
+  /**
+   * Records an immediate terminal run (such as `skipped` or `missed`) without leaving a `running` row.
+   * Returns `null` if [jobId] was deleted concurrently.
+   */
   fun recordInstantRun(
     jobId: String,
     atMillis: Long,
@@ -157,7 +165,9 @@ internal class ScheduleDbStore(private val db: SqlDb) {
     sessionPath: String? = null,
     summary: String? = null,
     error: String? = null,
-  ): Long = db.transaction {
+  ): Long? = db.transaction {
+    val exists = queryOne("SELECT 1 FROM scheduled_jobs WHERE id = ?", arrayOf(jobId)) { it.int(0) } != null
+    if (!exists) return@transaction null
     exec(
       "INSERT INTO schedule_runs (job_id, started_at, finished_at, status, session_path, summary, error) " +
         "VALUES (?, ?, ?, ?, ?, ?, ?)",

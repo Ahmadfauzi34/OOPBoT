@@ -170,9 +170,12 @@ internal class CronExpression private constructor(
       require(segment.isNotEmpty()) { "Empty segment in cron field" }
       val slashParts = segment.split('/')
       require(slashParts.size <= 2) { "Invalid step syntax: '$segment'" }
+      val maxStep = max - min + 1
       val step = if (slashParts.size == 2) {
         val parsed = slashParts[1].toIntOrNull()
-        require(parsed != null && parsed > 0) { "Cron step must be a positive integer: '$segment'" }
+        require(parsed != null && parsed in 1..maxStep) {
+          "Cron step must be an integer in 1..$maxStep: '$segment'"
+        }
         parsed
       } else {
         1

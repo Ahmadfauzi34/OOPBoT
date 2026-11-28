@@ -25,7 +25,8 @@ internal data class JobExecutionResult(
 
 /** Abstraction executing a single [ScheduledJob] (implemented by [AgentProcessJobExecutor] in production). */
 internal fun interface ScheduledJobExecutor {
-  suspend fun execute(job: ScheduledJob): JobExecutionResult
+  /** Executes [job], reporting any created session file path via [onSessionPath] so timed-out runs retain it. */
+  suspend fun execute(job: ScheduledJob, onSessionPath: (String) -> Unit): JobExecutionResult
 }
 
 /**
@@ -47,12 +48,20 @@ internal class ScheduleRunner(
 
   /**
    * Claims and dispatches all jobs due at [nowMillis]. Takes ownership of [initialHold] (acquired synchronously inside
-   * [ScheduleAlarmReceiver.onReceive] while within Android's alarm FGS exemption window) and guarantees it is released
-   * after per-job holds are acquired or if zero jobs are due (or if [scope] is already cancelled).
+   * [ScheduleAlarmReceiver.onReceive] while within Android's alarm FGS exemption window) and invokes [onDispatched]
+   * once claiming and alarm re-arming finish (e.g. to release `BroadcastReceiver.PendingResult.finish()`).
    */
-  fun dispatchDueJobs(initialHold: AutoCloseable? = null, nowMillis: Long = clock()): Job {
+  fun dispatchDueJobs(
+    initialHold: AutoCloseable? = null,
+    nowMillis: Long = clock(),
+    onDispatched: (() -> Unit)? = null,
+  ): Job {
     if (!scope.isActive) {
-      initialHold?.close()
+      try {
+        initialHold?.close()
+      } finally {
+        onDispatched?.invoke()
+      }
       return Job().apply { cancel() }
     }
     val entered = AtomicBoolean(false)
@@ -61,15 +70,25 @@ internal class ScheduleRunner(
       try {
         val dueJobs = repository.claimDueJobs(nowMillis)
         for (job in dueJobs) {
-          launchJob(job)
+          launchJob(job, requireEnabled = true)
         }
       } finally {
         // Per-job holds are already acquired before this closes, so KeepAlive never dips to Standby/Off mid-handoff.
-        initialHold?.close()
+        try {
+          initialHold?.close()
+        } finally {
+          onDispatched?.invoke()
+        }
       }
     }
     launched.invokeOnCompletion {
-      if (entered.compareAndSet(false, true)) initialHold?.close()
+      if (entered.compareAndSet(false, true)) {
+        try {
+          initialHold?.close()
+        } finally {
+          onDispatched?.invoke()
+        }
+      }
     }
     return launched
   }
@@ -78,11 +97,11 @@ internal class ScheduleRunner(
   suspend fun runNow(jobId: String): Boolean {
     repository.ensureInitialized()
     val job = repository.getJob(jobId) ?: return false
-    launchJob(job)
+    launchJob(job, requireEnabled = false)
     return true
   }
 
-  private fun launchJob(job: ScheduledJob) {
+  private fun launchJob(job: ScheduledJob, requireEnabled: Boolean) {
     if (!scope.isActive) return
     when (decideOverlap(job)) {
       OverlapAction.Queued -> return
@@ -110,7 +129,7 @@ internal class ScheduleRunner(
       if (!entered.compareAndSet(false, true)) return@launch
       try {
         concurrency.withPermit {
-          executeSingleRun(job)
+          executeSingleRun(job, requireEnabled)
         }
       } finally {
         finishJobAndMaybeRunFollowUp(job, jobHold)
@@ -151,7 +170,7 @@ internal class ScheduleRunner(
         val latest = runCatching { withContext(NonCancellable) { repository.getJob(job.id) } }.getOrNull()
         if (latest != null && latest.enabled && scope.isActive) {
           // Acquire queued run's hold before closing this run's hold so Active stays seamless.
-          launchJob(latest)
+          launchJob(latest, requireEnabled = true)
         }
       }
     } finally {
@@ -159,18 +178,22 @@ internal class ScheduleRunner(
     }
   }
 
-  private suspend fun executeSingleRun(job: ScheduledJob) {
+  private suspend fun executeSingleRun(job: ScheduledJob, requireEnabled: Boolean) {
+    // Re-read after acquiring semaphore permit so jobs deleted/disabled while queued do not execute or trip FK errors.
+    val current = repository.getJob(job.id) ?: return
+    if (requireEnabled && !current.enabled && current.spec !is ScheduleSpec.Once) return
+
     val startedAt = clock()
-    val runId = repository.recordRunStart(job.id, startedAt, job.sessionPath)
-    val timeoutMillis = job.maxRunSeconds.toLong() * MILLIS_PER_SECOND
-    val result = runExecutorWithTimeout(job, runId, timeoutMillis)
+    val runId = repository.recordRunStart(current.id, startedAt, current.sessionPath) ?: return
+    val timeoutMillis = current.maxRunSeconds.toLong() * MILLIS_PER_SECOND
+    val result = runExecutorWithTimeout(current, runId, timeoutMillis)
     withContext(NonCancellable) {
       repository.recordRunFinish(
         runId = runId,
-        jobId = job.id,
+        jobId = current.id,
         finishedAt = clock(),
         status = result.status,
-        sessionPath = result.sessionPath ?: job.sessionPath,
+        sessionPath = result.sessionPath ?: current.sessionPath,
         summary = result.summary,
         error = result.error,
       )
@@ -179,16 +202,17 @@ internal class ScheduleRunner(
 
   // Runner boundary: unexpected executor exceptions must still finalize the schedule_runs row instead of stranding it.
   @Suppress("TooGenericExceptionCaught")
-  private suspend fun runExecutorWithTimeout(job: ScheduledJob, runId: Long, timeoutMillis: Long): JobExecutionResult =
-    try {
+  private suspend fun runExecutorWithTimeout(job: ScheduledJob, runId: Long, timeoutMillis: Long): JobExecutionResult {
+    var observedSessionPath: String? = job.sessionPath
+    return try {
       withTimeout(timeoutMillis) {
-        executor.execute(job)
+        executor.execute(job) { path -> observedSessionPath = path }
       }
     } catch (_: TimeoutCancellationException) {
       Log.w(TAG, "Scheduled job '${job.name}' (${job.id}) timed out after ${job.maxRunSeconds}s")
       JobExecutionResult(
         status = ScheduleRunStatus.TimedOut,
-        sessionPath = job.sessionPath,
+        sessionPath = observedSessionPath,
         error = "Timed out after ${job.maxRunSeconds}s",
       )
     } catch (cancelled: CancellationException) {
@@ -198,7 +222,7 @@ internal class ScheduleRunner(
           jobId = job.id,
           finishedAt = clock(),
           status = ScheduleRunStatus.Failed,
-          sessionPath = job.sessionPath,
+          sessionPath = observedSessionPath,
           summary = null,
           error = "Cancelled",
         )
@@ -208,10 +232,11 @@ internal class ScheduleRunner(
       Log.w(TAG, "Scheduled job '${job.name}' (${job.id}) threw unexpected error", error)
       JobExecutionResult(
         status = ScheduleRunStatus.Failed,
-        sessionPath = job.sessionPath,
+        sessionPath = observedSessionPath,
         error = error.message ?: error.javaClass.simpleName,
       )
     }
+  }
 
   private enum class OverlapAction { Start, Skip, Queued }
 

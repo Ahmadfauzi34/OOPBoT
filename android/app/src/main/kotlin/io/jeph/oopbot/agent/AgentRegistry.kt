@@ -210,6 +210,11 @@ internal class AgentRegistry<P : ManagedProcess>(
   /** The pane showing [process], if one does. */
   fun paneOf(process: P): Pane? = shownState.value.entries.firstOrNull { it.value === process }?.key
 
+  /** Parks (or closes if unsaved) [process] when no pane shows it, cancelling any in-flight start. */
+  fun parkIfHidden(process: P) {
+    if (paneOf(process) == null) park(process)
+  }
+
   /** Closes [process] and opens a fresh Pi on the same cwd and session file under the same key, in the same pane. */
   fun reload(process: P): P {
     val sessionPath = process.sessionFile.value

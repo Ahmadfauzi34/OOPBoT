@@ -63,7 +63,8 @@ class ScheduleRunnerTest {
   fun dispatchHandsOffInitialHoldWithoutDipAndAdvancesNextRunBeforeExecution() = runTest {
     val started = CompletableDeferred<Unit>()
     val finishGate = CompletableDeferred<Unit>()
-    val harness = createHarness(this) { job ->
+    val dispatched = AtomicInteger(0)
+    val harness = createHarness(this) { job, _ ->
       // nextRunAt must ALREADY be advanced & next alarm armed before execution finishes.
       val persisted = store.getJob(job.id)
       assertEquals(10_000L + 15 * 60_000L, persisted?.nextRunAt)
@@ -84,11 +85,16 @@ class ScheduleRunnerTest {
     // Simulate AlarmReceiver acquiring Active hold synchronously before dispatchDueJobs.
     harness.now = 10_500L
     val initialHold = harness.keepAlive.acquire("alarm")
-    harness.runner.dispatchDueJobs(initialHold = initialHold, nowMillis = harness.now)
+    harness.runner.dispatchDueJobs(
+      initialHold = initialHold,
+      nowMillis = harness.now,
+      onDispatched = { dispatched.incrementAndGet() },
+    )
     runCurrent()
     started.await()
 
-    // Active hold stayed continuously active across handoff (zero Off dip!).
+    // onDispatched fired once claim/re-arm finished (without waiting for agent run) and Active never dipped.
+    assertEquals(1, dispatched.get())
     assertEquals(listOf(KeepAliveMode.Active), harness.modeTransitions)
     assertEquals(10_000L + 15 * 60_000L, harness.alarmDriver.lastTriggerAt)
 
@@ -103,29 +109,40 @@ class ScheduleRunnerTest {
   }
 
   @Test
-  fun dispatchReleasesInitialHoldWhenNoJobsDueOrScopeCancelled() = runTest {
+  fun dispatchReleasesInitialHoldAndCallsOnDispatchedWhenNoJobsDueOrScopeCancelled() = runTest {
     val harness = createHarness(this)
     harness.repository.ensureInitialized()
 
+    val dispatched = AtomicInteger(0)
     val hold = harness.keepAlive.acquire("alarm-empty")
-    val dispatchJob = harness.runner.dispatchDueJobs(initialHold = hold, nowMillis = 1_000L)
+    val dispatchJob = harness.runner.dispatchDueJobs(
+      initialHold = hold,
+      nowMillis = 1_000L,
+      onDispatched = { dispatched.incrementAndGet() },
+    )
     runCurrent()
     assertTrue(dispatchJob.isCompleted)
+    assertEquals(1, dispatched.get())
     assertEquals(KeepAliveMode.Off, harness.keepAlive.mode)
 
-    // Cancelled scope must still release initialHold immediately via invokeOnCompletion.
+    // Cancelled scope must still release initialHold and call onDispatched immediately.
     val cancelledScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
     cancelledScope.cancel()
     val cancelledRunner = ScheduleRunner(
       repository = harness.repository,
       keepAlive = harness.keepAlive,
-      executor = { JobExecutionResult(ScheduleRunStatus.Succeeded) },
+      executor = { _, _ -> JobExecutionResult(ScheduleRunStatus.Succeeded) },
       scope = cancelledScope,
       clock = { harness.now },
     )
     val cancelledHold = harness.keepAlive.acquire("alarm-cancelled")
     assertEquals(KeepAliveMode.Active, harness.keepAlive.mode)
-    cancelledRunner.dispatchDueJobs(initialHold = cancelledHold, nowMillis = 2_000L)
+    cancelledRunner.dispatchDueJobs(
+      initialHold = cancelledHold,
+      nowMillis = 2_000L,
+      onDispatched = { dispatched.incrementAndGet() },
+    )
+    assertEquals(2, dispatched.get())
     assertEquals(KeepAliveMode.Off, harness.keepAlive.mode)
   }
 
@@ -136,7 +153,7 @@ class ScheduleRunnerTest {
     val queueFirstGate = CompletableDeferred<Unit>()
     val queueExecutions = AtomicInteger(0)
 
-    val harness = createHarness(this) { job ->
+    val harness = createHarness(this) { job, _ ->
       when (job.name) {
         "skip-job" -> {
           skipGate.await()
@@ -189,12 +206,13 @@ class ScheduleRunnerTest {
   }
 
   @Test
-  fun enforcesGlobalConcurrencyCapTimeoutAndUnexpectedExceptions() = runTest {
+  fun enforcesGlobalConcurrencyCapTimeoutSessionCaptureAndUnexpectedExceptions() = runTest {
     val active = AtomicInteger(0)
     val peak = AtomicInteger(0)
-    val harness = createHarness(this, maxConcurrentRuns = 2) { job ->
+    val harness = createHarness(this, maxConcurrentRuns = 2) { job, onSessionPath ->
       when (job.name) {
         "timeout-job" -> {
+          onSessionPath("/s/timed-out-session.jsonl")
           delay(60_000L)
           JobExecutionResult(ScheduleRunStatus.Succeeded)
         }
@@ -229,7 +247,9 @@ class ScheduleRunnerTest {
     runCurrent()
     advanceTimeBy(31_000L)
     runCurrent()
-    assertEquals(ScheduleRunStatus.TimedOut, harness.repository.listRuns(timeoutJob.id).single().status)
+    val timedOutRun = harness.repository.listRuns(timeoutJob.id).single()
+    assertEquals(ScheduleRunStatus.TimedOut, timedOutRun.status)
+    assertEquals("/s/timed-out-session.jsonl", timedOutRun.sessionPath)
     assertEquals(KeepAliveMode.Off, harness.keepAlive.mode)
 
     val crashJob = harness.repository.createJob(
@@ -243,6 +263,89 @@ class ScheduleRunnerTest {
     assertEquals(KeepAliveMode.Off, harness.keepAlive.mode)
 
     assertFalse(harness.runner.runNow("non-existent-id"))
+  }
+
+  @Test
+  fun deletingJobWhileQueuedBehindSemaphoreOrSkippingDoesNotCrashWithFkError() = runTest {
+    val gate = CompletableDeferred<Unit>()
+    val executedNames = CopyOnWriteArrayList<String>()
+    val harness = createHarness(this, maxConcurrentRuns = 1) { job, _ ->
+      executedNames += job.name
+      if (job.name == "holder") gate.await()
+      JobExecutionResult(ScheduleRunStatus.Succeeded)
+    }
+
+    harness.now = 5_000L
+    val holder = harness.repository.createJob(intervalDraft("holder", everyMinutes = 10, anchorMillis = 10_000L))
+    val queued = harness.repository.createJob(intervalDraft("queued", everyMinutes = 10, anchorMillis = 10_000L))
+
+    harness.runner.dispatchDueJobs(nowMillis = 10_000L)
+    runCurrent()
+    assertEquals(listOf("holder"), executedNames)
+
+    // Delete queued job before semaphore frees, AND trigger OverlapAction.Skip on holder then delete holder too.
+    harness.repository.deleteJob(queued.id)
+    harness.runner.runNow(holder.id)
+    harness.repository.deleteJob(holder.id)
+    gate.complete(Unit)
+    runCurrent()
+
+    // Queued deleted job never executed; zero FK crash; KeepAlive returned cleanly to Off.
+    assertEquals(listOf("holder"), executedNames)
+    assertEquals(KeepAliveMode.Off, harness.keepAlive.mode)
+  }
+
+  @Test
+  fun updateJobPreservesConcurrentRunStatusNormalizesTimezoneAndValidatesBlankInputs() = runTest {
+    val harness = createHarness(this)
+    harness.now = 1_000L
+    val created = harness.repository.createJob(
+      NewScheduledJob(
+        name = "Daily",
+        cwd = "/w/app",
+        prompt = "Check repo",
+        spec = ScheduleSpec.Cron("0 8 * * *", ""),
+        timezone = "",
+      ),
+    )
+    assertEquals("UTC", created.timezone)
+
+    // Simulate a background run updating live DB fields while the UI holds an older snapshot (`created`).
+    val runId = requireNotNull(harness.repository.recordRunStart(created.id, startedAt = 2_000L, sessionPath = "/s/1"))
+    harness.repository.recordRunFinish(
+      runId = runId,
+      jobId = created.id,
+      finishedAt = 3_000L,
+      status = ScheduleRunStatus.Succeeded,
+      sessionPath = "/s/1",
+      summary = "ok",
+      error = null,
+    )
+
+    // Save edit using the stale `created` snapshot (lastStatus=Never, blank timezone).
+    val updated = harness.repository.updateJob(
+      created.copy(
+        name = "Daily Edited",
+        spec = ScheduleSpec.Cron("0 9 * * *", ""),
+        timezone = "",
+      ),
+    )
+    assertEquals("Daily Edited", updated.name)
+    assertEquals("UTC", updated.timezone)
+    assertEquals(2_000L, updated.lastRunAt)
+    assertEquals(ScheduleRunStatus.Succeeded, updated.lastStatus)
+    assertEquals(1_000L, updated.createdAt)
+
+    // Blank name, cwd, or prompt must be rejected.
+    val blankNameErr = runCatching {
+      harness.repository.createJob(intervalDraft("   ", everyMinutes = 10, anchorMillis = 10_000L))
+    }.exceptionOrNull()
+    assertTrue(blankNameErr is IllegalArgumentException)
+
+    val blankPromptErr = runCatching {
+      harness.repository.updateJob(updated.copy(prompt = "  "))
+    }.exceptionOrNull()
+    assertTrue(blankPromptErr is IllegalArgumentException)
   }
 
   private fun intervalDraft(
@@ -264,7 +367,7 @@ class ScheduleRunnerTest {
   private fun createHarness(
     testScope: TestScope,
     maxConcurrentRuns: Int = ScheduleRunner.MAX_CONCURRENT_RUNS,
-    executor: ScheduledJobExecutor = ScheduledJobExecutor { JobExecutionResult(ScheduleRunStatus.Succeeded) },
+    executor: ScheduledJobExecutor = ScheduledJobExecutor { _, _ -> JobExecutionResult(ScheduleRunStatus.Succeeded) },
   ): Harness {
     val dispatcher = StandardTestDispatcher(testScope.testScheduler)
     val transitions = CopyOnWriteArrayList<KeepAliveMode>()

@@ -146,7 +146,7 @@ class AndroidSqlDbTest {
     val job = sampleJob("job-cascade")
     db.schedules.upsertJob(job)
 
-    val runId = db.schedules.recordRunStart(job.id, startedAt = 1_000L, sessionPath = "/s/1.jsonl")
+    val runId = requireNotNull(db.schedules.recordRunStart(job.id, startedAt = 1_000L, sessionPath = "/s/1.jsonl"))
     assertTrue(runId > 0L)
     db.schedules.recordRunFinish(
       runId = runId,

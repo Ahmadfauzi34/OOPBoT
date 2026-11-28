@@ -38,12 +38,34 @@ class ScheduleCalculatorAndAlarmTest {
     assertEquals(2 * step, withinGrace.nextRunAt)
     assertTrue(withinGrace.enabled)
 
-    // 10 minutes late with MisfirePolicy.Skip: marked missed and advances to next tick.
-    val skipped = ScheduleCalculator.evaluateDue(baseJob, nowMillis = step + 10 * 60_000L)
-    assertFalse(skipped.shouldRun)
-    assertTrue(skipped.missed)
-    assertEquals(2 * step, skipped.nextRunAt)
-    assertTrue(skipped.enabled)
+    // 10 minutes late with exact grace (5m) and MisfirePolicy.Skip: marked missed.
+    val skippedExact = ScheduleCalculator.evaluateDue(
+      baseJob,
+      nowMillis = step + 10 * 60_000L,
+      graceMillis = ScheduleCalculator.misfireGraceMillis(exactAlarmActive = true),
+    )
+    assertFalse(skippedExact.shouldRun)
+    assertTrue(skippedExact.missed)
+    assertEquals(2 * step, skippedExact.nextRunAt)
+    assertTrue(skippedExact.enabled)
+
+    // 10 minutes late with inexact Doze grace (20m): runs normally instead of being falsely skipped.
+    val withinInexactGrace = ScheduleCalculator.evaluateDue(
+      baseJob,
+      nowMillis = step + 10 * 60_000L,
+      graceMillis = ScheduleCalculator.misfireGraceMillis(exactAlarmActive = false),
+    )
+    assertTrue(withinInexactGrace.shouldRun)
+    assertFalse(withinInexactGrace.missed)
+
+    // 25 minutes late even with inexact grace (20m): marked missed.
+    val missedInexact = ScheduleCalculator.evaluateDue(
+      baseJob,
+      nowMillis = step + 25 * 60_000L,
+      graceMillis = ScheduleCalculator.misfireGraceMillis(exactAlarmActive = false),
+    )
+    assertFalse(missedInexact.shouldRun)
+    assertTrue(missedInexact.missed)
 
     // 10 minutes late with MisfirePolicy.RunOnce: executes once and advances.
     val runOnce = ScheduleCalculator.evaluateDue(
@@ -81,15 +103,24 @@ class ScheduleCalculatorAndAlarmTest {
     assertEquals("Asia/Jakarta", tzUpdated.timezone)
     assertEquals(Instant.parse("2025-06-01T01:00:00Z").toEpochMilli(), tzUpdated.nextRunAt)
 
-    // TIME_CHANGED (not timezone) preserves explicit UTC zone AND preserves already-due triggers for MisfirePolicy.
+    // Already-due Cron job preserves nextRunAt across BOTH TIME_CHANGED and TIMEZONE_CHANGED for MisfirePolicy.
     val dueCron = cronJob.copy(nextRunAt = now - 60_000L)
-    val keptDue = ScheduleCalculator.recomputeForClockChange(
+    val keptDueClock = ScheduleCalculator.recomputeForClockChange(
       job = dueCron,
       nowMillis = now,
       systemZoneId = "Asia/Jakarta",
       timezoneChanged = false,
     )
-    assertEquals(dueCron, keptDue)
+    assertEquals(dueCron, keptDueClock)
+
+    val keptDueTz = ScheduleCalculator.recomputeForClockChange(
+      job = dueCron,
+      nowMillis = now,
+      systemZoneId = "Asia/Jakarta",
+      timezoneChanged = true,
+    )
+    assertEquals(dueCron.nextRunAt, keptDueTz.nextRunAt)
+    assertEquals("Asia/Jakarta", keptDueTz.timezone)
 
     // TIME_CHANGED backward jump pulls future nextRunAt back without altering timezone.
     val strandedCron = cronJob.copy(nextRunAt = Instant.parse("2025-06-02T08:00:00Z").toEpochMilli())

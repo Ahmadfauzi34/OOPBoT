@@ -25,9 +25,15 @@ class ScheduleAlarmReceiver : BroadcastReceiver() {
     when (action) {
       ACTION_RUN_DUE -> {
         if (!graph.preferences.setupComplete.value) return
+        // Hold goAsync strictly across the short claimDueJobs + alarm re-arm dispatch so CPU cannot re-enter Doze
+        // before the next wake alarm is persisted, even if FGS start is delayed or refused.
+        val pendingResult = goAsync()
         // Acquire Active FGS synchronously inside AlarmManager's broadcast exemption window; ScheduleRunner closes it.
         val hold = graph.keepAlive.acquire("scheduled job")
-        graph.scheduleRunner.dispatchDueJobs(initialHold = hold)
+        graph.scheduleRunner.dispatchDueJobs(
+          initialHold = hold,
+          onDispatched = { pendingResult?.finish() },
+        )
       }
 
       Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
