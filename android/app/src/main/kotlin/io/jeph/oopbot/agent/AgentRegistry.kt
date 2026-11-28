@@ -62,6 +62,13 @@ internal interface ManagedProcess {
   /** Starts Pi again on the same cwd and session file, keeping the history until Pi has sent it again. */
   fun restart(allowBackground: Boolean = false)
 
+  /**
+   * Ensures an already-open process can connect from the background: no-op when already Ready or connecting with
+   * `allowBackground = true`; restarts with `allowBackground = true` when foreground-waiting (`Starting`),
+   * `Installing`, `Failed`, or `Exited`.
+   */
+  fun promoteToBackground()
+
   /** Final: ends Pi and releases the process. */
   fun close()
 }
@@ -162,7 +169,10 @@ internal class AgentRegistry<P : ManagedProcess>(
    */
   fun open(cwd: String, sessionPath: String?, options: ProcessLaunchOptions = ProcessLaunchOptions()): P {
     val key = sessionPath?.let { ChatKey.session(it) }
-    key?.let { processState.value[it] }?.let { return it }
+    key?.let { processState.value[it] }?.let { existing ->
+      if (options.allowBackground) existing.promoteToBackground()
+      return existing
+    }
     // Taken out first, so making room cannot close it as the least recently parked chat.
     val resumed = key?.let { parked.remove(it) }
     // All or nothing, so a refused open parks no chat: a pane hides its chat while the next one opens and shows it

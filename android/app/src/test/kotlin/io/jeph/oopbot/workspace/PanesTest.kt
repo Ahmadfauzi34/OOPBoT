@@ -31,6 +31,8 @@ class PanesTest {
 
     override fun restart(allowBackground: Boolean) = Unit
 
+    override fun promoteToBackground() = Unit
+
     override fun close() = Unit
   }
 

@@ -45,6 +45,7 @@ class AgentRegistryTest {
     var parked = false
     var restarts = 0
     var lastRestartAllowBackground: Boolean? = null
+    var promotedToBackground = 0
     var aborts = 0
     var abortFails = false
     var backgroundStops = 0
@@ -68,6 +69,10 @@ class AgentRegistryTest {
       parked = false
       restarts += 1
       lastRestartAllowBackground = allowBackground
+    }
+
+    override fun promoteToBackground() {
+      promotedToBackground += 1
     }
 
     override fun close() {
@@ -637,6 +642,20 @@ class AgentRegistryTest {
     assertSame(fresh, resumed)
     assertEquals(1, resumed.restarts)
     assertEquals(true, resumed.lastRestartAllowBackground)
+  }
+
+  @Test
+  fun openWithAllowBackgroundPromotesExistingOpenSession() = registryTest { registry ->
+    val existing = registry.open(CWD, "/s/existing.jsonl")
+    assertEquals(0, existing.promotedToBackground)
+
+    // Reopening with default foreground options leaves existing session untouched.
+    assertSame(existing, registry.open(CWD, "/s/existing.jsonl"))
+    assertEquals(0, existing.promotedToBackground)
+
+    // Reopening with allowBackground = true promotes the existing open session.
+    assertSame(existing, registry.open(CWD, "/s/existing.jsonl", ProcessLaunchOptions(allowBackground = true)))
+    assertEquals(1, existing.promotedToBackground)
   }
 
   private fun registryTest(block: suspend (AgentRegistry<FakeProcess>) -> Unit) = runBlocking {

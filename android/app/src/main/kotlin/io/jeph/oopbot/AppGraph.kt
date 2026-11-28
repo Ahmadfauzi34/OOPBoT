@@ -66,9 +66,7 @@ internal class AppGraph(private val application: Application) {
     application,
     foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow.map { it.isAtLeast(Lifecycle.State.STARTED) },
     scope = scope,
-    canLaunchInBackground = {
-      keepAlive.mode == KeepAliveMode.Active && keepAlive.appliedMode == KeepAliveMode.Active
-    },
+    canLaunchInBackground = keepAlive::awaitActiveApplied,
   )
   val database = OopbotDatabase.open(application)
   val preferences = Preferences(application, database)

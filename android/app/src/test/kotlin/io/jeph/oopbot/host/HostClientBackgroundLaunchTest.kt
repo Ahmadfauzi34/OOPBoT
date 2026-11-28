@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import io.jeph.oopbot.AppStrings
+import io.jeph.oopbot.agent.KeepAlive
+import io.jeph.oopbot.agent.KeepAliveMode
 import io.jeph.oopbot.agent.StubResourcesShadow
 import java.io.BufferedReader
 import java.io.IOException
@@ -11,6 +13,9 @@ import java.io.InputStreamReader
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -229,5 +234,58 @@ class HostClientBackgroundLaunchTest {
     assertNull(withTimeoutOrNull(150) { pendingHello.await() })
     assertEquals(0, launches.get())
     pendingHello.cancel()
+  }
+
+  @Test
+  fun allowBackgroundAwaitsInFlightKeepAliveDrainAndFailsFastWhenRefused() = runBlocking {
+    val enteredStandby = CountDownLatch(1)
+    val releaseStandby = CountDownLatch(1)
+    var allowActive = true
+    val keepAlive = KeepAlive { mode, _ ->
+      if (mode == KeepAliveMode.Standby) {
+        enteredStandby.countDown()
+        assertTrue(releaseStandby.await(5, TimeUnit.SECONDS))
+        true
+      } else {
+        allowActive
+      }
+    }
+    val client = HostClient(
+      context = context,
+      foreground = MutableStateFlow(false),
+      scope = scope,
+      canLaunchInBackground = keepAlive::awaitActiveApplied,
+      launcher = { _, mode -> openLoopbackChannel(mode).channel },
+    )
+
+    val pool = Executors.newSingleThreadExecutor()
+    try {
+      val standbyFuture = pool.submit<AutoCloseable> { keepAlive.acquireStandby("standby") }
+      assertTrue(enteredStandby.await(5, TimeUnit.SECONDS))
+
+      // Acquire Active mid-drain and immediately openRpc(allowBackground = true): must wait for drain, not fail.
+      val activeHold = keepAlive.acquire("schedule")
+      val rpcDeferred = async { client.openRpc("/work", null, emptySet(), allowBackground = true) }
+      releaseStandby.countDown()
+      val channel = withTimeout(5_000) { rpcDeferred.await() }
+      channel.close()
+      activeHold.close()
+      val standbyHold = standbyFuture.get(5, TimeUnit.SECONDS)
+
+      // When updater(Active) is refused, openRpc(allowBackground = true) still fails fast with HostFailure.Background.
+      allowActive = false
+      val refusedHold = keepAlive.acquire("schedule refused")
+      var thrown: HostFailure? = null
+      try {
+        withTimeout(1_000) { client.openRpc("/work", null, emptySet(), allowBackground = true) }
+      } catch (failure: HostFailure) {
+        thrown = failure
+      }
+      assertTrue("Expected HostFailure.Background, got $thrown", thrown is HostFailure.Background)
+      refusedHold.close()
+      standbyHold.close()
+    } finally {
+      pool.shutdownNow()
+    }
   }
 }

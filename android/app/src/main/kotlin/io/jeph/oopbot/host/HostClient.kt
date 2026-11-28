@@ -42,7 +42,7 @@ internal class HostClient(
   context: Context,
   private val foreground: Flow<Boolean>,
   scope: CoroutineScope,
-  private val canLaunchInBackground: () -> Boolean = { false },
+  private val canLaunchInBackground: suspend () -> Boolean = { false },
   private val launcher: suspend (Context, String) -> HostChannel = HostLauncher::launch,
 ) : SessionHost {
   private val context = context.applicationContext

@@ -3,6 +3,7 @@ package io.jeph.oopbot.agent
 import android.content.Context
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
 
 /** Power tier requested by [KeepAlive] on [AgentService]. */
 internal enum class KeepAliveMode {
@@ -32,6 +33,7 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
   private var activeHolders = 0
   private var standbyHolders = 0
   private var draining = false
+  private var drainDone: CompletableDeferred<Unit>? = null
   private var pendingSync = false
   private var pendingForce = false
   private var pendingReason = ""
@@ -68,6 +70,23 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
       scheduleLocked(reason, force)
     }
     if (shouldDrain) drain()
+  }
+
+  /**
+   * Returns true if [KeepAliveMode.Active] is currently desired and applied. If another thread is mid-[drain] while
+   * `Active` is desired, suspends until that drain finishes before checking [appliedMode], preventing false-positive
+   * background launch refusals while still failing fast if `updater(Active)` was refused by Android.
+   */
+  suspend fun awaitActiveApplied(): Boolean {
+    while (true) {
+      val waiter = synchronized(lock) {
+        if (mode != KeepAliveMode.Active) return false
+        if (appliedMode == KeepAliveMode.Active) return true
+        if (!draining) return false
+        drainDone
+      } ?: return false
+      waiter.await()
+    }
   }
 
   /** Notes that [AgentService] entered [runningMode] (for example, on a `START_STICKY` null-intent restart). */
@@ -133,6 +152,7 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
     pendingReason = reason
     if (draining) return false
     draining = true
+    drainDone = CompletableDeferred()
     return true
   }
 
@@ -140,7 +160,20 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
     var completed = false
     try {
       while (true) {
-        val step = nextStepLocked() ?: break
+        var toComplete: CompletableDeferred<Unit>? = null
+        val step = synchronized(lock) {
+          val next = nextStepLocked()
+          if (next == null) {
+            draining = false
+            toComplete = drainDone
+            drainDone = null
+          }
+          next
+        }
+        if (step == null) {
+          toComplete?.complete(Unit)
+          break
+        }
         val ok = updater(step.mode, step.reason)
         synchronized(lock) {
           if (ok) {
@@ -156,26 +189,24 @@ internal class KeepAlive internal constructor(private val updater: (KeepAliveMod
       completed = true
     } finally {
       if (!completed) {
-        synchronized(lock) { draining = false }
+        val toComplete = synchronized(lock) {
+          draining = false
+          drainDone.also { drainDone = null }
+        }
+        toComplete?.complete(Unit)
       }
     }
   }
 
-  private fun nextStepLocked(): DrainStep? = synchronized(lock) {
-    if (!pendingSync) {
-      draining = false
-      return null
-    }
+  private fun nextStepLocked(): DrainStep? {
+    if (!pendingSync) return null
     pendingSync = false
     val target = mode
     val force = pendingForce
     val reason = pendingReason
     pendingForce = false
-    if (target == appliedMode && (!force || target == KeepAliveMode.Off)) {
-      draining = false
-      return null
-    }
-    DrainStep(target, reason, appliedGeneration)
+    if (target == appliedMode && (!force || target == KeepAliveMode.Off)) return null
+    return DrainStep(target, reason, appliedGeneration)
   }
 
   private data class DrainStep(val mode: KeepAliveMode, val reason: String, val generation: Long)

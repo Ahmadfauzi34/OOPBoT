@@ -275,6 +275,10 @@ internal class AgentProcess(
     backgroundTasksState.map { it > 0 }.releasedAfter(HOLD_GRACE_MILLIS)
       .stateIn(processScope, SharingStarted.Eagerly, false)
 
+  /** Whether the latest start/restart was authorized to connect from the background. */
+  @Volatile
+  private var lastAllowBackground: Boolean = launchOptions.allowBackground
+
   init {
     // One reader, conflated: a burst of turn ends costs one get_session_stats, and answers never land out of order.
     processScope.launch {
@@ -300,13 +304,23 @@ internal class AgentProcess(
       }
     }
     // Last in construction: an immediate dispatcher starts connecting inline.
-    startJob = processScope.launch { connect(allowBackground = launchOptions.allowBackground) }
+    startJob = processScope.launch { connect(allowBackground = lastAllowBackground) }
   }
 
   /** Reconnects with the same cwd and session file, keeping the timeline until the new history arrives. */
   override fun restart(allowBackground: Boolean) {
+    lastAllowBackground = allowBackground
     park()
     startJob = processScope.launch { connect(allowBackground = allowBackground) }
+  }
+
+  override fun promoteToBackground() {
+    when (stateFlow.value) {
+      AgentProcessState.Ready -> return
+      AgentProcessState.Starting -> if (lastAllowBackground) return
+      is AgentProcessState.Installing, is AgentProcessState.Failed, is AgentProcessState.Exited -> Unit
+    }
+    restart(allowBackground = true)
   }
 
   /**
@@ -691,7 +705,7 @@ internal class AgentProcess(
       Log.w(TAG, "Connection to Pi dropped without an exit record; reconnecting")
       lastAutoReconnectAt = now
       timeline.clearDialogs()
-      processScope.launch(Dispatchers.Main) { restart() }
+      processScope.launch(Dispatchers.Main) { restart(allowBackground = lastAllowBackground) }
       return
     }
     val code = if (exit == null || exit.isNull("code")) null else exit.optInt("code")
