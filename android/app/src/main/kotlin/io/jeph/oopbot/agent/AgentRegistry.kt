@@ -21,6 +21,14 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 
+/** Options for opening or resuming a managed agent process (for example, background scheduled wakeups). */
+internal data class ProcessLaunchOptions(
+  /** Allows launching Termux from background when an active [KeepAlive] foreground service is held. */
+  val allowBackground: Boolean = false,
+  /** Optional explicit engine override (e.g. `acp:antigravity`); null uses the user's configured default. */
+  val engineOverride: String? = null,
+)
+
 /** What [AgentRegistry] needs from one chat's agent process. */
 internal interface ManagedProcess {
   val cwd: String
@@ -52,7 +60,14 @@ internal interface ManagedProcess {
   fun park()
 
   /** Starts Pi again on the same cwd and session file, keeping the history until Pi has sent it again. */
-  fun restart()
+  fun restart(allowBackground: Boolean = false)
+
+  /**
+   * Ensures an already-open process can connect from the background: no-op when already Ready or connecting with
+   * `allowBackground = true`; restarts with `allowBackground = true` when foreground-waiting (`Starting`),
+   * `Installing`, `Failed`, or `Exited`.
+   */
+  fun promoteToBackground()
 
   /** Final: ends Pi and releases the process. */
   fun close()
@@ -107,7 +122,7 @@ internal class AgentRegistry<P : ManagedProcess>(
   private val maxRunning: StateFlow<Int> = MutableStateFlow(DEFAULT_MAX_RUNNING),
   private val idleParkMillis: Flow<Long?> = flowOf(IdleStop.Default.millis),
   private val onWorkEnded: (P) -> Unit = {},
-  private val factory: (cwd: String, sessionPath: String?) -> P,
+  private val factory: (cwd: String, sessionPath: String?, options: ProcessLaunchOptions) -> P,
 ) {
   private class Entry(var lastShown: Long) {
     var watcher: Job? = null
@@ -152,9 +167,12 @@ internal class AgentRegistry<P : ManagedProcess>(
    * The open process for [sessionPath], the parked one restarted, or a new one (a new session when [sessionPath] is
    * null). Throws [TooManyRunning] when [maxRunning] processes are open and all of them hold their Pi or are shown.
    */
-  fun open(cwd: String, sessionPath: String?): P {
+  fun open(cwd: String, sessionPath: String?, options: ProcessLaunchOptions = ProcessLaunchOptions()): P {
     val key = sessionPath?.let { ChatKey.session(it) }
-    key?.let { processState.value[it] }?.let { return it }
+    key?.let { processState.value[it] }?.let { existing ->
+      if (options.allowBackground) existing.promoteToBackground()
+      return existing
+    }
     // Taken out first, so making room cannot close it as the least recently parked chat.
     val resumed = key?.let { parked.remove(it) }
     // All or nothing, so a refused open parks no chat: a pane hides its chat while the next one opens and shows it
@@ -166,7 +184,8 @@ internal class AgentRegistry<P : ManagedProcess>(
       throw TooManyRunning(entries.size, maxRunning.value, shownIdle = entries.keys.any { !it.holdsPi.value })
     }
     evictable.take(excess.coerceAtLeast(0)).forEach(::park)
-    val process = resumed?.also { it.restart() } ?: factory(cwd, sessionPath)
+    val process = resumed?.also { it.restart(allowBackground = options.allowBackground) }
+      ?: factory(cwd, sessionPath, options)
     add(key ?: ChatKey.new(), process)
     return process
   }
@@ -197,7 +216,7 @@ internal class AgentRegistry<P : ManagedProcess>(
     val key = keyOf(process) ?: return open(process.cwd, sessionPath)
     val pane = paneOf(process)
     remove(process)
-    val replacement = factory(process.cwd, sessionPath)
+    val replacement = factory(process.cwd, sessionPath, ProcessLaunchOptions())
     add(key, replacement)
     if (pane != null) show(pane, replacement)
     return replacement

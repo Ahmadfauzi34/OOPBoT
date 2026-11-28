@@ -23,7 +23,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRegistryTest {
-  private class FakeProcess(override val cwd: String, sessionPath: String?, holdGraceMillis: Long) : ManagedProcess {
+  private class FakeProcess(
+    override val cwd: String,
+    sessionPath: String?,
+    holdGraceMillis: Long,
+    val launchOptions: ProcessLaunchOptions = ProcessLaunchOptions(),
+  ) : ManagedProcess {
     override val sessionFile = MutableStateFlow(sessionPath)
     override val busy = MutableStateFlow(false)
     val backgroundTasks = MutableStateFlow(0)
@@ -39,6 +44,8 @@ class AgentRegistryTest {
     var closed = false
     var parked = false
     var restarts = 0
+    var lastRestartAllowBackground: Boolean? = null
+    var promotedToBackground = 0
     var aborts = 0
     var abortFails = false
     var backgroundStops = 0
@@ -58,9 +65,14 @@ class AgentRegistryTest {
       parked = true
     }
 
-    override fun restart() {
+    override fun restart(allowBackground: Boolean) {
       parked = false
       restarts += 1
+      lastRestartAllowBackground = allowBackground
+    }
+
+    override fun promoteToBackground() {
+      promotedToBackground += 1
     }
 
     override fun close() {
@@ -613,12 +625,45 @@ class AgentRegistryTest {
     assertEquals(1, stuckHidden.restarts)
   }
 
+  @Test
+  fun openForwardsBackgroundLaunchOptionsToFactoryAndParkedRestart() = registryTest { registry ->
+    val options = ProcessLaunchOptions(allowBackground = true, engineOverride = "acp:demo")
+    val fresh = registry.open(CWD, "/s/bg.jsonl", options)
+    assertEquals(options, fresh.launchOptions)
+
+    // Park the process by filling slots and reopening it with allowBackground = true.
+    maxRunning.value = 1
+    settle()
+    val filler = registry.open(CWD, "/s/filler.jsonl")
+    assertTrue(fresh.parked)
+    assertFalse(filler.parked)
+
+    val resumed = registry.open(CWD, "/s/bg.jsonl", ProcessLaunchOptions(allowBackground = true))
+    assertSame(fresh, resumed)
+    assertEquals(1, resumed.restarts)
+    assertEquals(true, resumed.lastRestartAllowBackground)
+  }
+
+  @Test
+  fun openWithAllowBackgroundPromotesExistingOpenSession() = registryTest { registry ->
+    val existing = registry.open(CWD, "/s/existing.jsonl")
+    assertEquals(0, existing.promotedToBackground)
+
+    // Reopening with default foreground options leaves existing session untouched.
+    assertSame(existing, registry.open(CWD, "/s/existing.jsonl"))
+    assertEquals(0, existing.promotedToBackground)
+
+    // Reopening with allowBackground = true promotes the existing open session.
+    assertSame(existing, registry.open(CWD, "/s/existing.jsonl", ProcessLaunchOptions(allowBackground = true)))
+    assertEquals(1, existing.promotedToBackground)
+  }
+
   private fun registryTest(block: suspend (AgentRegistry<FakeProcess>) -> Unit) = runBlocking {
     val scope = CoroutineScope(coroutineContext + SupervisorJob())
     try {
       block(
-        AgentRegistry(scope, maxRunning, idleParkMillis, ended::add) { cwd, path ->
-          FakeProcess(cwd, path, holdGraceMillis).also(created::add)
+        AgentRegistry(scope, maxRunning, idleParkMillis, ended::add) { cwd, path, options ->
+          FakeProcess(cwd, path, holdGraceMillis, options).also(created::add)
         },
       )
     } finally {

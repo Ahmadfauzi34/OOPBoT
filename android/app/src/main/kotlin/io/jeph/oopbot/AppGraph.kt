@@ -61,13 +61,14 @@ import kotlinx.coroutines.launch
 internal class AppGraph(private val application: Application) {
   /** Lives as long as the process; main-thread confined. */
   val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+  val keepAlive = KeepAlive(application)
   val hostClient = HostClient(
     application,
     foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow.map { it.isAtLeast(Lifecycle.State.STARTED) },
     scope = scope,
+    canLaunchInBackground = keepAlive::awaitActiveApplied,
   )
   val database = OopbotDatabase.open(application)
-  val keepAlive = KeepAlive(application)
   val preferences = Preferences(application, database)
   val remoteHosts = RemoteHosts(hostClient, preferences, RemotePasswords.of(application), keepAlive, scope)
 
@@ -97,7 +98,7 @@ internal class AppGraph(private val application: Application) {
         // Pi saves the run's messages a moment before the session list hears of them.
         process.sessionFile.value?.let { sessionArchive.touch(listOf(it)) }
       },
-    ) { cwd, sessionPath ->
+    ) { cwd, sessionPath, options ->
       AgentProcess(
         hostClient,
         keepAlive,
@@ -108,6 +109,7 @@ internal class AppGraph(private val application: Application) {
         remoteHosts,
         preferences.disabledExtensions,
         preferences.activeEngine,
+        launchOptions = options,
       )
     }
   val accountRepository = AccountRepository(hostClient, registry, keepAlive)

@@ -100,6 +100,8 @@ internal class AgentProcess(
   private val disabledExtensions: StateFlow<Set<String>>,
   /** Optional external ACP engine selector (e.g. `acp:antigravity`) used when starting a brand-new session. */
   private val activeEngine: StateFlow<String?> = MutableStateFlow(null),
+  /** Optional launch policy for background wakeups or per-run engine overrides. */
+  private val launchOptions: ProcessLaunchOptions = ProcessLaunchOptions(),
 ) : ManagedProcess {
   private class Connection(val channel: HostChannel) {
     val rpc = RpcClient(channel::send)
@@ -273,6 +275,10 @@ internal class AgentProcess(
     backgroundTasksState.map { it > 0 }.releasedAfter(HOLD_GRACE_MILLIS)
       .stateIn(processScope, SharingStarted.Eagerly, false)
 
+  /** Whether the latest start/restart was authorized to connect from the background. */
+  @Volatile
+  private var lastAllowBackground: Boolean = launchOptions.allowBackground
+
   init {
     // One reader, conflated: a burst of turn ends costs one get_session_stats, and answers never land out of order.
     processScope.launch {
@@ -298,13 +304,23 @@ internal class AgentProcess(
       }
     }
     // Last in construction: an immediate dispatcher starts connecting inline.
-    startJob = processScope.launch { connect() }
+    startJob = processScope.launch { connect(allowBackground = lastAllowBackground) }
   }
 
   /** Reconnects with the same cwd and session file, keeping the timeline until the new history arrives. */
-  override fun restart() {
+  override fun restart(allowBackground: Boolean) {
+    lastAllowBackground = allowBackground
     park()
-    startJob = processScope.launch { connect() }
+    startJob = processScope.launch { connect(allowBackground = allowBackground) }
+  }
+
+  override fun promoteToBackground() {
+    when (stateFlow.value) {
+      AgentProcessState.Ready -> return
+      AgentProcessState.Starting -> if (lastAllowBackground) return
+      is AgentProcessState.Installing, is AgentProcessState.Failed, is AgentProcessState.Exited -> Unit
+    }
+    restart(allowBackground = true)
   }
 
   /**
@@ -552,17 +568,18 @@ internal class AgentProcess(
    * Connects; an `oopbot_version` refusal installs the pinned engine once and retries once, and a remote host that isn't signed
    * in is signed in again with its saved password, if it has one, and tried once more.
    */
-  private suspend fun connect() {
+  private suspend fun connect(allowBackground: Boolean) {
     restoreNotices()
     var installed = false
     var reconnected = false
     while (true) {
-      val rejection = attempt() ?: return
-      if (rejection.code == RemoteFailure.NOT_CONNECTED && !reconnected) {
+      val rejection = attempt(allowBackground) ?: return
+      val inBackground = allowBackground && !hostClient.isForeground()
+      if (rejection.code == RemoteFailure.NOT_CONNECTED && !reconnected && !inBackground) {
         reconnected = true
         if (remoteOutages.reconnect()) continue
       }
-      if (rejection.code != OOPBOT_VERSION || installed) {
+      if (rejection.code != OOPBOT_VERSION || installed || inBackground) {
         val remote = remoteOutages.refused(rejection)
         val failure = if (rejection.code == OOPBOT_VERSION) {
           HostFailure.NodeTooOld(hostClient.expectedOopbotVersion).also(hostClient::reportFailure)
@@ -593,7 +610,7 @@ internal class AgentProcess(
   }
 
   /** One connection; returns the host's refusal, or null once [state] is Ready, Exited or Failed. */
-  private suspend fun attempt(): HostRejected? {
+  private suspend fun attempt(allowBackground: Boolean): HostRejected? {
     stateFlow.value = AgentProcessState.Starting
     forgetChannel()
     val disabled = disabledExtensions.value
@@ -603,8 +620,8 @@ internal class AgentProcess(
     }
     val channel = try {
       val sessionPath = sessionFileState.value
-      val engine = if (sessionPath == null) activeEngine.value else null
-      hostClient.openRpc(cwd, sessionPath, disabled, engine)
+      val engine = if (sessionPath == null) launchOptions.engineOverride ?: activeEngine.value else null
+      hostClient.openRpc(cwd, sessionPath, disabled, engine, allowBackground = allowBackground)
     } catch (failure: HostFailure) {
       stateFlow.value = AgentProcessState.Failed(failure.message, failure)
       return null
@@ -688,7 +705,7 @@ internal class AgentProcess(
       Log.w(TAG, "Connection to Pi dropped without an exit record; reconnecting")
       lastAutoReconnectAt = now
       timeline.clearDialogs()
-      processScope.launch(Dispatchers.Main) { restart() }
+      processScope.launch(Dispatchers.Main) { restart(allowBackground = lastAllowBackground) }
       return
     }
     val code = if (exit == null || exit.isNull("code")) null else exit.optInt("code")

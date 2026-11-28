@@ -29,7 +29,9 @@ class PanesTest {
 
     override fun park() = Unit
 
-    override fun restart() = Unit
+    override fun restart(allowBackground: Boolean) = Unit
+
+    override fun promoteToBackground() = Unit
 
     override fun close() = Unit
   }
@@ -250,7 +252,7 @@ class PanesTest {
   private fun withPanes(block: suspend (AgentRegistry<FakeProcess>, Panes<FakeProcess>) -> Unit) = runBlocking {
     val scope = CoroutineScope(coroutineContext + SupervisorJob())
     try {
-      val registry = AgentRegistry(scope) { cwd, path -> FakeProcess(cwd, path) }
+      val registry = AgentRegistry(scope) { cwd, path, _ -> FakeProcess(cwd, path) }
       block(registry, Panes(registry) { it in archived })
     } finally {
       scope.cancel()

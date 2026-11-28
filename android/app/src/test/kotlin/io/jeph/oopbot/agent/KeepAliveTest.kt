@@ -7,6 +7,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -300,5 +303,56 @@ class KeepAliveTest {
 
     active.close()
     assertEquals(KeepAliveMode.Off, keepAlive.appliedMode)
+  }
+
+  @Test
+  fun `awaitActiveApplied waits for in-flight drain and fails fast if Active is refused`() = runBlocking {
+    val enteredStandby = CountDownLatch(1)
+    val releaseStandby = CountDownLatch(1)
+    var allowActive = true
+
+    val keepAlive = KeepAlive { mode, _ ->
+      if (mode == KeepAliveMode.Standby) {
+        enteredStandby.countDown()
+        assertTrue(releaseStandby.await(5, TimeUnit.SECONDS))
+        true
+      } else {
+        allowActive
+      }
+    }
+
+    assertFalse(keepAlive.awaitActiveApplied())
+
+    val pool = Executors.newSingleThreadExecutor()
+    try {
+      val standbyFuture = pool.submit<AutoCloseable> { keepAlive.acquireStandby("standby") }
+      assertTrue(enteredStandby.await(5, TimeUnit.SECONDS))
+
+      // Acquire Active while Standby drain is in-flight; acquire returns before Active is applied.
+      val activeHold = keepAlive.acquire("schedule")
+      assertEquals(KeepAliveMode.Active, keepAlive.mode)
+      assertEquals(KeepAliveMode.Off, keepAlive.appliedMode)
+
+      val awaiting = async { keepAlive.awaitActiveApplied() }
+      releaseStandby.countDown()
+      assertTrue(withTimeout(5_000) { awaiting.await() })
+      assertEquals(KeepAliveMode.Active, keepAlive.appliedMode)
+
+      val standbyHold = standbyFuture.get(5, TimeUnit.SECONDS)
+      activeHold.close()
+      assertFalse(keepAlive.awaitActiveApplied())
+
+      // Now verify awaitActiveApplied returns false immediately if Active was refused.
+      allowActive = false
+      val refusedHold = keepAlive.acquire("schedule refused")
+      assertEquals(KeepAliveMode.Active, keepAlive.mode)
+      assertEquals(KeepAliveMode.Standby, keepAlive.appliedMode)
+      assertFalse(keepAlive.awaitActiveApplied())
+
+      refusedHold.close()
+      standbyHold.close()
+    } finally {
+      pool.shutdownNow()
+    }
   }
 }
