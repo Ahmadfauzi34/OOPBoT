@@ -118,8 +118,9 @@ internal class ScheduleRepository(
   /**
    * Validates and updates an existing job in place (preserving run history AND live `lastRunAt`/`lastStatus`/
    * `lastError`/`createdAt` fields from SQLite), normalizing timezone and recomputing `nextRunAt`.
+   * Returns `null` without resurrecting the row if [job] was deleted concurrently.
    */
-  suspend fun updateJob(job: ScheduledJob): ScheduledJob = mutex.withLock {
+  suspend fun updateJob(job: ScheduledJob): ScheduledJob? = mutex.withLock {
     ensureInitializedLocked()
     validateJobFields(job.name, job.cwd, job.prompt)
     val now = clock.nowMillis()
@@ -132,7 +133,7 @@ internal class ScheduleRepository(
     val nextRunAt = if (job.enabled) ScheduleCalculator.nextTriggerAfter(normalizedSpec, now) else null
     val effectiveEnabled = if (normalizedSpec is ScheduleSpec.Once) job.enabled && nextRunAt != null else job.enabled
     withContext(ioDispatcher) {
-      val existing = store.getJob(job.id)
+      val existing = store.getJob(job.id) ?: return@withContext null
       val updated = job.copy(
         name = job.name.trim(),
         cwd = job.cwd.trim(),
@@ -143,10 +144,10 @@ internal class ScheduleRepository(
         maxRunSeconds = clampedMaxRun,
         enabled = effectiveEnabled,
         nextRunAt = nextRunAt,
-        lastRunAt = existing?.lastRunAt ?: job.lastRunAt,
-        lastStatus = existing?.lastStatus ?: job.lastStatus,
-        lastError = if (existing != null) existing.lastError else job.lastError,
-        createdAt = existing?.createdAt ?: job.createdAt,
+        lastRunAt = existing.lastRunAt,
+        lastStatus = existing.lastStatus,
+        lastError = existing.lastError,
+        createdAt = existing.createdAt,
         updatedAt = now,
       )
       store.upsertJob(updated)

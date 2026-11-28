@@ -1,6 +1,7 @@
 package io.jeph.oopbot.schedule
 
 import io.jeph.oopbot.agent.AgentProcessState
+import io.jeph.oopbot.agent.ChatTimeline
 import io.jeph.oopbot.agent.ErrorCause
 import io.jeph.oopbot.agent.ProcessLaunchOptions
 import io.jeph.oopbot.agent.TimelineItem
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -31,7 +33,7 @@ class AgentProcessJobExecutorTest {
       session.busy.value = true
       session.appendItem(TimelineItem.User(key = "u1", text = "hi", images = emptyList(), timestamp = 1L))
       session.appendItem(TimelineItem.Error(key = "e1", cause = ErrorCause.Request("HTTP 429 rate limited")))
-      session.busy.value = false
+      session.settleRun()
       "started"
     }
     val opener = FakeAgentOpener(session)
@@ -61,7 +63,7 @@ class AgentProcessJobExecutorTest {
         slowSession.appendItem(
           TimelineItem.AssistantText(key = "a1", markdown = "fresh summary", streaming = false, timestamp = 4L),
         )
-        slowSession.busy.value = false
+        slowSession.settleRun()
       }
       "started"
     }
@@ -97,18 +99,111 @@ class AgentProcessJobExecutorTest {
   }
 
   @Test
-  fun fastTurnObservedViaAppliedEventsSucceedsWithoutSeeingBusy() = runTest {
+  fun ignoresPreTurnCompactionEventsBeforeAgentStartAndWaitsForRealTurn() = runTest {
+    val session = FakeAgentSession(initialState = AgentProcessState.Ready)
+    session.appendItem(TimelineItem.User(key = "u0", text = "old", images = emptyList(), timestamp = 1L))
+    session.appendItem(
+      TimelineItem.AssistantText(key = "a0", markdown = "stale summary", streaming = false, timestamp = 2L),
+    )
+    session.onPrompt = {
+      // Simulate compaction_start -> compaction_end completing inside prompt() before agent_start arrives.
+      session.emitNonTurnTimelineUpdate()
+      backgroundScope.launch {
+        delay(3_000L)
+        session.busy.value = true
+        session.appendItem(TimelineItem.User(key = "u1", text = "new", images = emptyList(), timestamp = 3L))
+        delay(1_000L)
+        session.appendItem(
+          TimelineItem.AssistantText(
+            key = "a1",
+            markdown = "fresh post-compaction summary",
+            streaming = false,
+            timestamp = 4L,
+          ),
+        )
+        session.settleRun()
+      }
+      "started"
+    }
+
+    val executor = AgentProcessJobExecutor(FakeAgentOpener(session), errorText = ::formatCause)
+    val deferred = async { executor.execute(sampleJob()) {} }
+    runCurrent()
+    // Must still be waiting at 1s (did NOT exit prematurely on compaction_end with stale summary).
+    advanceTimeBy(1_000L)
+    runCurrent()
+    assertTrue(deferred.isActive)
+
+    advanceTimeBy(4_000L)
+    runCurrent()
+    val result = deferred.await()
+    assertEquals(ScheduleRunStatus.Succeeded, result.status)
+    assertEquals("fresh post-compaction summary", result.summary)
+  }
+
+  @Test
+  fun handledTurnWithoutNewUserItemDoesNotLeakStaleSummary() = runTest {
+    // 1. "handled" slash command appending nothing -> summary must be null, not the prior turn's AssistantText.
+    val noOutputSession = FakeAgentSession(initialState = AgentProcessState.Ready)
+    noOutputSession.appendItem(TimelineItem.User(key = "u0", text = "old", images = emptyList(), timestamp = 1L))
+    noOutputSession.appendItem(
+      TimelineItem.AssistantText(key = "a0", markdown = "stale summary", streaming = false, timestamp = 2L),
+    )
+    noOutputSession.onPrompt = { "handled" }
+    val noOutputExecutor = AgentProcessJobExecutor(FakeAgentOpener(noOutputSession), errorText = ::formatCause)
+    val noOutputResult = noOutputExecutor.execute(sampleJob()) {}
+    assertEquals(ScheduleRunStatus.Succeeded, noOutputResult.status)
+    assertNull(noOutputResult.summary)
+
+    // 2. "handled" command appending a fresh AssistantText without a User item -> captures only the new item.
+    val freshOutputSession = FakeAgentSession(initialState = AgentProcessState.Ready)
+    freshOutputSession.appendItem(TimelineItem.User(key = "u0", text = "old", images = emptyList(), timestamp = 1L))
+    freshOutputSession.appendItem(
+      TimelineItem.AssistantText(key = "a0", markdown = "stale summary", streaming = false, timestamp = 2L),
+    )
+    freshOutputSession.onPrompt = {
+      freshOutputSession.appendItem(
+        TimelineItem.AssistantText(key = "a1", markdown = "slash output", streaming = false, timestamp = 3L),
+      )
+      "handled"
+    }
+    val freshExecutor = AgentProcessJobExecutor(FakeAgentOpener(freshOutputSession), errorText = ::formatCause)
+    val freshResult = freshExecutor.execute(sampleJob()) {}
+    assertEquals(ScheduleRunStatus.Succeeded, freshResult.status)
+    assertEquals("slash output", freshResult.summary)
+  }
+
+  @Test
+  fun fastTurnObservedViaCompletedRunsSucceedsWithoutSeeingBusy() = runTest {
     val session = FakeAgentSession(initialState = AgentProcessState.Ready)
     session.onPrompt = {
       // Turn completes synchronously before awaitTurnCompletion checks busy.
       session.appendItem(TimelineItem.User(key = "u1", text = "ping", images = emptyList(), timestamp = 1L))
       session.appendItem(TimelineItem.AssistantText(key = "a1", markdown = "pong", streaming = false, timestamp = 2L))
+      session.settleRun()
       "started"
     }
     val executor = AgentProcessJobExecutor(FakeAgentOpener(session), errorText = ::formatCause)
     val result = executor.execute(sampleJob()) {}
     assertEquals(ScheduleRunStatus.Succeeded, result.status)
     assertEquals("pong", result.summary)
+  }
+
+  @Test
+  fun chatTimelineCompletedRunsIgnoresCompactionAndIncrementsOnAgentSettled() {
+    val timeline = ChatTimeline()
+    assertEquals(0L, timeline.completedRuns)
+
+    timeline.apply(JSONObject().put("type", "compaction_start"))
+    timeline.apply(JSONObject().put("type", "compaction_end").put("aborted", false))
+    timeline.apply(JSONObject().put("type", "queue_update"))
+    assertEquals(0L, timeline.completedRuns)
+
+    timeline.apply(JSONObject().put("type", "agent_start"))
+    assertEquals(0L, timeline.completedRuns)
+
+    timeline.apply(JSONObject().put("type", "agent_settled").put("aborted", false))
+    assertEquals(1L, timeline.completedRuns)
   }
 
   @Test
@@ -234,7 +329,7 @@ class AgentProcessJobExecutorTest {
     override val busy = MutableStateFlow(false)
     override val sessionFile = MutableStateFlow<String?>(null)
     override val timelineState = MutableStateFlow(TimelineState())
-    override var appliedEvents: Long = 0L
+    override var completedRuns: Long = 0L
       private set
 
     var onPrompt: suspend (String) -> String = { "started" }
@@ -242,9 +337,21 @@ class AgentProcessJobExecutorTest {
     var stoppedBackground = false
 
     fun appendItem(item: TimelineItem) {
-      appliedEvents++
       val current = timelineState.value
       timelineState.value = current.copy(items = current.items + item)
+    }
+
+    fun emitNonTurnTimelineUpdate() {
+      val current = timelineState.value
+      timelineState.value = current.copy(thinkingLevel = "compacting")
+      timelineState.value = current.copy(thinkingLevel = null)
+    }
+
+    fun settleRun() {
+      completedRuns++
+      busy.value = false
+      val current = timelineState.value
+      timelineState.value = current.copy(items = current.items.toList())
     }
 
     override suspend fun prompt(message: String): String = onPrompt(message)

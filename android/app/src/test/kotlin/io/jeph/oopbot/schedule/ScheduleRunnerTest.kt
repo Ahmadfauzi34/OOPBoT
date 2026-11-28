@@ -323,11 +323,13 @@ class ScheduleRunnerTest {
     )
 
     // Save edit using the stale `created` snapshot (lastStatus=Never, blank timezone).
-    val updated = harness.repository.updateJob(
-      created.copy(
-        name = "Daily Edited",
-        spec = ScheduleSpec.Cron("0 9 * * *", ""),
-        timezone = "",
+    val updated = requireNotNull(
+      harness.repository.updateJob(
+        created.copy(
+          name = "Daily Edited",
+          spec = ScheduleSpec.Cron("0 9 * * *", ""),
+          timezone = "",
+        ),
       ),
     )
     assertEquals("Daily Edited", updated.name)
@@ -346,6 +348,14 @@ class ScheduleRunnerTest {
       harness.repository.updateJob(updated.copy(prompt = "  "))
     }.exceptionOrNull()
     assertTrue(blankPromptErr is IllegalArgumentException)
+
+    // Deleting the job while an edit screen is open must make updateJob() return null instead of resurrecting it.
+    harness.repository.deleteJob(updated.id)
+    assertEquals(null, harness.alarmDriver.lastTriggerAt)
+    val resurrected = harness.repository.updateJob(updated.copy(name = "Ghost Edit"))
+    assertEquals(null, resurrected)
+    assertEquals(null, harness.repository.getJob(updated.id))
+    assertEquals(null, harness.alarmDriver.lastTriggerAt)
   }
 
   private fun intervalDraft(

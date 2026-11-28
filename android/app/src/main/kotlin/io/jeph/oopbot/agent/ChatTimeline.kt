@@ -86,9 +86,13 @@ class ChatTimeline(
   private var model: JSONObject? = null
   private var thinkingLevel: String? = null
   private var appliedCount = 0L
+  private var settledRunCount = 0L
 
   /** How many events [apply] has taken so far; [seed] can compare against it. */
   val appliedEvents: Long get() = synchronized(lock) { appliedCount }
+
+  /** How many agent runs have reached `agent_settled`; ignores non-turn events like compaction or queue updates. */
+  val completedRuns: Long get() = synchronized(lock) { settledRunCount }
 
   /** Every user message Pi started, in order. */
   val startedUserMessages = StartedUserMessages()
@@ -350,7 +354,10 @@ class ChatTimeline(
     when (event.optString("type")) {
       "agent_start" -> startRun()
 
-      "agent_settled" -> finishRun(stopped = event.optBoolean("aborted"))
+      "agent_settled" -> {
+        settledRunCount += 1
+        finishRun(stopped = event.optBoolean("aborted"))
+      }
 
       // Pi takes the steers for the next turn right after `turn_end` and delivers them before its reply starts.
       "turn_end" -> queueInFlight = true

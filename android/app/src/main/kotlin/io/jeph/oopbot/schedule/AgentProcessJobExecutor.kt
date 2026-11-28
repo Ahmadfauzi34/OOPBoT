@@ -26,7 +26,7 @@ internal interface ScheduledAgentSession {
   val busy: StateFlow<Boolean>
   val sessionFile: StateFlow<String?>
   val timelineState: StateFlow<TimelineState>
-  val appliedEvents: Long
+  val completedRuns: Long
 
   suspend fun prompt(message: String): String
 
@@ -100,7 +100,8 @@ internal class AgentProcessJobExecutor(
     val readyError = readyStateFailure(readyState, session, job)
     if (readyError != null) return readyError
 
-    val eventsBefore = session.appliedEvents
+    val runsBefore = session.completedRuns
+    val prePromptItemKeys = session.timelineState.value.items.mapTo(HashSet()) { it.key }
     val disposition = try {
       session.prompt(job.prompt)
     } catch (error: RpcError) {
@@ -111,10 +112,10 @@ internal class AgentProcessJobExecutor(
       )
     }
 
-    return if (disposition != "handled" && !awaitTurnCompletion(session, eventsBefore)) {
+    return if (disposition != "handled" && !awaitTurnCompletion(session, runsBefore)) {
       abortAndFail(session, job, ScheduleRunStatus.Failed, TURN_START_TIMEOUT_ERROR)
     } else {
-      buildFinalResult(session, job)
+      buildFinalResult(session, job, prePromptItemKeys)
     }
   }
 
@@ -144,7 +145,11 @@ internal class AgentProcessJobExecutor(
     )
   }
 
-  private fun buildFinalResult(session: ScheduledAgentSession, job: ScheduledJob): JobExecutionResult {
+  private fun buildFinalResult(
+    session: ScheduledAgentSession,
+    job: ScheduledJob,
+    prePromptItemKeys: Set<String>,
+  ): JobExecutionResult {
     val finalSession = session.sessionFile.value ?: job.sessionPath
     return when (val finalState = session.state.value) {
       is AgentProcessState.Failed -> JobExecutionResult(
@@ -159,7 +164,7 @@ internal class AgentProcessJobExecutor(
         error = finalState.stderr.ifBlank { "Agent exited mid-run (code=${finalState.code ?: "unknown"})" },
       )
 
-      else -> when (val outcome = extractTurnOutcome(session.timelineState.value.items)) {
+      else -> when (val outcome = extractTurnOutcome(session.timelineState.value.items, prePromptItemKeys)) {
         is TurnOutcome.Error -> JobExecutionResult(
           status = ScheduleRunStatus.Failed,
           sessionPath = finalSession,
@@ -176,16 +181,17 @@ internal class AgentProcessJobExecutor(
   }
 
   /**
-   * Waits for the prompted turn to begin (either `busy == true`, a new timeline event past [eventsBefore], or a
-   * terminal process state) and then settle. Returns `false` if the turn never started within [turnStartGraceMillis].
+   * Waits for the prompted turn to begin (`busy == true`), settle (`completedRuns > runsBefore`), or reach a terminal
+   * process state, ignoring non-turn events (such as pre-turn compaction or queue updates). Returns `false` if the turn
+   * never starts within [turnStartGraceMillis].
    */
-  private suspend fun awaitTurnCompletion(session: ScheduledAgentSession, eventsBefore: Long): Boolean {
+  private suspend fun awaitTurnCompletion(session: ScheduledAgentSession, runsBefore: Long): Boolean {
     val startFlow = combine(session.busy, session.state, session.timelineState) { busy, state, _ ->
       busy to state
     }
     val started = withTimeoutOrNull(turnStartGraceMillis) {
       startFlow.first { (busy, state) ->
-        busy || session.appliedEvents > eventsBefore || state.isTerminal()
+        busy || session.completedRuns > runsBefore || state.isTerminal()
       }
     } ?: return false
 
@@ -223,9 +229,10 @@ internal class AgentProcessJobExecutor(
     runCatching { session.stopBackgroundTasks() }
   }
 
-  private fun extractTurnOutcome(items: List<TimelineItem>): TurnOutcome {
+  private fun extractTurnOutcome(items: List<TimelineItem>, prePromptItemKeys: Set<String>): TurnOutcome {
     var summary: String? = null
     for (item in items.asReversed()) {
+      if (item.key in prePromptItemKeys) return TurnOutcome.Success(summary)
       when (item) {
         is TimelineItem.Error -> return TurnOutcome.Error(errorText(item.cause).take(MAX_SUMMARY_CHARS))
 
@@ -277,7 +284,7 @@ private class ProcessSessionAdapter(val process: AgentProcess) : ScheduledAgentS
   override val busy: StateFlow<Boolean> get() = process.busy
   override val sessionFile: StateFlow<String?> get() = process.sessionFile
   override val timelineState: StateFlow<TimelineState> get() = process.timeline.state
-  override val appliedEvents: Long get() = process.timeline.appliedEvents
+  override val completedRuns: Long get() = process.timeline.completedRuns
 
   override suspend fun prompt(message: String): String = process.prompt(message)
 
